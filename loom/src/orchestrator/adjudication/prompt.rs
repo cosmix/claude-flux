@@ -200,10 +200,22 @@ fn verdict_protocol(stage_id: &str, dispute_id: u32, verdict_draft: &Path) -> St
     s.push_str("  \"verdict\": \"accept\"|\"reject\"|\"needs-more-evidence\",\n");
     s.push_str("  \"reasoning\": \"...\" (required on accept/reject),\n");
     s.push_str("  \"citations\": [ {file, line?, excerpt, claim}, ... ] (accept/reject; >=1),\n");
-    s.push_str("  \"plan_patch\": { ...AmendmentRequest JSON... } (accept only),\n");
+    s.push_str("  \"plan_patch\": {                                    (accept only)\n");
+    s.push_str("    \"field\": \"acceptance\" | \"wiring\",\n");
+    s.push_str("    \"patch\": { \"op\": \"replace\" | \"insert\" | \"delete\",\n");
+    s.push_str("               \"index\": <0-based index into that array>,\n");
+    s.push_str(
+        "               \"value\": \"<YAML body for the new element; omit for delete>\" },\n",
+    );
+    s.push_str("    \"reason\": \"<why the criterion is wrong>\"\n");
+    s.push_str("  },\n");
     s.push_str("  \"questions\": [\"...\", ...] (needs-more-evidence; >=1)\n");
     s.push_str("}\n");
     s.push_str("```\n\n");
+    s.push_str(
+        "`index` is a 0-based index into the stage's `acceptance` array, and `value` is\n\
+         YAML text deserialized into an `AcceptanceCriterion`.\n\n",
+    );
     s.push_str("2. Run:\n\n");
     s.push_str("```bash\n");
     s.push_str(&format!(
