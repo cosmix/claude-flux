@@ -42,7 +42,7 @@
 
 use crate::context::lexical::{name_parts, ExactGate};
 use crate::context::rank::RankQuery;
-use crate::context::schema::SourceNode;
+use crate::context::schema::{SourceNode, SourceNodeKind};
 use std::collections::BTreeSet;
 
 /// Whether `node` may become a candidate on lexical evidence alone.
@@ -66,6 +66,13 @@ pub(super) fn admits_lexical_evidence(
     // after its rung is taken away. That promise outranks this rule.
     if query.required_ids.iter().any(|id| id == &node.id) {
         return true;
+    }
+    // A `mod foo;` declaration is not a definition: its definition is the
+    // module's own file, a separate node. A one-line span is exactly what a
+    // declaration looks like (`mod source_graph;`), so admitting it on lexical
+    // evidence alone would surface the same name twice for no added content.
+    if node.kind == SourceNodeKind::Module && node.span.line_start == node.span.line_end {
+        return false;
     }
     let Some(name) = node.scope.last() else {
         return false;

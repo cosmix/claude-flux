@@ -12,7 +12,7 @@ use crate::context::config::RetrievalConfig;
 use crate::context::lexical::name_parts;
 use crate::context::rank::{tokenize, RankQuery, RankedCandidate};
 use crate::context::rank_source::rank_source;
-use crate::context::schema::{FileCoverage, SelectionReason, SourceNode, SourceNodeKind};
+use crate::context::schema::{FileCoverage, SelectionReason, SourceNode, SourceNodeKind, Span};
 
 /// Rank `nodes` — each in its own file — against a plain text query.
 fn rank_nodes(text: &str, nodes: Vec<SourceNode>) -> Vec<RankedCandidate> {
@@ -174,6 +174,107 @@ fn a_withheld_rung_still_leaves_a_backticked_name_standing_on_lexical() {
         vec![SelectionReason::Lexical],
         "the rung is withheld, the candidate is not: {candidates:?}"
     );
+}
+
+/// A `mod foo;` declaration line is not a definition: its definition is the
+/// module's own file, a separate node. Every part of its name survives
+/// stopwording here, so without the one-line guard it would be admitted on
+/// lexical evidence alone and reach the brief as a useless second hit.
+#[test]
+fn a_one_line_module_declaration_is_not_a_lexical_candidate() {
+    let mut declaration = node(
+        "loom/src/context/refresh.rs#module:source_graph",
+        "loom/src/context/refresh.rs",
+        &["source_graph"],
+        "mod source_graph;",
+        SourceNodeKind::Module,
+        FileCoverage::Full,
+    );
+    declaration.span = Span {
+        start_byte: 400,
+        end_byte: 418,
+        line_start: 19,
+        line_end: 19,
+    };
+
+    let candidates = rank_nodes("what does the source graph do", vec![declaration]);
+
+    assert!(
+        candidates.is_empty(),
+        "a one-line module declaration must not stand as a lexical candidate: {candidates:?}"
+    );
+}
+
+/// The same name, but the node spans more than one line — the module's own
+/// definition rather than a declaration referencing it elsewhere. The
+/// one-line guard must not reject this one.
+#[test]
+fn a_multi_line_module_node_with_the_same_name_is_still_a_candidate() {
+    let mut definition = node(
+        "loom/src/context/source_graph/mod.rs#module:source_graph",
+        "loom/src/context/source_graph/mod.rs",
+        &["source_graph"],
+        "pub mod source_graph {",
+        SourceNodeKind::Module,
+        FileCoverage::Full,
+    );
+    definition.span = Span {
+        start_byte: 0,
+        end_byte: 4000,
+        line_start: 1,
+        line_end: 120,
+    };
+
+    let candidates = rank_nodes("what does the source graph do", vec![definition]);
+
+    assert_eq!(
+        ids(&candidates),
+        vec!["loom/src/context/source_graph/mod.rs#module:source_graph"],
+        "a multi-line module node is a definition, not a bare declaration: {candidates:?}"
+    );
+}
+
+/// A caller who demanded a one-line module declaration by its exact id has
+/// said what they meant, and that promise outranks the one-line guard — the
+/// same precedence `admits_lexical_evidence` (`context/rank_source/candidacy.rs`)
+/// already gives `required_ids` over the name check.
+///
+/// Coverage is `Partial` rather than `Full` so `withhold_partial_coverage`
+/// clears the `ExplicitId` rung `required_ids` would otherwise award on its
+/// own — the only way to reach `admits_lexical_evidence`'s own `required_ids`
+/// branch rather than being admitted before it is ever consulted.
+#[test]
+fn a_required_id_admits_a_one_line_module_declaration_regardless() {
+    let mut declaration = node(
+        "loom/src/context/refresh.rs#module:source_graph",
+        "loom/src/context/refresh.rs",
+        &["source_graph"],
+        "mod source_graph;",
+        SourceNodeKind::Module,
+        FileCoverage::Partial {
+            detail: "3 query matches had no named capture".to_string(),
+        },
+    );
+    declaration.span = Span {
+        start_byte: 400,
+        end_byte: 418,
+        line_start: 19,
+        line_end: 19,
+    };
+    let id = declaration.id.clone();
+    let path = declaration.path.to_string_lossy().into_owned();
+
+    let candidates = rank_source(
+        &RankQuery {
+            text: "what does the source graph do".to_string(),
+            required_ids: vec![id.clone()],
+            ..RankQuery::default()
+        },
+        &graph(vec![(path.as_str(), vec![declaration])]),
+        &RetrievalConfig::default(),
+    );
+
+    assert_eq!(ids(&candidates), vec![id.as_str()]);
 }
 
 #[test]
