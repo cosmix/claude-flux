@@ -151,3 +151,38 @@
 **Prevention:** a decision to exit the daemon reads the stage files, never the graph, and no state that still needs the daemon (a judge to spawn, a queued stage to start) is terminal.
 
 **Fix:** `all_stages_terminal` short-circuits only on graph `Completed`/`Skipped` and otherwise decides from the stage file through the pure `stage_file_is_terminal` (`recovery.rs`), an exhaustive match: `NeedsAdjudication`, `Executing`, `WaitingForInput`, `NeedsHandoff`, and an unheld `Queued`/`WaitingForDeps` are never terminal; `Blocked` is terminal only when no retry is pending; `NeedsHumanReview` and the merge-failure states stay terminal. `recovery_terminal_tests.rs` pins the incident shape (graph `NeedsAdjudication`, file `Queued`, no sessions).
+
+## A Prompt Named a Rust Type as Its Schema and Every Judge Guessed the Same Wrong Shape
+
+**What happened:** the adjudicator prompt described the accept-only field as
+`"plan_patch": { ...AmendmentRequest JSON... }`. Three independent adjudication sessions (two
+Opus, one Sonnet, judging the same criterion hours apart) all emitted the same FLAT shape —
+`{"field", "op", "index", "value"}` — instead of the nested `{"field", "patch": {"op", ...}}`
+shape `AmendmentRequest` decodes. Each accept verdict then failed to apply forever: the daemon
+retried every ~5s (1,363 times in one run) logging only `plan_patch missing 'patch' object`,
+while `loom status` still showed the stage as merely `ADJUDICATING`.
+
+**Why:** three compounding causes, only the first of which is about the prompt.
+
+- A schema stated as a type name is not a schema. The model cannot see `AmendmentRequest`, so it
+  invents the shape the surrounding prose implies — and different models invent the SAME shape,
+  which is why "the LLM got it wrong once" is the wrong reading of this class of bug.
+- `validate_accept` checked only that `plan_patch` existed and was non-null, storing it as opaque
+  JSON. The shape was first decoded at APPLY time, inside the daemon, where the only recourse is
+  a `warn!`. Every other malformed verdict shape was already coerced to `NeedsMoreEvidence` and
+  re-prompted; this one had no such path.
+- The failing apply had no attempt cap, and `verdict_apply.rs` retires the stage's agents before
+  every attempt — so a re-queued stage had its new session killed within ~5s. The wedge was
+  unrecoverable without hand-editing `.loom/work`.
+
+**Prevention:** an agent-supplied structure gets its shape validated at the TRUST BOUNDARY where
+a re-prompt is still possible (verdict recording), never deep in the daemon where the only move
+is a log line. Any daemon loop that retries a fixed input needs a counter and an escalation —
+"retry forever" and "kill the stage's sessions each pass" compose into a silent permanent wedge.
+And when a prompt asks for JSON, the prompt states the JSON, inline, with an example.
+
+**Fix:** `orchestrator/adjudication/plan_patch.rs` normalises both shapes (so verdicts already
+stuck on disk self-heal on the next tick); `validate_accept` decodes at record time and coerces
+a malformed patch to `NeedsMoreEvidence`, storing the canonical nested form; `apply_verdict`
+counts failures per dispute and escalates to `NeedsHumanReview` at `MAX_APPLY_ATTEMPTS`; the
+prompt spells the schema out.

@@ -63,7 +63,7 @@
 
 | Topic | Blurb | Lines |
 | --- | --- | --- |
-| [adjudication-autonomy-deadlock](mistakes/adjudication-autonomy-deadlock.md) | An accepted verdict deadlocked the run: adoption by stage_id alone, requeue with unanswered… | 153 |
+| [adjudication-autonomy-deadlock](mistakes/adjudication-autonomy-deadlock.md) | An accepted verdict deadlocked the run: adoption by stage_id alone, requeue with unanswered… | 188 |
 | [ambient-filesystem-trust](mistakes/ambient-filesystem-trust.md) | Why an ancestor directory merely named .git is not evidence of a real repository, and the… | 34 |
 | [codex-lane-rogue-wrapper](mistakes/codex-lane-rogue-wrapper.md) | A forwarding wrapper that did the task itself instead of forwarding, and why the codex sandbox… | 117 |
 | [codex-navigation](mistakes/codex-navigation.md) | Forbidding reads instead of fixing a slow reader - a misdiagnosis and its correction. | 25 |
