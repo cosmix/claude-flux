@@ -62,6 +62,24 @@ fn test_stage_try_complete_merge_valid() {
 }
 
 #[test]
+fn test_stage_try_complete_merge_from_completed_keeps_completed_at() {
+    // A failed auto-merge leaves a stage at Completed + !merged; a later
+    // retry (`try_complete_merge` on an already-Completed stage) must not
+    // reset `completed_at` to now.
+    let mut stage = create_test_stage(StageStatus::Completed);
+    stage.merged = false;
+    let preset_completed_at = chrono::Utc::now() - chrono::Duration::hours(1);
+    stage.completed_at = Some(preset_completed_at);
+
+    let result = stage.try_complete_merge();
+
+    assert!(result.is_ok());
+    assert!(stage.merged);
+    assert_eq!(stage.status, StageStatus::Completed);
+    assert_eq!(stage.completed_at, Some(preset_completed_at));
+}
+
+#[test]
 fn test_stage_try_complete_merge_invalid() {
     // try_complete_merge should fail from states that can't transition to Completed
     let mut stage = create_test_stage(StageStatus::WaitingForDeps);

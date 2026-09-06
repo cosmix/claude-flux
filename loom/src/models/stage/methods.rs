@@ -249,6 +249,15 @@ impl Stage {
         self.updated_at = Utc::now();
     }
 
+    /// Stamp `completed_at` now and `duration_secs` from `started_at`.
+    fn stamp_completed(&mut self) {
+        let now = Utc::now();
+        self.completed_at = Some(now);
+        if let Some(start) = self.started_at {
+            self.duration_secs = Some(now.signed_duration_since(start).num_seconds());
+        }
+    }
+
     /// Complete the stage with validation.
     ///
     /// Computes and stores `duration_secs` from `started_at` to completion.
@@ -257,13 +266,8 @@ impl Stage {
     /// `Ok(())` if the transition succeeded, `Err` if invalid
     pub fn try_complete(&mut self, reason: Option<String>) -> Result<()> {
         self.try_transition(StageStatus::Completed)?;
-        let now = Utc::now();
-        self.completed_at = Some(now);
         self.close_reason = reason;
-        // Compute duration from started_at to completed_at
-        if let Some(start) = self.started_at {
-            self.duration_secs = Some(now.signed_duration_since(start).num_seconds());
-        }
+        self.stamp_completed();
         Ok(())
     }
 
@@ -338,23 +342,19 @@ impl Stage {
         Ok(())
     }
 
-    /// Complete merge conflict resolution and mark stage as completed.
-    ///
-    /// This clears the merge_conflict flag and marks the stage as merged.
-    /// Computes and stores `duration_secs` from `started_at` to completion.
+    /// Complete the merge: clear `merge_conflict` and set `merged`. Unless the stage is
+    /// already `Completed` (auto-merge disabled leaves it there, and `loom stage merge`
+    /// then runs against it), also transition to `Completed` and stamp the timestamps.
     ///
     /// # Returns
     /// `Ok(())` if the transition succeeded, `Err` if invalid
     pub fn try_complete_merge(&mut self) -> Result<()> {
-        self.try_transition(StageStatus::Completed)?;
+        if self.status != StageStatus::Completed {
+            self.try_transition(StageStatus::Completed)?;
+            self.stamp_completed();
+        }
         self.merge_conflict = false;
         self.merged = true;
-        let now = Utc::now();
-        self.completed_at = Some(now);
-        // Compute duration from started_at to completed_at
-        if let Some(start) = self.started_at {
-            self.duration_secs = Some(now.signed_duration_since(start).num_seconds());
-        }
         Ok(())
     }
 

@@ -39,16 +39,18 @@ pub(super) fn retry_preflight(stage_id: Option<String>, work_dir: &Path) -> Resu
     })
 }
 
-/// Verify the stage is in a merge-failed state (MergeConflict or MergeBlocked).
+/// Verify the stage is in a merge-failed state (MergeConflict, MergeBlocked,
+/// or Completed but not yet merged).
 fn require_merge_state(stage: &Stage, stage_id: &str) -> Result<()> {
     let is_merge_state = matches!(
         stage.status,
         StageStatus::MergeConflict | StageStatus::MergeBlocked
-    );
+    ) || (stage.status == StageStatus::Completed && !stage.merged);
 
     if !is_merge_state {
         bail!(
-            "Stage '{}' is in '{}' status. Only MergeConflict or MergeBlocked stages can use merge.\n\
+            "Stage '{}' is in '{}' status. Only MergeConflict, MergeBlocked, or Completed but \
+             not yet merged stages can use merge.\n\
              \n\
              Current status: {}\n\
              \n\
@@ -107,4 +109,41 @@ fn resolve_worktree_paths(stage_id: &str) -> Result<(PathBuf, PathBuf)> {
     }
 
     Ok((repo_root, worktree_root))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_completed_stage_not_yet_merged() {
+        let mut stage = Stage::new("stage-a".to_string(), None);
+        stage.status = StageStatus::Completed;
+        stage.merged = false;
+        assert!(require_merge_state(&stage, "stage-a").is_ok());
+    }
+
+    #[test]
+    fn refuses_completed_stage_already_merged() {
+        let mut stage = Stage::new("stage-a".to_string(), None);
+        stage.status = StageStatus::Completed;
+        stage.merged = true;
+        assert!(require_merge_state(&stage, "stage-a").is_err());
+    }
+
+    #[test]
+    fn refuses_executing_stage() {
+        let mut stage = Stage::new("stage-a".to_string(), None);
+        stage.status = StageStatus::Executing;
+        stage.merged = false;
+        assert!(require_merge_state(&stage, "stage-a").is_err());
+    }
+
+    #[test]
+    fn accepts_merge_blocked_stage() {
+        let mut stage = Stage::new("stage-a".to_string(), None);
+        stage.status = StageStatus::MergeBlocked;
+        stage.merged = false;
+        assert!(require_merge_state(&stage, "stage-a").is_ok());
+    }
 }
