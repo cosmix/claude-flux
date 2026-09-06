@@ -116,6 +116,7 @@ Total: 23 visible commands + 1 hidden (`complete`, for dynamic completions). Dis
 - `orchestrator/signals/cache.rs` - Stable prefix generation (4 stage-type variants, SHA-256 hash)
 - `orchestrator/signals/format/mod.rs` - Full signal formatting (Manus 4-section KV-cache pattern)
 - `orchestrator/signals/format/sections.rs` - Section formatters (stable, semi-stable, dynamic, recitation)
+- `orchestrator/signals/format/skills.rs` - Recommended Skills section: per-skill invocations plus one combined `loom-skills` loader call
 - `orchestrator/signals/helpers.rs` - write_signal_file() (disk I/O)
 - `orchestrator/signals/types.rs` - EmbeddedContext, DependencyStatus, SandboxSummary
 - `orchestrator/signals/knowledge.rs` - generate_knowledge_signal() (knowledge stages)
@@ -418,7 +419,7 @@ resolution, with line references.
 | `orchestrator/signals/generate.rs`        | Entry point: `generate_signal_with_skills()`, `build_signal_context()`, `build_embedded_context_with_stage_and_session()` | 137-536                                                                                   |
 | `orchestrator/signals/cache.rs`           | 4 stable-prefix generators + 8 `append_*` helpers + SignalMetrics SHA-256                                                 | helpers:51-169, standard:174-310, IV:313-444, KnowledgeDistill:447-524, Knowledge:527-633 |
 | `orchestrator/signals/format/mod.rs`      | `format_signal_with_metrics()` — selects stable prefix by stage type, assembles 4 sections                                | 62-78                                                                                     |
-| `orchestrator/signals/format/sections.rs` | Semi-stable (15-378), Dynamic (382-661), Recitation (665-765)                                                             | see per-section notes                                                                     |
+| `orchestrator/signals/format/sections.rs` | Semi-stable (19-310), Dynamic (314-593), Recitation (597-666)                                                             | see per-section notes                                                                     |
 | `orchestrator/signals/types.rs`           | `EmbeddedContext` struct (24-50), `DependencyStatus`, `SandboxSummary`                                                    | 24-50                                                                                     |
 | `orchestrator/signals/knowledge.rs`       | Knowledge-stage signal path: `generate_knowledge_signal()`, `format_knowledge_signal_content()`                           | 23-135                                                                                    |
 | `orchestrator/signals/recovery.rs`        | Recovery signal: recovery context header, last known state, recovery actions                                              | —                                                                                         |
