@@ -71,7 +71,7 @@ impl Default for OrchestratorConfig {
             base_branch: None,
             skills_dir: None, // Will default to ~/.claude/skills/ when loading
             enable_skill_routing: true,
-            max_skill_recommendations: 5,
+            max_skill_recommendations: 8,
             sandbox_config: SandboxConfig::default(),
             shutdown_flag: None,
         }

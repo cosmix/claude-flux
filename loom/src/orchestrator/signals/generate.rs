@@ -19,7 +19,7 @@ use super::format::{format_signal_content, format_signal_with_metrics};
 use super::types::{DependencyStatus, EmbeddedContext, SandboxSummary};
 
 /// Default maximum number of skill recommendations to include in signals
-pub const DEFAULT_MAX_SKILL_RECOMMENDATIONS: usize = 5;
+pub const DEFAULT_MAX_SKILL_RECOMMENDATIONS: usize = 8;
 
 /// Score assigned to skills injected via project language detection — higher
 /// than trigger-based scores (1.0 word, 2.0 phrase) so they appear prominently.

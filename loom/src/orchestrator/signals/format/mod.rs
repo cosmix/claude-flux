@@ -11,10 +11,11 @@ mod codex;
 mod helpers;
 mod sandbox_section;
 mod sections;
+mod skills;
 
 // Re-export public functions
 pub use helpers::format_dependency_table;
-pub use sections::format_skill_recommendations;
+pub use skills::format_skill_recommendations;
 // The recovery signal is built outside the semi-stable path but still needs the
 // codex lane's rules, the stage's response budget, and the knowledge brief; see
 // recovery_format.rs.

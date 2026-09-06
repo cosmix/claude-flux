@@ -2,7 +2,6 @@ use crate::handoff::git_handoff::{format_git_history_markdown, GitHistory};
 use crate::models::session::Session;
 use crate::models::stage::{Stage, StageType};
 use crate::models::worktree::Worktree;
-use crate::skills::{skill_invocation, SkillMatch};
 
 use super::super::retrieval::STAGE_QUERY_INPUTS;
 use super::super::types::{DependencyStatus, EmbeddedContext};
@@ -14,6 +13,7 @@ use super::helpers::{
     format_structured_handoff,
 };
 use super::sandbox_section::format_sandbox_section;
+use super::skills::format_skill_recommendations;
 
 /// SEMI-STABLE section: per-stage content (brief, facts), never per-session
 pub(super) fn format_semi_stable_section(
@@ -663,136 +663,4 @@ pub(super) fn format_recitation_section(
     content.push_str("- `loom memory show --all` - Show all stage memories\n\n");
 
     content
-}
-
-/// Format task progression information for inclusion in signals
-pub fn format_skill_recommendations(skills: &[SkillMatch]) -> String {
-    let mut content = String::new();
-
-    content.push_str("## Recommended Skills\n\n");
-
-    // Partition skills into two classes with different framing:
-    // - `detected`: language skills inferred from the files this stage edits.
-    //   These are a DIRECTIVE — load them before writing code.
-    // - `advisory`: skills matched from the task description. Invoke if relevant.
-    let (detected, advisory): (Vec<&SkillMatch>, Vec<&SkillMatch>) = skills
-        .iter()
-        .partition(|s| s.matched_triggers.iter().any(|t| t == "project-language"));
-
-    if !detected.is_empty() {
-        content.push_str(
-            "**Load these now — before editing any files.** Based on the file types this \
-             stage will edit, invoke the Skill tool for each so your code follows the \
-             project's language conventions:\n\n",
-        );
-        // Claude Code indexes only the core skills, so a catalogued one has no
-        // `Skill(skill="loom-rust")` of its own. `skill_invocation` renders the
-        // loom-skills loader call for those, and the plain call for the rest.
-        for skill in &detected {
-            content.push_str(&format!("- `{}`\n", skill_invocation(&skill.name)));
-        }
-        content.push('\n');
-    }
-
-    if !advisory.is_empty() {
-        content.push_str("These skills may also help with your task — invoke any that apply:\n\n");
-        content.push_str("| Skill | Description | Invoke |\n");
-        content.push_str("|-------|-------------|--------|\n");
-
-        for skill in &advisory {
-            // Truncate description if too long for table (UTF-8 safe)
-            let desc = if skill.description.chars().count() > 60 {
-                format!(
-                    "{}...",
-                    skill.description.chars().take(57).collect::<String>()
-                )
-            } else {
-                skill.description.clone()
-            };
-            // Escape pipe characters in description and name
-            let desc = desc.replace('|', "\\|");
-            let invoke = skill_invocation(&skill.name);
-            let name = skill.name.replace('|', "\\|");
-            content.push_str(&format!("| {} | {} | `{}` |\n", name, desc, invoke));
-        }
-        content.push('\n');
-
-        // Show which triggers matched for transparency
-        content.push_str("**Matched triggers:**\n");
-        for skill in &advisory {
-            if !skill.matched_triggers.is_empty() {
-                let triggers = skill.matched_triggers.join(", ");
-                content.push_str(&format!("- `{}`: {}\n", skill.name, triggers));
-            }
-        }
-        content.push('\n');
-    }
-
-    content
-}
-
-#[cfg(test)]
-mod skill_recommendation_tests {
-    use super::format_skill_recommendations;
-    use crate::skills::SkillMatch;
-
-    fn detected(name: &str) -> SkillMatch {
-        SkillMatch::new(
-            name.to_string(),
-            "Language expertise".to_string(),
-            10.0,
-            vec!["project-language".to_string()],
-        )
-    }
-
-    fn advisory(name: &str, trigger: &str) -> SkillMatch {
-        SkillMatch::new(
-            name.to_string(),
-            "Some advisory skill".to_string(),
-            2.0,
-            vec![trigger.to_string()],
-        )
-    }
-
-    #[test]
-    fn detected_skills_render_as_skill_tool_directive() {
-        let out = format_skill_recommendations(&[detected("loom-rust")]);
-        // Directive framing + an explicit Skill tool invocation the agent can run.
-        assert!(out.contains("Load these now"), "missing directive: {out}");
-        assert!(
-            out.contains("Skill(skill=\"loom-skills\", args=\"loom-rust\")"),
-            "missing Skill tool call: {out}"
-        );
-    }
-
-    #[test]
-    fn advisory_skills_render_as_table_not_directive() {
-        let out = format_skill_recommendations(&[advisory("loom-auth", "jwt")]);
-        assert!(
-            !out.contains("Load these now"),
-            "should not be directive: {out}"
-        );
-        assert!(
-            out.contains("may also help"),
-            "missing advisory framing: {out}"
-        );
-        assert!(
-            out.contains("Skill(skill=\"loom-skills\", args=\"loom-auth\")"),
-            "missing invoke column: {out}"
-        );
-        assert!(out.contains("jwt"), "missing matched trigger: {out}");
-    }
-
-    #[test]
-    fn detected_and_advisory_are_partitioned() {
-        let out =
-            format_skill_recommendations(&[detected("loom-rust"), advisory("loom-auth", "jwt")]);
-        // Detected directive comes before the advisory table.
-        let load_pos = out.find("Load these now").expect("directive present");
-        let advisory_pos = out.find("may also help").expect("advisory present");
-        assert!(
-            load_pos < advisory_pos,
-            "directive should precede advisory: {out}"
-        );
-    }
 }

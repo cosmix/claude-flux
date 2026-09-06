@@ -62,7 +62,7 @@ mod tests {
             base_branch: None,
             skills_dir: None,
             enable_skill_routing: false, // Disable for tests
-            max_skill_recommendations: 5,
+            max_skill_recommendations: 8,
             sandbox_config: SandboxConfig::default(),
             shutdown_flag: None,
         }

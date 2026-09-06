@@ -70,7 +70,7 @@ fn run_orchestrator(
         base_branch,
         skills_dir: None, // Use default ~/.claude/skills/
         enable_skill_routing: true,
-        max_skill_recommendations: 5,
+        max_skill_recommendations: 8,
         sandbox_config: plan_sandbox,
         shutdown_flag: Some(shutdown_flag.clone()),
     };
