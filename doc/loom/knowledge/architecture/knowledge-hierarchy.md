@@ -47,21 +47,27 @@ category directory is created automatically on first write.
 
 There is no dedicated index-generation verb. `INDEX.md` regenerates automatically —
 `KnowledgeDir::refresh_index_if_hierarchical` (`dir.rs:286`) calls `generate_index`
-(`index.rs:136`) after every `loom knowledge update`, and `loom knowledge sync` forces
-it structurally too. The generated file is built from the on-disk tree: a
-generated-file marker, a reading-protocol blurb, a **Tier 1** table (file,
-description, line count) and a **Tier 2** table grouped by `### <category>` (topic
-path, title, blurb, line count). The `Tier 2` section is omitted entirely when no
-topics exist.
+(`index.rs:160`) after every `loom knowledge update`, and `loom knowledge sync` forces
+it structurally too. The generated file opens with a generated-file marker and a header
+blockquote telling the reader to read the index first, then only what it points to
+(`index.rs:164-171`). Next comes a **Tier 1** table (`| File | Description | Lines |`) and a
+**Tier 2** table grouped by `### <category>`, header `| Topic | Blurb | Lines |`, rows
+`| [<slug>](<category>/<slug>.md) | <blurb> | <lines> |` — the Title column is gone, since the
+slug link plus blurb already carry what it repeated. The Tier 2 section is omitted entirely when
+no topics exist. Blurbs are capped at `MAX_BLURB_CHARS = 100` characters (`index.rs:65`),
+truncated on a word boundary with an ellipsis.
 
 `scan_topics` is **non-recursive** — it reads `<root>/<category>/*.md` only, skipping dotfiles
 and non-`.md` entries. Nested subdirectories under a category are ignored completely. Title is
-the first `#` line, blurb the first `>` line (`index.rs:66-78 extract_title_and_blurb`), falling
-back to the slug and an empty string, with no length cap on either.
+the first `#` line, blurb the first `>` line (`index.rs:90-101 extract_title_and_blurb`),
+falling back to the slug and an empty string.
 
 Regeneration is idempotent and does a full atomic overwrite, so hand edits to `INDEX.md` are
 silently destroyed. Every `loom knowledge update` refreshes the index — but **only once the
-directory is already hierarchical**.
+directory is already hierarchical**. The generated index is itself capped at
+`MAX_INDEX_BYTES = 12_288` bytes (`catalog/size.rs:18`); exceeding it surfaces as an
+`OversizedIndex` catalog issue (`loom knowledge check`) rather than being repaired
+automatically.
 
 ## Audit Rules — the Two Checks Disagree About Link Form
 

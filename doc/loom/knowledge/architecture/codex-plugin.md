@@ -312,14 +312,18 @@ requirement. See [Sandbox & Settings](../mistakes/sandbox-and-settings.md) for t
 
 Codex loads `AGENTS.md` from its working directory and never reads `CLAUDE.md`. Probed both
 directions with `codex exec -m gpt-5.6-luna` in a scratch repo: a passphrase planted in
-`AGENTS.md` came back verbatim; the identical file renamed `CLAUDE.md` produced `UNKNOWN`. Loom
-ships no `AGENTS.md` anywhere - not at the repo root, not in a worktree, not at `~/.codex/AGENTS.md`.
+`AGENTS.md` came back verbatim; the identical file renamed `CLAUDE.md` produced `UNKNOWN`.
+`loom install-assets` now writes `~/.codex/AGENTS.md` from `AGENTS.md.template`
+(`loom/src/assets/install.rs:110-127`), capped at 12,288 bytes (`loom/src/assets/mod.rs:22`) —
+well under codex's own 32,768-byte `project_doc_max_bytes` truncation point.
 
 Two consequences:
 
-- Codex starts every run with no project doctrine beyond what the prompt carries. That is why
-  `hooks/codex-forward.sh` prepends one; the wrapper is the only channel an orchestrator writing a
-  prompt cannot forget.
+- Codex still starts every run with no doctrine beyond what a project's `~/.codex/AGENTS.md` and
+  the prompt carry, since a scratch repo or one that never ran `loom install-assets` has neither.
+  `hooks/codex-forward.sh` still prepends its own per-task stage contract on every forwarded task —
+  the one channel an orchestrator writing a prompt cannot forget, and the standing `AGENTS.md` does
+  not make it redundant.
 - The old signal doctrine's claim that codex "inherits CLAUDE.md's knowledge-first rule" named the
   wrong mechanism. The rule reached codex because orchestrators pasted CLAUDE.md Rule 5's Claude
   preamble ("READ CLAUDE.md IMMEDIATELY AND FOLLOW ALL ITS RULES") into codex prompts. Codex obeyed,

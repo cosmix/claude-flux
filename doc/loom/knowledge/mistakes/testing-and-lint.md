@@ -455,3 +455,13 @@ load needs a loaded runner to catch: `scripts/flake-check.sh` re-runs `quota::`,
 **Prevention:** in a subprocess test, a deadline the success path never reaches is not a timing assertion, so give it a generous value (`REPLY_DEADLINE`, 60 s). An elapsed-time bound proves one thing, that the code did not wait out the child's `sleep 30` or the deadline; set it well under that escape and well over the expected time, and say in the comment what it rules out. Build an over-long fixture line with a printf field width (`printf '%70000s\n' ''`) under `#!/bin/sh`; a 70000-element brace expansion needs bash and buys nothing.
 
 **Fix:** `loom/src/quota/codex_tests.rs`: `REPLY_DEADLINE` replaces the five 5 s deadlines, the elapsed bounds go from 4/5/3 s to 15/20/15 s with comments naming what each rules out, and the over-long-line fixture is plain sh.
+
+## One Panic Between set_current_dir and Its Restore Fails Sixty Unrelated Tests (2026-09-06)
+
+**What happened:** a full `cargo test --all-targets` reported 71 failures across memory, stage, stop, map and merge-lifecycle tests, all `Failed to get current dir: NotFound`. Only one test had a real defect: it asserted an `INDEX.md` row shape that had changed, panicked after `std::env::set_current_dir(&test_dir)` and before the restore, and its temp dir was then dropped — leaving the whole test process with a deleted cwd for every later test.
+
+**Why:** the cwd is process-global; a test that changes it and panics before restoring never runs the restore line, and `TempDir`'s drop removes the directory the process is still standing in. `#[serial]` does not help — it only orders the tests, it cannot restore the cwd.
+
+**Prevention:** when many unrelated tests fail with `current_dir` NotFound, run `cargo test --lib -- --test-threads=1` and fix the FIRST failure only; the rest are the cascade. Run a suspect module in isolation (`cargo test --lib <module>`) to separate a real failure from contamination. A new cwd-changing test should restore via a guard type (Drop) rather than a trailing statement.
+
+**Fix:** corrected the one assertion; the other 70 passed untouched.

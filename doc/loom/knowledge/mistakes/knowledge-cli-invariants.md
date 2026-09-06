@@ -74,3 +74,13 @@ like a broken worktree; it is not.
 **Prevention:** pin the exact new API signatures in **every** subagent prompt and tell each
 worker to ignore compiler errors outside its owned files — otherwise a worker "fixes" another
 worker's file and work is lost. The main agent is the only one that verifies a green build.
+
+## replace-section Swallows the Subsections Under the Heading It Replaces (2026-09-06)
+
+**What happened:** `loom knowledge replace-section entry-points/hooks.md "Hook Scripts — What Each Does" "<table>"` was run to add one row to that heading's table. The section ran from the `##` heading to the next `##`, so the two `###` subsections beneath it (`hooks/_common.sh Helpers`, `Registration Sites for a New Hook`) and a closing paragraph — 36 lines — were replaced along with the table. The command reported a clean "Replaced".
+
+**Why:** a section is everything up to the next heading of the same or a higher level (`fs/knowledge/splice.rs`), so a `##` heading owns its `###` children. The caller supplied only the table body it had read, and nothing warns when the replacement is far shorter than what it displaces.
+
+**Prevention:** before `replace-section`, run `rg -n '^#{2,6} ' <file>` and check whether any deeper heading sits between the target and the next same-level heading. If one does, either target the deepest heading that contains only the text you mean to change, or include the child sections verbatim in the replacement body. Compare `git diff --stat` on the file afterwards: a large net deletion from a one-row edit is the tell.
+
+**Fix:** restored the file from HEAD and re-applied the single row with an editor.

@@ -865,3 +865,11 @@ Found while fixing the silent `Completed + !merged` outcome (`mistakes/phantom-m
 - `verify_merged_true_or_revert` (`orchestrator/core/recovery.rs`) treats a git error from `verify_merge_succeeded` as "not verified" (`unwrap_or(false)`) and reverts `merged` to false, so a transient git failure can flip a merged stage to unmerged.
 - `merge_stage` (`git/merge/mod.rs`) checks out the target branch in the operator's main checkout and, on success, leaves it there; only the failure paths restore the original branch.
 - `try_auto_merge` is 228 lines against the 50-line function cap and is ledgered at that size.
+
+## Stopwording drops the words a natural-language source-graph question is asked in (2026-09-06)
+
+**Observed:** `loom knowledge context --query "how is the source graph refreshed after a commit"` (`--explain`) drops `source`, `graph`, `commit` as corpus-ubiquitous and returns three unrelated low-confidence chunks; `architecture/source-graph.md#lifecycle-who-builds-it-and-when` — the section that answers it — is not in the pack. The same question phrased with a symbol (`reconcile_base`) ranks the right function first. `loom knowledge eval` still passes at precision@5 = 1.00 because its cases are symbol- or path-shaped.
+
+**Why it matters:** the knowledge-first doctrine now tells every session to pull a question instead of reading; a pull that misses on the project's own vocabulary sends the reader back to paging files.
+
+**Where to look:** `context/rank/corpus/stopwords.rs` (the corpus-derived stopword threshold and its rescue floor, described in `architecture/context-retrieval.md#corpus-derived-query-stopwording-with-a-rescue-floor`), and `loom/eval/retrieval-cases.yaml`, which has no natural-language lifecycle case. A first step is adding that case so the gap is measured before the threshold is tuned.

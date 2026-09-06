@@ -95,24 +95,27 @@ Set by wrapper script (pid_tracking.rs:463-479) before `exec claude`:
 
 ### Hook Embedding (constants.rs)
 
-`LOOM_HOOKS` (`fs/permissions/constants.rs`) holds **23 entries**, each embedded via `include_str!()` at compile time. `install_loom_hooks()` writes them to `~/.claude/hooks/loom/` with mode 0o755. Hooks are NOT read from disk by loom at runtime.
+`LOOM_HOOKS` (`fs/permissions/constants.rs`) holds **32 entries**, each embedded via `include_str!()` at compile time. `install_loom_hooks()` writes them to `~/.claude/hooks/loom/` with mode 0o755. Hooks are NOT read from disk by loom at runtime.
 
-**Do not read "23 entries" as "23 hooks."** The arithmetic, verified against `ls hooks/*.sh` and the `LOOM_HOOKS` table:
+**Do not read "32 entries" as "32 hooks."** The arithmetic, verified against `fd -t f -e sh . hooks --max-depth 1 | wc -l` and `rg -c '^    ("' loom/src/fs/permissions/constants.rs`:
 
 ```text
-24 top-level scripts in hooks/
- −1  git-pre-commit-hook.sh   (excluded from LOOM_HOOKS; appended to .git/hooks/pre-commit by loom init)
+33 top-level scripts in hooks/
+ −1  git-pre-commit-hook.sh    (excluded from LOOM_HOOKS; appended to .git/hooks/pre-commit by loom init)
  ───
- 23  LOOM_HOOKS entries installed to ~/.claude/hooks/loom/
- −1  _common.sh               (a sourced library, not a registered hook)
+ 32  LOOM_HOOKS entries installed to ~/.claude/hooks/loom/
+ −3  _common.sh, _read_discipline.sh, _read_ledger.sh   (sourced libraries, not registered hooks)
+ −1  codex-forward.sh          (wrapper the codex forwarding lane invokes directly; not a registered Claude Code hook)
  ───
- 22  actual Claude Code hooks
+ 28  actual Claude Code hooks, registered in fs/permissions/hooks/config.rs
 ```
 
-So: **22 Claude Code hooks + 1 shared library + 1 git-side hook = 24 scripts** (64 files including
-`hooks/tests/`). Re-derive these with `fd -t f -e sh . hooks --max-depth 1 | wc -l` and
-`rg -c '^    \("' loom/src/fs/permissions/constants.rs` rather than trusting the numbers here —
-they have gone stale twice.
+So: **28 Claude Code hooks + 3 shared libraries + 1 codex wrapper + 1 git-side hook = 33 scripts**
+in `hooks/` (plus `hooks/tests/`).
+
+One of those 28 registered hooks is `knowledge-orient.sh`, the only hook registered **globally** on `SessionStart` (`fs/permissions/hooks/config.rs`) rather than per-session — it points a fresh non-stage session at `doc/loom/knowledge/INDEX.md`. It exits silently inside a stage, on `compact`/`resume`, and when no `INDEX.md` exists inside the git root.
+
+Re-derive these with the two commands above rather than trusting the numbers here — they have gone stale before.
 
 ## Subagent Isolation
 
