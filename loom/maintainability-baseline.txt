@@ -32,9 +32,9 @@ file src/git/worktree/settings.rs 706
 file src/hooks/tests.rs 514
 file src/models/stage/methods.rs 801
 file src/models/stage/types.rs 1231
-file src/orchestrator/core/merge_handler.rs 1330
+file src/orchestrator/core/merge_handler.rs 1328
 file src/orchestrator/core/orchestrator.rs 547
-file src/orchestrator/core/recovery.rs 1570
+file src/orchestrator/core/recovery.rs 1569
 file src/orchestrator/core/stage_executor.rs 790
 file src/orchestrator/merge_attribution.rs 543
 file src/orchestrator/signals/cache.rs 594
@@ -184,14 +184,14 @@ function src/orchestrator/core/merge_handler.rs handle_merge_session_completed 1
 function src/orchestrator/core/merge_handler.rs read_plan_level_auto_merge 61
 function src/orchestrator/core/merge_handler.rs spawn_merge_resolution_session 84
 function src/orchestrator/core/merge_handler.rs spawn_merge_resolution_sessions 120
-function src/orchestrator/core/merge_handler.rs try_auto_merge 243
-function src/orchestrator/core/merge_handler.rs verify_and_finalize_merge 68
+function src/orchestrator/core/merge_handler.rs try_auto_merge 228
+function src/orchestrator/core/merge_handler.rs verify_and_finalize_merge 65
 function src/orchestrator/core/orchestrator.rs new 67
 function src/orchestrator/core/orchestrator.rs run 246
 function src/orchestrator/core/recovery.rs orphan_with_commits_ahead_signals_handoff_input 64
 function src/orchestrator/core/recovery.rs recover_orphaned_sessions 164
 function src/orchestrator/core/recovery.rs recovery_commit_and_merge_reconciliation_preserve_each_other 57
-function src/orchestrator/core/recovery.rs sync_graph_with_stage_files 509
+function src/orchestrator/core/recovery.rs sync_graph_with_stage_files 508
 function src/orchestrator/core/recovery.rs sync_queued_status_to_files 60
 function src/orchestrator/core/recovery.rs verify_merged_true_or_revert 56
 function src/orchestrator/core/stage_executor.rs before_stage_gate_passed 62

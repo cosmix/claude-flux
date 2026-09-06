@@ -1,4 +1,5 @@
 use super::Orchestrator;
+use crate::models::failure::FailureType;
 use crate::models::stage::{Stage, StageStatus};
 use crate::orchestrator::core::OrchestratorConfig;
 use crate::plan::ExecutionGraph;
@@ -91,11 +92,16 @@ fn merge_probe_failure_does_not_consume_resolver_attempt_budget() {
 /// worktree or branch removed: `containment_refusal` cannot prove those
 /// commits landed, so cleanup must refuse rather than destroy real work.
 /// Build a repo whose `loom/<stage_id>` branch carries a commit that never
-/// reached `main`, with its worktree still in place.
+/// reached `main`, with its worktree still in place. When `with_extra_commit`
+/// is `false`, the branch is created but left at the same commit as `main` —
+/// used to test the phantom-merge zero-commits-ahead guard.
 ///
 /// Returns the tempdir — which the caller must keep alive for the duration of
 /// the test — and the worktree path.
-fn repo_with_unmerged_stage_branch(stage_id: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+fn repo_with_unmerged_stage_branch(
+    stage_id: &str,
+    with_extra_commit: bool,
+) -> (tempfile::TempDir, std::path::PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
 
@@ -118,41 +124,58 @@ fn repo_with_unmerged_stage_branch(stage_id: &str) -> (tempfile::TempDir, std::p
             worktree_path.to_str().unwrap(),
         ],
     );
-    // Commit on the stage branch that never made it to `main` — the branch
-    // is now provably ahead of the target.
-    std::fs::write(worktree_path.join("b.txt"), "unmerged work").unwrap();
-    git_ok(&worktree_path, &["add", "b.txt"]);
-    git_ok(&worktree_path, &["commit", "-m", "unmerged work"]);
+    if with_extra_commit {
+        // Commit on the stage branch that never made it to `main` — the branch
+        // is now provably ahead of the target.
+        std::fs::write(worktree_path.join("b.txt"), "unmerged work").unwrap();
+        git_ok(&worktree_path, &["add", "b.txt"]);
+        git_ok(&worktree_path, &["commit", "-m", "unmerged work"]);
+    }
 
     (temp, worktree_path)
+}
+
+/// Save a `Completed`, unmerged stage with no recorded commit, as `handle_complete_stage` leaves it.
+fn save_completed_unmerged_stage(stage_id: &str, work_dir: &std::path::Path) {
+    let mut stage = Stage::new(stage_id.to_string(), None);
+    stage.id = stage_id.to_string();
+    stage.status = StageStatus::Completed;
+    stage.merged = false;
+    stage.completed_commit = None;
+    crate::verify::transitions::save_stage(&stage, work_dir).unwrap();
+}
+
+/// Build an orchestrator over `root` targeting `main`, pinning the terminal env around `Orchestrator::new`.
+fn orchestrator_for(root: &std::path::Path, work_dir: &std::path::Path) -> Orchestrator {
+    let config = OrchestratorConfig {
+        work_dir: work_dir.to_path_buf(),
+        repo_root: root.to_path_buf(),
+        base_branch: Some("main".to_string()),
+        enable_skill_routing: false,
+        ..Default::default()
+    };
+    let saved_terminal = pin_terminal_env();
+    let constructed = Orchestrator::new(config, ExecutionGraph::build(Vec::new()).unwrap());
+    restore_terminal_env(saved_terminal);
+    constructed.unwrap()
 }
 
 #[test]
 #[serial]
 fn already_merged_short_circuit_refuses_cleanup_for_unmerged_branch() {
     let stage_id = "unmerged-but-flagged";
-    let (temp, worktree_path) = repo_with_unmerged_stage_branch(stage_id);
+    let (temp, worktree_path) = repo_with_unmerged_stage_branch(stage_id, true);
     let root = temp.path();
     let work_dir = root.join(".loom").join("work");
     let branch = format!("loom/{stage_id}");
 
-    let config = OrchestratorConfig {
-        work_dir: work_dir.clone(),
-        repo_root: root.to_path_buf(),
-        base_branch: Some("main".to_string()),
-        enable_skill_routing: false,
-        ..Default::default()
-    };
     let mut stage = Stage::new(stage_id.to_string(), None);
     stage.id = stage_id.to_string();
     stage.status = StageStatus::Completed;
     stage.merged = true;
     crate::verify::transitions::save_stage(&stage, &work_dir).unwrap();
 
-    let saved_terminal = pin_terminal_env();
-    let constructed = Orchestrator::new(config, ExecutionGraph::build(Vec::new()).unwrap());
-    restore_terminal_env(saved_terminal);
-    let mut orchestrator = constructed.unwrap();
+    let mut orchestrator = orchestrator_for(root, &work_dir);
 
     assert!(orchestrator.try_auto_merge(stage_id));
 
@@ -169,5 +192,82 @@ fn already_merged_short_circuit_refuses_cleanup_for_unmerged_branch() {
         .status
         .success(),
         "cleanup must refuse to delete the branch: it still holds unmerged commits"
+    );
+}
+
+#[test]
+#[serial]
+fn failed_auto_merge_moves_completed_stage_to_merge_blocked() {
+    let stage_id = "blocked-by-untracked-file";
+    let (temp, _worktree_path) = repo_with_unmerged_stage_branch(stage_id, true);
+    let root = temp.path();
+    let work_dir = root.join(".loom").join("work");
+    let branch = format!("loom/{stage_id}");
+
+    // Make the merge fail deterministically: an untracked b.txt in the main
+    // checkout, with content different from the one committed on the stage
+    // branch, makes git refuse the merge ("untracked working tree files
+    // would be overwritten by merge") before MERGE_HEAD is ever set.
+    std::fs::write(root.join("b.txt"), "conflicting untracked content").unwrap();
+
+    save_completed_unmerged_stage(stage_id, &work_dir);
+
+    let head_before = isolated_git(root, &["rev-parse", "main"]).stdout;
+
+    let mut orchestrator = orchestrator_for(root, &work_dir);
+
+    assert!(!orchestrator.try_auto_merge(stage_id));
+
+    let reloaded = crate::verify::transitions::load_stage(stage_id, &work_dir).unwrap();
+    assert_eq!(reloaded.status, StageStatus::MergeBlocked);
+    assert!(!reloaded.merged);
+    let failure_info = reloaded
+        .failure_info
+        .expect("failed auto-merge must record failure_info");
+    assert_eq!(failure_info.failure_type, FailureType::InfrastructureError);
+    assert!(
+        !failure_info.evidence.is_empty(),
+        "failure_info must carry the git error as evidence"
+    );
+
+    let head_after = isolated_git(root, &["rev-parse", "main"]).stdout;
+    assert_eq!(
+        head_before, head_after,
+        "a failed auto-merge must not move 'main'"
+    );
+    assert!(
+        isolated_git(
+            root,
+            &["rev-parse", "--verify", &format!("refs/heads/{branch}")]
+        )
+        .status
+        .success(),
+        "a failed auto-merge must not delete the stage branch"
+    );
+}
+
+#[test]
+#[serial]
+fn empty_stage_branch_routes_to_human_review() {
+    let stage_id = "empty-stage-branch";
+    let (temp, _worktree_path) = repo_with_unmerged_stage_branch(stage_id, false);
+    let root = temp.path();
+    let work_dir = root.join(".loom").join("work");
+
+    save_completed_unmerged_stage(stage_id, &work_dir);
+
+    let mut orchestrator = orchestrator_for(root, &work_dir);
+
+    assert!(!orchestrator.try_auto_merge(stage_id));
+
+    let reloaded = crate::verify::transitions::load_stage(stage_id, &work_dir).unwrap();
+    assert_eq!(reloaded.status, StageStatus::NeedsHumanReview);
+    assert!(!reloaded.merged);
+    let review_reason = reloaded
+        .review_reason
+        .expect("routing to human review must record review_reason");
+    assert!(
+        review_reason.contains("zero commits"),
+        "review_reason should explain the branch had zero commits: {review_reason}"
     );
 }

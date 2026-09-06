@@ -541,14 +541,12 @@ impl Recovery for Orchestrator {
                                         // Commit is not in target branch. Do NOT
                                         // write merged=true. Mark as a retry candidate
                                         // so the daemon makes a one-shot attempt.
-                                        tracing::error!(
+                                        tracing::debug!(
                                             stage_id = %stage.id,
                                             commit = %completed_commit,
                                             target = %target_branch,
-                                            "Completed stage commit is not an ancestor of target \
-                                             branch; leaving as Completed + !merged. \
-                                             Run `loom stage merge {}` to retry.",
-                                            stage.id
+                                            "Completed stage commit is not yet in the target \
+                                             branch; queuing the one-shot auto-merge attempt"
                                         );
                                         stuck_completed_stage_ids.push(stage.id.clone());
                                     }
@@ -814,22 +812,23 @@ impl Recovery for Orchestrator {
             }
         }
 
-        // Fix 11: one-shot auto-merge retry for stuck Completed + !merged stages.
+        // Fix 11: one-shot auto-merge for Completed + !merged stages.
         //
-        // The `loom stage complete --no-verify` flow legitimately produces a
-        // Completed + !merged + !completed_commit state. Normally the
-        // StageCompleted event triggers `try_auto_merge`, but after a daemon
-        // restart no event fires for already-Completed stages — leaving them
-        // permanently stuck. Retry once per daemon session to unstick them.
+        // This loop is the normal merge path, not only a recovery path: the
+        // sync runs before the monitor poll on every tick, so a stage the
+        // daemon has just written as Completed (no merge yet, no
+        // completed_commit) gets its first `try_auto_merge` here. The later
+        // StageCompleted event finds it merged and only runs cleanup.
         //
-        // This also retries the case where a commit was derived from the branch
-        // HEAD but ancestry reports Ok(false): the commit is on the stage branch
-        // but not yet in the target branch. That scenario is exactly what
-        // `try_auto_merge` is designed to resolve — it runs the merge command.
+        // It also covers the recovery cases the one-shot was written for: a
+        // `loom stage complete --no-verify` completion followed by a daemon
+        // restart, and a derived commit that ancestry reports Ok(false).
         //
-        // `merge_retry_attempted` is in-memory only. If the retry fails, the
-        // entry stays in the set so we don't re-attempt every 5-second poll.
-        // User-driven `loom stage merge` is independent of this set.
+        // A failed attempt leaves the stage MergeBlocked with the error in
+        // failure_info; only auto-merge-disabled stages remain Completed +
+        // !merged. `merge_retry_attempted` is in-memory only: the entry stays
+        // in the set so a stage is not retried every 5-second poll, and
+        // user-driven `loom stage merge` is independent of it.
         for stuck_id in stuck_completed_stage_ids {
             if self.merge_retry_attempted.contains(&stuck_id) {
                 continue;

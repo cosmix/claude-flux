@@ -1,6 +1,7 @@
 //! Merge session handling and auto-merge logic
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 
 use crate::git::branch::branch_name_for_stage;
 use crate::git::cleanup::CleanupConfig;
@@ -8,6 +9,7 @@ use crate::git::merge::{check_merge_state, MergeState};
 use crate::git::merge::{
     get_conflicting_files_from_status, verify_merge_succeeded, MergeProbeOutcome,
 };
+use crate::models::failure::{FailureInfo, FailureType};
 use crate::models::session::{Session, SessionType};
 use crate::models::stage::StageStatus;
 use crate::orchestrator::auto_merge::{attempt_auto_merge, is_auto_merge_enabled, AutoMergeResult};
@@ -332,12 +334,8 @@ impl Orchestrator {
     /// This helper encapsulates the common pattern of verifying a merge via git ancestry
     /// check and updating stage/graph state based on the result.
     ///
-    /// Behavior depends on the stage's current status:
-    /// - Non-Completed stage with failed verification: transitions to `MergeBlocked`.
-    /// - Completed stage with failed verification: leaves the stage at
-    ///   `Completed + !merged` without writing `merged=true`. This breaks the original
-    ///   respawn loop (see `spawn_merge_resolution_sessions` which only acts on
-    ///   `MergeConflict | MergeBlocked`) without lying about merge status.
+    /// A failed verification always moves the stage to `MergeBlocked` with the
+    /// reason in `failure_info`, whatever its prior status.
     ///
     /// Returns `true` if the merge was verified successful via git ancestry.
     /// Returns `false` otherwise. Caller must NOT assume `merged=true` on false.
@@ -360,6 +358,14 @@ impl Orchestrator {
                     branch = %branch_name,
                     "Cannot verify merge without completed_commit or branch HEAD"
                 );
+                self.persist_merge_blocked(
+                    stage,
+                    stage_id,
+                    &format!(
+                        "cannot verify merge: no completed_commit recorded and branch \
+                         {branch_name} is missing"
+                    ),
+                );
                 return false;
             }
         };
@@ -367,43 +373,32 @@ impl Orchestrator {
         match verify_merge_succeeded(&completed_commit, target_branch, &self.config.repo_root) {
             Ok(true) => self.persist_verified_merge(stage, stage_id, &completed_commit),
             Ok(false) => {
-                if stage.status == StageStatus::Completed {
-                    clear_status_line();
-                    tracing::error!(
-                        stage_id = %stage_id,
-                        commit = %completed_commit,
-                        target = %target_branch,
-                        "Merge verification failed for completed stage: commit not in target branch. \
-                         Leaving stage as Completed + !merged (will NOT auto-respawn); \
-                         run `loom stage merge {}` manually.",
-                        stage_id
-                    );
-                    return false;
-                }
+                tracing::error!(
+                    stage_id = %stage_id,
+                    commit = %completed_commit,
+                    target = %target_branch,
+                    "Merge verification failed: commit not in target branch"
+                );
                 self.persist_merge_blocked(
                     stage,
                     stage_id,
-                    "merge verification failed but transition was illegal",
+                    &format!(
+                        "merge verification failed: commit {completed_commit} is not an \
+                         ancestor of {target_branch}"
+                    ),
                 );
                 false
             }
             Err(error) => {
-                if stage.status == StageStatus::Completed {
-                    clear_status_line();
-                    tracing::error!(
-                        stage_id = %stage_id,
-                        %error,
-                        "Merge verification error for completed stage. \
-                         Leaving stage as Completed + !merged (will NOT auto-respawn); \
-                         run `loom stage merge {}` manually.",
-                        stage_id
-                    );
-                    return false;
-                }
+                tracing::error!(
+                    stage_id = %stage_id,
+                    %error,
+                    "Merge verification errored"
+                );
                 self.persist_merge_blocked(
                     stage,
                     stage_id,
-                    "merge verification errored but transition was illegal",
+                    &format!("merge verification errored: {error:#}"),
                 );
                 false
             }
@@ -439,20 +434,26 @@ impl Orchestrator {
         }
     }
 
+    /// Persist a failed auto-merge as `MergeBlocked`, recording `error` in
+    /// `failure_info`. Applies to `Completed` stages too, so `loom status`
+    /// shows the failure and `loom stage merge` can retry it.
     fn persist_merge_blocked(
         &mut self,
         stage: &mut crate::models::stage::Stage,
         stage_id: &str,
-        force_reason: &str,
+        error: &str,
     ) {
+        let first_line = error.lines().next().unwrap_or(error);
         let updated = self.update_stage(stage_id, |current| {
-            if current.status == StageStatus::Completed {
-                return Ok(());
-            }
-            if let Err(error) = current.try_mark_merge_blocked() {
+            current.failure_info = Some(FailureInfo {
+                failure_type: FailureType::InfrastructureError,
+                detected_at: Utc::now(),
+                evidence: error.lines().map(str::to_owned).collect(),
+            });
+            if current.try_mark_merge_blocked().is_err() {
                 current.force_status_with_reason(
                     StageStatus::MergeBlocked,
-                    &format!("{force_reason}: {error}"),
+                    &format!("auto-merge failed: {first_line}"),
                 );
             }
             Ok(())
@@ -466,6 +467,9 @@ impl Orchestrator {
         }
         if stage.status == StageStatus::MergeBlocked {
             let _ = self.graph.mark_status(stage_id, StageStatus::MergeBlocked);
+            clear_status_line();
+            eprintln!("Stage '{stage_id}' auto-merge failed: {first_line}");
+            eprintln!("  Then run from the stage worktree: loom stage merge {stage_id}");
         }
     }
 
@@ -553,11 +557,14 @@ impl Orchestrator {
                         stage_id = %stage_id,
                         branch = %stage_branch,
                         target = %target_branch,
-                        "Stage branch has zero commits beyond target; refusing auto-merge \
-                         to prevent phantom merge. Leaving stage as Completed + !merged. \
-                         The agent never committed work for this stage — re-queue or \
-                         redo the stage manually."
+                        "Stage branch has zero commits beyond target; routing to human review"
                     );
+                    let reason = format!(
+                        "branch {stage_branch} has zero commits beyond {target_branch}: the \
+                         agent never committed work for this stage. Re-queue it with \
+                         `loom stage human-review {stage_id} --approve`, or redo it manually."
+                    );
+                    self.route_to_human_review(stage_id, reason);
                     return false;
                 }
                 Ok(_) => {}
@@ -691,26 +698,8 @@ impl Orchestrator {
                     error = %e,
                     "Auto-merge failed"
                 );
-                // If stage is already Completed (terminal state), leave as
-                // Completed + !merged. The old code force-wrote merged=true here,
-                // which is the phantom-merge bug. The respawn loop is already
-                // broken structurally (spawn_merge_resolution_sessions only
-                // acts on MergeConflict | MergeBlocked), so lying about merge
-                // status is unnecessary and dangerous.
-                if stage.status == StageStatus::Completed {
-                    tracing::error!(
-                        stage_id = %stage_id,
-                        "Stage is already Completed; leaving as Completed + !merged \
-                         despite auto-merge error. Run `loom stage merge {}` manually.",
-                        stage_id
-                    );
-                    return false;
-                }
-                self.persist_merge_blocked(
-                    &mut stage,
-                    stage_id,
-                    "auto-merge errored but transition was illegal",
-                );
+                // MergeBlocked with the error recorded, so status shows it and `loom stage merge` can retry.
+                self.persist_merge_blocked(&mut stage, stage_id, &format!("{e:#}"));
                 // Return false - merge failed, stage should not be marked Completed
                 false
             }
@@ -1028,6 +1017,35 @@ impl Orchestrator {
         }
     }
 
+    /// Persist `NeedsHumanReview` with `reason` as the review text and mirror it
+    /// into the graph. Returns whether the persist succeeded.
+    fn route_to_human_review(&mut self, stage_id: &str, reason: String) -> bool {
+        let updated = self.update_stage(stage_id, |stage| {
+            stage.force_status_with_reason(StageStatus::NeedsHumanReview, &reason);
+            stage.review_reason = Some(reason.clone());
+            Ok(())
+        });
+        if let Err(error) = updated {
+            tracing::warn!(
+                stage_id = %stage_id,
+                %error,
+                "Failed to save stage after routing to human review"
+            );
+            return false;
+        }
+        if let Err(e) = self
+            .graph
+            .mark_status(stage_id, StageStatus::NeedsHumanReview)
+        {
+            tracing::warn!(
+                stage_id = %stage_id,
+                error = %e,
+                "Failed to mark stage NeedsHumanReview in graph after routing to human review"
+            );
+        }
+        true
+    }
+
     /// Route a stage whose merge-resolver budget is exhausted to
     /// `NeedsHumanReview` and persist it.
     ///
@@ -1045,28 +1063,8 @@ impl Orchestrator {
             failed_attempts = %failed_attempts,
             "Merge-resolver attempt cap reached; routing stage to NeedsHumanReview"
         );
-        let updated = self.update_stage(stage_id, |stage| {
-            stage.force_status_with_reason(StageStatus::NeedsHumanReview, &reason);
-            stage.review_reason = Some(reason.clone());
-            Ok(())
-        });
-        if let Err(error) = updated {
-            tracing::warn!(
-                stage_id = %stage_id,
-                %error,
-                "Failed to save stage after merge-resolver escalation"
-            );
+        if !self.route_to_human_review(stage_id, reason) {
             return;
-        }
-        if let Err(e) = self
-            .graph
-            .mark_status(stage_id, StageStatus::NeedsHumanReview)
-        {
-            tracing::warn!(
-                stage_id = %stage_id,
-                error = %e,
-                "Failed to mark stage NeedsHumanReview in graph after escalation"
-            );
         }
 
         // Remove any lingering active session and clear the counter so a future
