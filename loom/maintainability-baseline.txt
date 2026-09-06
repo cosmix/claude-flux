@@ -58,7 +58,7 @@ file src/sandbox/settings/tests.rs 1667
 file src/skills/index.rs 564
 file src/verify/duplicate_detection.rs 436
 file src/verify/transitions/state.rs 433
-file tests/adjudication_e2e.rs 663
+file tests/adjudication_e2e.rs 586
 file tests/e2e/tmux_backend.rs 588
 file tests/failure_resume.rs 468
 file tests/integration/merge_conflict_recovery.rs 412
@@ -266,7 +266,6 @@ function src/verify/transitions/state.rs are_all_dependencies_satisfied 67
 function src/verify/transitions/state.rs describe_dependency_block 95
 function src/verify/wiring_detection.rs collect_added_source_files 56
 function src/verify/wiring_detection.rs is_referenced 66
-function tests/adjudication_e2e.rs dispute_to_amendment_to_pass 65
 function tests/completion_flow.rs test_acceptance_failure_creates_correct_status 64
 function tests/completion_flow.rs test_completion_requires_merged_dependencies 70
 function tests/completion_flow.rs test_successful_completion_flow 55

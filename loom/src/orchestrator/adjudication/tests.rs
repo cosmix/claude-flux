@@ -3,7 +3,7 @@
 //! tests live in `prompt.rs`, `session.rs`, `verdict.rs`, and
 //! `feedback.rs`.
 
-use super::apply::build_amendment_request;
+use super::plan_patch::build_amendment_request;
 use super::scan::{parse_yaml_frontmatter, scan_pending_requests};
 use super::session::{attempt_count, MAX_ADJUDICATION_ATTEMPTS};
 use super::{feedback, AdjudicatorRegistry, MAX_EVIDENCE_ROUNDS};

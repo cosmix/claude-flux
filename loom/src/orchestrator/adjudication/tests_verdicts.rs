@@ -4,9 +4,10 @@
 //! keep that file under the maintainability limit.
 
 use super::tests::{make_stage, reject_verdict, write_dispute_request, write_stage, write_verdict};
-use super::{feedback, AdjudicatorRegistry, MAX_EVIDENCE_ROUNDS};
-use crate::models::dispute::DisputeVerdict;
+use super::{feedback, AdjudicatorRegistry, MAX_APPLY_ATTEMPTS, MAX_EVIDENCE_ROUNDS};
+use crate::models::dispute::{Citation, DisputeVerdict, PlanPatch};
 use crate::models::stage::StageStatus;
+use std::path::PathBuf;
 
 /// A Reject is a deadlock, not a retry: the agent called the criterion
 /// impossible and the adjudicator upheld it, so re-queueing would loop the
@@ -266,4 +267,94 @@ fn a_reject_verdict_is_not_undone_by_a_later_verdict_on_a_sibling_dispute() {
         .as_deref()
         .unwrap_or("")
         .contains("dispute 1"));
+}
+
+/// Arrange a stage with one dispute whose verdict is an Accept carrying a
+/// `plan_patch` that can never normalise under either accepted shape, so
+/// every apply attempt fails identically. Returns the tempdir (keep it alive
+/// for `work`'s lifetime), the registry, and the `applied.marker` path.
+fn arrange_unnormalisable_accept_verdict() -> (tempfile::TempDir, AdjudicatorRegistry, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path();
+    std::fs::create_dir_all(work.join("stages")).unwrap();
+    // A config with a source_path is enough for resolve_plan_path to
+    // succeed — build_amendment_request fails before any file is read.
+    std::fs::write(
+        work.join("config.toml"),
+        "[plan]\nsource_path = \"/tmp/loom-test-plan-does-not-exist.md\"\nplan_id = \"x\"\nplan_name = \"x\"\nbase_branch = \"main\"\n",
+    )
+    .unwrap();
+    write_stage(work, &make_stage("s1"));
+    write_dispute_request(work, "s1", 1, 0);
+    write_verdict(
+        work,
+        "s1",
+        1,
+        DisputeVerdict::Accept {
+            plan_patch: PlanPatch {
+                inner: serde_json::json!({"field": "acceptance"}),
+            },
+            citations: vec![Citation {
+                file: "f".to_string(),
+                line: None,
+                excerpt: "e".to_string(),
+                claim: "c".to_string(),
+            }],
+            reasoning: "test".to_string(),
+        },
+        1,
+    );
+
+    let reg = AdjudicatorRegistry::new();
+    let applied = work
+        .join("disputes")
+        .join("s1")
+        .join("1")
+        .join("applied.marker");
+    (tmp, reg, applied)
+}
+
+/// An Accept verdict whose `plan_patch` cannot be normalised under EITHER
+/// accepted shape can never apply, so `apply_verdict` must give up after
+/// `MAX_APPLY_ATTEMPTS` failures instead of retrying forever: every failed
+/// attempt also re-triggers `retire_disputing_agents`
+/// (`orchestrator/core/verdict_apply.rs`), which would otherwise kill any new
+/// session on the stage within seconds of it starting.
+#[test]
+fn apply_cap_escalates_after_max_attempts_then_no_ops() {
+    let (tmp, reg, applied) = arrange_unnormalisable_accept_verdict();
+    let work = tmp.path();
+
+    for attempt in 1..MAX_APPLY_ATTEMPTS {
+        reg.apply_pending_verdicts(work).unwrap();
+        let mid = crate::verify::transitions::load_stage("s1", work).unwrap();
+        assert_ne!(
+            mid.status,
+            StageStatus::NeedsHumanReview,
+            "attempt {attempt} must not have escalated yet",
+        );
+        assert!(
+            !applied.exists(),
+            "attempt {attempt} must not write applied.marker yet",
+        );
+    }
+
+    // The Nth attempt trips the cap.
+    reg.apply_pending_verdicts(work).unwrap();
+    let after = crate::verify::transitions::load_stage("s1", work).unwrap();
+    assert_eq!(after.status, StageStatus::NeedsHumanReview);
+    let reason = after.review_reason.as_deref().unwrap_or("");
+    assert!(
+        reason.contains("dispute 1") && reason.contains("failed"),
+        "review_reason must carry the apply error: {reason}",
+    );
+    assert!(
+        applied.exists(),
+        "applied.marker must exist after apply-cap escalation",
+    );
+
+    // A further pass is a no-op: applied.marker already exists.
+    reg.apply_pending_verdicts(work).unwrap();
+    let final_state = crate::verify::transitions::load_stage("s1", work).unwrap();
+    assert_eq!(final_state.status, StageStatus::NeedsHumanReview);
 }

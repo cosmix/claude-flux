@@ -21,9 +21,10 @@ use std::path::Path;
 
 use crate::models::dispute::{applied_marker, dispute_dir, DisputeVerdict, DisputeVerdictRecord};
 use crate::models::stage::{Stage, StageStatus};
-use crate::plan::amendment::{apply_amendment, AmendmentField, AmendmentPatch, AmendmentRequest};
+use crate::plan::amendment::apply_amendment;
 use crate::verify::transitions::{load_stage, update_stage};
 
+use super::plan_patch::build_amendment_request;
 use super::scan::read_verdict_record;
 use super::{feedback, resolve_plan_path, AdjudicatorRegistry, MAX_EVIDENCE_ROUNDS};
 
@@ -47,9 +48,33 @@ impl AdjudicatorRegistry {
         Ok(())
     }
 
-    /// Apply a single verdict to the stage. Public so callers under
-    /// test can drive a verdict file end-to-end.
+    /// Apply a single verdict to the stage. Public so tests can drive a
+    /// verdict file end-to-end. Wraps `apply_verdict_once` with a
+    /// bounded retry: after [`super::MAX_APPLY_ATTEMPTS`] failures the
+    /// verdict is a wedge, not a transient, and gets escalated instead.
     pub fn apply_verdict(&self, work_dir: &Path, stage_id: &str, dispute_id: u32) -> Result<()> {
+        match self.apply_verdict_once(work_dir, stage_id, dispute_id) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let failures = super::record_apply_failure(work_dir, stage_id, dispute_id);
+                if failures >= super::MAX_APPLY_ATTEMPTS {
+                    super::escalate_apply_cap(work_dir, stage_id, dispute_id, failures, &e);
+                    // Write applied.marker so pending_verdicts stops
+                    // returning this dispute: that is what stops both the
+                    // retry loop AND the retire_disputing_agents kill that
+                    // runs before every attempt.
+                    write_applied_marker_after_apply_cap(work_dir, stage_id, dispute_id);
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// One apply attempt. Idempotent under crash recovery: a `.applying`
+    /// marker guards the mutation and is removed once `applied.marker` lands.
+    fn apply_verdict_once(&self, work_dir: &Path, stage_id: &str, dispute_id: u32) -> Result<()> {
         let disputes_root = work_dir.join("disputes");
         let verdict_path =
             crate::models::dispute::verdict_file(&disputes_root, stage_id, dispute_id);
@@ -353,35 +378,20 @@ fn requeue_or_hold_for_remaining_disputes(work_dir: &Path, stage: &mut Stage) ->
     Ok(())
 }
 
-pub(super) fn build_amendment_request(
-    stage_id: String,
-    plan_patch: &crate::models::dispute::PlanPatch,
-    dispute_id: u32,
-) -> Result<AmendmentRequest> {
-    let inner = &plan_patch.inner;
-    let field = inner
-        .get("field")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("plan_patch missing 'field' string"))?;
-    let field = match field {
-        "acceptance" => AmendmentField::Acceptance,
-        "wiring" => AmendmentField::Wiring,
-        other => anyhow::bail!("plan_patch field '{other}' must be acceptance|wiring"),
-    };
-    let patch_obj = inner
-        .get("patch")
-        .ok_or_else(|| anyhow::anyhow!("plan_patch missing 'patch' object"))?;
-    let patch: AmendmentPatch = serde_json::from_value(patch_obj.clone())
-        .context("decode AmendmentPatch from plan_patch")?;
-    let reason = inner
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    Ok(AmendmentRequest {
-        stage_id,
-        field,
-        patch,
-        reason,
-        dispute_id: Some(dispute_id.to_string()),
-    })
+/// Write `applied.marker` after an apply-cap escalation so the daemon stops
+/// retrying; best-effort, since a write failure here just means a retry.
+fn write_applied_marker_after_apply_cap(work_dir: &Path, stage_id: &str, dispute_id: u32) {
+    let applied = applied_marker(&work_dir.join("disputes"), stage_id, dispute_id);
+    if let Some(parent) = applied.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    if let Err(error) = std::fs::write(&applied, b"") {
+        tracing::warn!(
+            target: "loom::adjudication",
+            stage = %stage_id,
+            dispute = dispute_id,
+            %error,
+            "failed to write applied.marker after apply-cap escalation; verdict will be retried",
+        );
+    }
 }

@@ -22,6 +22,8 @@ use serde_json::Value;
 
 use crate::models::dispute::{Citation, DisputeVerdict, PlanPatch};
 
+use super::plan_patch;
+
 /// Result of parsing + validating raw JSON from the model.
 ///
 /// `Verdict` is the normal happy path. `Escalate` signals that the
@@ -153,7 +155,7 @@ fn validate_accept(json: &Value) -> ValidationOutcome {
             "Accept verdict must include at least one citation grounding the decision.",
         );
     }
-    let plan_patch = match json.get("plan_patch") {
+    let plan_patch_raw = match json.get("plan_patch") {
         Some(v) if !v.is_null() => v.clone(),
         _ => {
             return needs_more_evidence(
@@ -161,8 +163,21 @@ fn validate_accept(json: &Value) -> ValidationOutcome {
             );
         }
     };
+    let (field, patch, patch_reason) = match plan_patch::normalize(&plan_patch_raw) {
+        Ok(parts) => parts,
+        Err(msg) => {
+            return needs_more_evidence(format!(
+                "Accept verdict 'plan_patch' is malformed: {msg}. Re-emit it as: {{\"field\": \
+                 \"acceptance\"|\"wiring\", \"patch\": {{\"op\": \"replace\"|\"insert\"|\"delete\", \
+                 \"index\": <0-based int>, \"value\": \"<YAML body; omit for delete>\"}}, \"reason\": \
+                 \"<why the criterion is wrong>\"}}"
+            ));
+        }
+    };
     ValidationOutcome::Verdict(DisputeVerdict::Accept {
-        plan_patch: PlanPatch { inner: plan_patch },
+        plan_patch: PlanPatch {
+            inner: plan_patch::canonical_inner(field, &patch, patch_reason.as_deref()),
+        },
         citations,
         reasoning,
     })
@@ -260,128 +275,5 @@ fn needs_more_evidence(reason: impl Into<String>) -> ValidationOutcome {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn accept_with_citations_round_trips() {
-        let raw = r#"{
-            "verdict": "accept",
-            "reasoning": "criterion was unreachable",
-            "citations": [
-                {"file": "src/a.rs", "line": 10, "excerpt": "fn foo()", "claim": "missing function"}
-            ],
-            "plan_patch": {"stage_id": "x", "field": "acceptance", "patch": {"op": "delete", "index": 1}}
-        }"#;
-        let out = parse_and_validate(raw);
-        match out {
-            ValidationOutcome::Verdict(DisputeVerdict::Accept {
-                citations,
-                reasoning,
-                ..
-            }) => {
-                assert_eq!(citations.len(), 1);
-                assert_eq!(reasoning, "criterion was unreachable");
-            }
-            other => panic!("expected Accept, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn accept_without_citations_coerced_to_needs_more() {
-        let raw = r#"{
-            "verdict": "accept",
-            "reasoning": "feels right",
-            "citations": [],
-            "plan_patch": {}
-        }"#;
-        match parse_and_validate(raw) {
-            ValidationOutcome::Verdict(DisputeVerdict::NeedsMoreEvidence { questions }) => {
-                assert!(questions[0].contains("citation"));
-            }
-            other => panic!("expected NeedsMoreEvidence, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn reject_with_citations() {
-        let raw = r#"{
-            "verdict": "reject",
-            "reasoning": "criterion is right",
-            "citations": [{"file":"a","excerpt":"e","claim":"c"}]
-        }"#;
-        match parse_and_validate(raw) {
-            ValidationOutcome::Verdict(DisputeVerdict::Reject { citations, .. }) => {
-                assert_eq!(citations.len(), 1);
-                assert!(citations[0].line.is_none());
-            }
-            other => panic!("expected Reject, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn needs_more_evidence_with_questions() {
-        let raw = r#"{"verdict": "needs-more-evidence", "questions": ["what is X?"]}"#;
-        match parse_and_validate(raw) {
-            ValidationOutcome::Verdict(DisputeVerdict::NeedsMoreEvidence { questions }) => {
-                assert_eq!(questions, vec!["what is X?".to_string()]);
-            }
-            other => panic!("expected NeedsMoreEvidence, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn needs_more_evidence_with_no_questions_escalates() {
-        let raw = r#"{"verdict": "needs-more-evidence", "questions": []}"#;
-        match parse_and_validate(raw) {
-            ValidationOutcome::Escalate { reason } => {
-                assert!(reason.contains("pathological"));
-            }
-            other => panic!("expected Escalate, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn unknown_verdict_tag_coerces_to_needs_more() {
-        let raw = r#"{"verdict": "bogus"}"#;
-        match parse_and_validate(raw) {
-            ValidationOutcome::Verdict(DisputeVerdict::NeedsMoreEvidence { questions }) => {
-                assert!(questions[0].contains("unknown verdict tag"));
-            }
-            other => panic!("expected NeedsMoreEvidence, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn malformed_json_coerces_to_needs_more() {
-        let raw = "not json at all";
-        match parse_and_validate(raw) {
-            ValidationOutcome::Verdict(DisputeVerdict::NeedsMoreEvidence { questions }) => {
-                assert!(
-                    questions[0].contains("not valid JSON"),
-                    "got: {:?}",
-                    questions
-                );
-            }
-            other => panic!("expected NeedsMoreEvidence, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn fenced_json_is_accepted() {
-        let raw = "```json\n{\"verdict\":\"reject\",\"reasoning\":\"r\",\"citations\":[{\"file\":\"f\",\"excerpt\":\"e\",\"claim\":\"c\"}]}\n```";
-        assert!(matches!(
-            parse_and_validate(raw),
-            ValidationOutcome::Verdict(DisputeVerdict::Reject { .. })
-        ));
-    }
-
-    #[test]
-    fn json_with_leading_prose_extracts_first_object() {
-        let raw = "Sure! Here is the verdict:\n{\"verdict\":\"reject\",\"reasoning\":\"r\",\"citations\":[{\"file\":\"f\",\"excerpt\":\"e\",\"claim\":\"c\"}]}\nLet me know if you want more.";
-        assert!(matches!(
-            parse_and_validate(raw),
-            ValidationOutcome::Verdict(DisputeVerdict::Reject { .. })
-        ));
-    }
-}
+#[path = "verdict_tests.rs"]
+mod tests;

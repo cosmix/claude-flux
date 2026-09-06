@@ -18,6 +18,9 @@ use loom::orchestrator::adjudication::{
 use loom::plan::schema::AcceptanceCriterion;
 use std::path::{Path, PathBuf};
 
+#[path = "adjudication_e2e/amendment.rs"]
+mod amendment;
+
 fn write_stage(work_dir: &Path, stage: &Stage) {
     std::fs::create_dir_all(work_dir.join("stages")).unwrap();
     loom::verify::transitions::save_stage(stage, work_dir).unwrap();
@@ -382,86 +385,6 @@ fn double_apply_is_idempotent() {
     reg.apply_pending_verdicts(work).unwrap();
     let after = loom::verify::transitions::load_stage("s1", work).unwrap();
     assert_eq!(mid.status, after.status);
-}
-
-/// True end-to-end coverage of the autonomous-criteria-adjudication
-/// happy path:
-///
-/// 1. Stage `s1` has a mechanically wrong acceptance criterion at
-///    index 0 plus a passing one at index 1.
-/// 2. A dispute is filed against index 0.
-/// 3. The adjudication session records an Accept verdict whose
-///    `plan_patch` deletes acceptance[0].
-/// 4. `apply_pending_verdicts` MUST succeed (no silent fallthrough).
-/// 5. Assertions cover every observable side-effect of a successful
-///    amendment: `plan_versions/1.md` snapshot, `audit.md` row, live
-///    plan file rewritten, stage transitions back to `Queued`, and
-///    `amendments_applied` is incremented.
-#[test]
-fn dispute_to_amendment_to_pass() {
-    let tmp = tempfile::tempdir().unwrap();
-    let work = tmp.path();
-    let plan = write_plan_with_metadata_markers(work);
-    write_stage(work, &make_stage_two_criteria("s1"));
-    write_dispute(work, "s1", 1);
-
-    let reg = AdjudicatorRegistry::new();
-    drive_dispute(&reg, work, "s1", 1, &verdict_accept_delete_first());
-
-    // Snapshot exists at .loom/work/plan_versions/1.md
-    let snapshot = work.join("plan_versions").join("1.md");
-    assert!(
-        snapshot.exists(),
-        "plan_versions/1.md must exist after first amendment",
-    );
-
-    // Audit log records the amendment with stage_id and op.
-    let audit = std::fs::read_to_string(work.join("plan_versions").join("audit.md"))
-        .expect("audit.md must exist after first amendment");
-    assert!(
-        audit.contains("s1"),
-        "audit row must mention stage_id 's1' — audit:\n{audit}",
-    );
-    assert!(
-        audit.contains("delete"),
-        "audit row must record the patch op — audit:\n{audit}",
-    );
-
-    // Live plan file got rewritten and no longer carries the deleted criterion.
-    let live_plan = std::fs::read_to_string(&plan).unwrap();
-    assert!(
-        !live_plan.contains("intentionally_wrong"),
-        "live plan must no longer contain the deleted criterion",
-    );
-    // Prose around the YAML block must survive the splice.
-    assert!(
-        live_plan.contains("Prose section that must be preserved"),
-        "leading prose must survive amendment",
-    );
-    assert!(
-        live_plan.contains("Trailing prose section"),
-        "trailing prose must survive amendment",
-    );
-
-    // Stage state: Queued, single remaining acceptance, amendment counter bumped.
-    let after = loom::verify::transitions::load_stage("s1", work).unwrap();
-    assert_eq!(after.status, StageStatus::Queued);
-    assert_eq!(
-        after.acceptance.len(),
-        1,
-        "acceptance[0] should be deleted, leaving 1 criterion",
-    );
-    match &after.acceptance[0] {
-        AcceptanceCriterion::Simple(cmd) => assert_eq!(cmd, "ls /tmp"),
-        other => panic!("expected Simple criterion, got {other:?}"),
-    }
-    assert_eq!(
-        after.amendments_applied, 1,
-        "stage.amendments_applied must increment to 1",
-    );
-
-    // applied.marker landed so reapplication is a no-op.
-    assert!(applied_marker(&work.join("disputes"), "s1", 1).exists());
 }
 
 /// Calling `apply_pending_verdicts` a second time after a successful

@@ -27,6 +27,7 @@
 
 mod apply;
 pub mod feedback;
+mod plan_patch;
 pub mod prompt;
 mod scan;
 pub mod session;
@@ -40,7 +41,7 @@ mod tests_verdicts;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::models::dispute::{request_file, verdict_file};
+use crate::models::dispute::{dispute_dir, request_file, verdict_file};
 use crate::models::stage::StageStatus;
 use crate::verify::transitions::{load_stage, update_stage};
 
@@ -61,6 +62,18 @@ pub use session::{
 /// own questions is not going to decide on the sixth, not because rounds are
 /// expensive.
 pub const MAX_EVIDENCE_ROUNDS: u32 = 5;
+
+/// Apply attempts a single dispute's verdict may fail before the daemon gives
+/// up and escalates instead of retrying forever.
+///
+/// A verdict that still cannot apply after this many ticks is a wedge, not a
+/// transient failure a retry would clear — a malformed `plan_patch`, a
+/// corrupt `verdict.md`, or a stage file `load_stage` cannot parse all fail
+/// identically on every attempt. Left uncapped, every failed attempt also
+/// re-triggers `retire_disputing_agents` before the next one (see
+/// `orchestrator/core/verdict_apply.rs`), which kills any new session on the
+/// stage within seconds of it starting.
+pub const MAX_APPLY_ATTEMPTS: u32 = 3;
 
 /// The daemon's entry points into the dispute lifecycle.
 ///
@@ -200,6 +213,74 @@ fn escalate_attempt_cap(work_dir: &Path, stage_id: &str, dispute_id: u32, attemp
             "Adjudication of dispute {dispute_id} produced no verdict after {attempts} session(s)"
         ),
     );
+}
+
+/// Escalate a dispute whose verdict has now failed to apply
+/// [`MAX_APPLY_ATTEMPTS`] times. The operator's only other clue is a log
+/// line, so the reason carries the apply error text itself.
+fn escalate_apply_cap(
+    work_dir: &Path,
+    stage_id: &str,
+    dispute_id: u32,
+    failures: u32,
+    error: &anyhow::Error,
+) {
+    escalate(
+        work_dir,
+        stage_id,
+        format!(
+            "Applying the verdict for dispute {dispute_id} failed {failures} time(s): {error:#}"
+        ),
+    );
+}
+
+/// File name for the per-dispute apply-failure counter, mirroring
+/// `session.rs`'s `attempts` file for adjudication spawn attempts.
+const APPLY_FAILURES_FILENAME: &str = "apply_failures";
+
+fn apply_failures_file(work_dir: &Path, stage_id: &str, dispute_id: u32) -> PathBuf {
+    dispute_dir(&work_dir.join("disputes"), stage_id, dispute_id).join(APPLY_FAILURES_FILENAME)
+}
+
+/// How many times applying this dispute's verdict has already failed.
+fn apply_failure_count(work_dir: &Path, stage_id: &str, dispute_id: u32) -> u32 {
+    std::fs::read_to_string(apply_failures_file(work_dir, stage_id, dispute_id))
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+/// Count one more apply failure and return the new total.
+///
+/// Best-effort like [`session::record_attempt`]: a directory that cannot be
+/// created or written is warned about, never fatal — the caller still gets a
+/// count to compare against [`MAX_APPLY_ATTEMPTS`] even when it could not be
+/// persisted.
+fn record_apply_failure(work_dir: &Path, stage_id: &str, dispute_id: u32) -> u32 {
+    let path = apply_failures_file(work_dir, stage_id, dispute_id);
+    let next = apply_failure_count(work_dir, stage_id, dispute_id).saturating_add(1);
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                target: "loom::adjudication",
+                stage = %stage_id,
+                dispute = dispute_id,
+                %error,
+                "could not create the dispute directory; apply failures are not being counted",
+            );
+            return next;
+        }
+    }
+    if let Err(error) = std::fs::write(&path, next.to_string()) {
+        tracing::warn!(
+            target: "loom::adjudication",
+            stage = %stage_id,
+            dispute = dispute_id,
+            %error,
+            "could not persist the apply failure count",
+        );
+    }
+    next
 }
 
 /// Single locked read-modify-write: re-apply only the human-review transition
