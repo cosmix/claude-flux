@@ -46,11 +46,12 @@ pub(super) const BLOCK_B: &str = r#"1. THE MAIN AGENT NEVER IMPLEMENTS — WHATE
    codex it cannot use). Verification NEVER delegates - the orchestrator
    verifies and commits. Spawn BY AGENT TYPE.
 4. ESCALATE ON EVIDENCE, NOT ON HUNCH. Start at the cheapest plausible tier. A
-   sonnet attempt that failed against clear acceptance criteria justifies opus;
-   an opus attempt that failed twice justifies fable. "This feels subtle" does
-   not. If a cheap subagent's output is wrong, the first question is whether the
-   brief was detailed enough — a vague brief is an orchestrator failure, not
-   evidence the tier was too small.
+   fix that failed ONCE against clear acceptance criteria moves up exactly one
+   tier — sonnet to opus, opus to fable — with the failed attempt and its
+   evidence in the new brief; never rerun the same tier on the same bug. "This
+   feels subtle" does not justify escalation. When a cheap subagent's output is
+   wrong, first ask whether the brief was detailed enough — a vague brief is an
+   orchestrator failure, not evidence the tier was too small.
 5. DEBUGGING OR REPEATED FAILURE → spawn a `loom-advisor` (fable) subagent:
    narrow scope, full detail supplied by the orchestrator, advice returned, no
    writes. Its diagnosis then feeds a sonnet or opus implementer per point 2.

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**⚠️ KNOWLEDGE-FIRST:** Your Knowledge Brief already quotes what retrieval judged relevant. Pull more with `loom knowledge context --query`. Open a file under `doc/loom/knowledge/` only when a pull comes back empty; then read the tier-1 summary for the area, and only the tier-2 topics you touch.
+**⚠️ KNOWLEDGE-FIRST:** `doc/loom/knowledge/INDEX.md` is the map of this project's curated knowledge. Read it before exploring the tree, then only the sections it points to; pull a specific question with `loom knowledge context --query` (the sections come back quoted). Inside a loom stage the signal's Knowledge Brief comes first.
 
 ## Project Overview
 

@@ -20,16 +20,21 @@ sed -n '<first>,<last>p' <file>
 `--find-all` locates definitions, `--outline` gives a file's symbols and line ranges, and
 `--impact` shows what reaches a symbol or path. Use the knowledge query for project questions,
 `rg` for literal text, and `sed` only for the range a lookup identified. Read a whole file only
-when the task requires all of it.
+when the task requires all of it. For orientation in a repository that keeps
+`doc/loom/knowledge/INDEX.md`, read that index first — a short map with blurbs and line counts —
+then only the sections it points to. A loom stage task already carries what you need; do not read
+the index for one.
 
 Inside a worktree, graph and knowledge commands may print `warning: could not refresh ...` or
 `warning: failed to refresh the context cache ...`. These warnings are expected: the command
 still answers from the published base layer. Do not retry or report them as blockers. That layer
 reflects the branch point and cannot see edits made during the current session; read an already
-edited file directly.
+edited file directly. The graph covers tracked files only; a file created during the task is
+invisible to it.
 
 Do not read `CLAUDE.md`; it instructs a different agent. Do not read `doc/loom/knowledge/` file by
-file. It is a roughly 200k-token corpus queried through `loom knowledge context --query`.
+file: it is a roughly 200k-token corpus. `loom knowledge context --query` returns the matching
+sections quoted; `INDEX.md` is the only file there worth reading whole.
 
 ## Loom stage boundaries
 

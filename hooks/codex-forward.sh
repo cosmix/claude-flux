@@ -58,6 +58,7 @@ first, and open a file only once one of them has told you which lines matter:
                                     ranked project knowledge plus matching source
   rg -n '<pattern>' <path>          literal text search
   sed -n '<first>,<last>p' <file>   the exact lines a lookup pointed you at
+  loom knowledge context prints the sections it matched, quoted; open the file it names only when you need more of it.
 
 Two things to expect from these commands, neither of which is a failure. They may print
 `warning: could not refresh ...` or `warning: failed to refresh the context cache ...`, because
