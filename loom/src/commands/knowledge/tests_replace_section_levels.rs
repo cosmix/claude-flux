@@ -79,7 +79,7 @@ fn test_update_new_topic_with_own_title_shows_real_summary_in_index() {
     assert!(!content.contains("Topic notes for the"));
 
     let index = fs::read_to_string(test_dir.join("doc/loom/knowledge/INDEX.md")).unwrap();
-    assert!(index.contains("Admin1 Overlay And Card"));
+    assert!(index.contains("[admin1-overlay](architecture/admin1-overlay.md)"));
     assert!(index.contains("How the admin1 overlay renders its card."));
     assert!(!index.contains("Topic notes for the architecture knowledge area."));
 

@@ -16,7 +16,7 @@ fn small_sections(count: usize) -> String {
 
 fn write_ordering_fixture(root: &Path) {
     fs::create_dir_all(root.join("topics")).unwrap();
-    fs::write(root.join("INDEX.md"), "x".repeat(8_193)).unwrap();
+    fs::write(root.join("INDEX.md"), "x".repeat(12_289)).unwrap();
     fs::write(
         root.join("a.md"),
         format!(
@@ -175,7 +175,7 @@ fn rule_9_sorts_issues_by_file_kind_and_payload() {
     assert_eq!(
         build(&root).unwrap().issues,
         vec![
-            CatalogIssue::OversizedIndex { bytes: 8_193 },
+            CatalogIssue::OversizedIndex { bytes: 12_289 },
             CatalogIssue::DuplicateHeading {
                 file: PathBuf::from("a.md"),
                 heading: "repeat".to_string(),
@@ -345,10 +345,10 @@ fn rule_17_does_not_report_oversized_tier2_topics() {
 #[test]
 fn rule_18_reports_only_indexes_over_the_byte_limit() {
     let oversized = TempDir::new().unwrap();
-    fs::write(oversized.path().join("INDEX.md"), "x".repeat(8_193)).unwrap();
+    fs::write(oversized.path().join("INDEX.md"), "x".repeat(12_289)).unwrap();
     assert_eq!(
         build(oversized.path()).unwrap().issues,
-        vec![CatalogIssue::OversizedIndex { bytes: 8_193 }]
+        vec![CatalogIssue::OversizedIndex { bytes: 12_289 }]
     );
 
     let small = TempDir::new().unwrap();
@@ -371,14 +371,14 @@ fn index_of_exactly(root: &Path, bytes: usize) {
 #[test]
 fn rule_19_reports_index_only_strictly_over_the_byte_boundary() {
     let at = TempDir::new().unwrap();
-    index_of_exactly(at.path(), 8_192);
+    index_of_exactly(at.path(), 12_288);
     assert!(build(at.path()).unwrap().issues.is_empty());
 
     let over = TempDir::new().unwrap();
-    index_of_exactly(over.path(), 8_193);
+    index_of_exactly(over.path(), 12_289);
     assert_eq!(
         build(over.path()).unwrap().issues,
-        vec![CatalogIssue::OversizedIndex { bytes: 8_193 }]
+        vec![CatalogIssue::OversizedIndex { bytes: 12_289 }]
     );
 }
 

@@ -23,7 +23,7 @@ use std::path::PathBuf;
 const GROWN_TOPIC: &str = "architecture/grows.md";
 
 fn topic_row(lines: usize) -> String {
-    format!("| [{GROWN_TOPIC}]({GROWN_TOPIC}) | Grows | A topic that will grow. | {lines} |")
+    format!("| [grows]({GROWN_TOPIC}) | A topic that will grow. | {lines} |")
 }
 
 /// Build an already-hierarchical knowledge directory holding a five-line

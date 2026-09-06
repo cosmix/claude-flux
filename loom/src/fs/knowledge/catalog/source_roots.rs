@@ -1,38 +1,184 @@
 //! Cargo-package source-root discovery for catalog source references.
 
+use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Read-only inputs needed to validate a chunk's backticked repository
+/// source references against the project tree. Bundled so
+/// `collect_chunk_issues` and `process_file` stay under clippy's
+/// `too_many_arguments` threshold.
+pub(super) struct SourceRefContext<'a> {
+    pub(super) project_root: Option<&'a Path>,
+    pub(super) cargo_source_roots: &'a [PathBuf],
+    pub(super) project_files: &'a ProjectFileIndex,
+}
+
+impl<'a> SourceRefContext<'a> {
+    pub(super) fn new(
+        project_root: Option<&'a Path>,
+        cargo_source_roots: &'a [PathBuf],
+        project_files: &'a ProjectFileIndex,
+    ) -> Self {
+        Self {
+            project_root,
+            cargo_source_roots,
+            project_files,
+        }
+    }
+
+    /// [`repository_source_path_exists`] against this context's cargo source
+    /// roots and project file index, for the given `project_root`.
+    pub(super) fn path_exists(&self, project_root: &Path, source_path: &str) -> bool {
+        repository_source_path_exists(
+            project_root,
+            self.cargo_source_roots,
+            self.project_files,
+            source_path,
+        )
+    }
+}
 
 /// Whether a backticked source reference names an existing project file.
 ///
 /// The canonical spelling is project-relative (`crates/core/src/models/constants.rs`),
 /// but knowledge prose can also use a module-relative Rust path
-/// (`models/constants.rs`). The latter resolves only through a source root
-/// declared by an actual Cargo package: the project package, an explicit
-/// workspace member, or a direct-child package. The direct-child scan is
-/// deliberately one level deep so a project with no root workspace manifest
-/// can still host a single crate without turning this into an unbounded source
-/// tree search.
+/// (`models/constants.rs`), a bare basename (`constants.rs`), or a path
+/// rooted somewhere other than the project or a cargo package (a shell
+/// script under `hooks/`, a fixture nested inside `tests/`). The first two
+/// forms resolve exactly, through `project_root` or a source root declared
+/// by an actual Cargo package (see [`cargo_package_source_roots`]). The rest
+/// fall through to `project_files`, which knows every file in the project.
 ///
 /// A module-relative path must match **exactly one** declared package source
-/// root. Multiple matches are ambiguous and remain a `MissingSourceRef`,
-/// rather than silently choosing a crate by traversal order.
+/// root; a suffix path must match **exactly one** project file. Multiple
+/// matches are ambiguous and remain a `MissingSourceRef`, rather than
+/// silently choosing a candidate by traversal order.
 ///
 /// Callers have already rejected absolute and parent-relative paths, so no
 /// candidate can escape its root.
 pub(super) fn repository_source_path_exists(
     project_root: &Path,
     cargo_source_roots: &[PathBuf],
+    project_files: &ProjectFileIndex,
     source_path: &str,
 ) -> bool {
-    fs::metadata(project_root.join(source_path)).is_ok()
+    let resolves_exactly = fs::metadata(project_root.join(source_path)).is_ok()
         || cargo_source_roots
             .iter()
             .filter(|source_root| fs::metadata(source_root.join(source_path)).is_ok())
             .take(2)
             .count()
+            == 1;
+    if resolves_exactly {
+        return true;
+    }
+    if source_path.contains('/') {
+        project_files.has_unique_suffix(source_path)
+    } else {
+        project_files.has_basename(source_path)
+    }
+}
+
+/// A lazily-built, cached list of every file under a project root, used to
+/// resolve source references that name a bare basename or a path suffix
+/// rather than a full project-relative or cargo-module-relative path.
+///
+/// Built at most once: the walk only runs on the first reference that needs
+/// it (see [`repository_source_path_exists`]), and a knowledge tree with no
+/// backticked source references never triggers it at all.
+pub(super) struct ProjectFileIndex {
+    project_root: Option<PathBuf>,
+    files: OnceCell<Vec<String>>,
+}
+
+impl ProjectFileIndex {
+    /// `None` when the knowledge tree being cataloged has no known project
+    /// root (see `prose::project_root_of`): the index then never has
+    /// anything to walk, and `files()` reports an empty list without ever
+    /// touching disk.
+    pub(super) fn new(project_root: Option<PathBuf>) -> Self {
+        Self {
+            project_root,
+            files: OnceCell::new(),
+        }
+    }
+
+    fn files(&self) -> &[String] {
+        self.files.get_or_init(|| {
+            self.project_root
+                .as_deref()
+                .map(walk_project_files)
+                .unwrap_or_default()
+        })
+    }
+
+    /// True if any project file's final path segment equals `basename`.
+    fn has_basename(&self, basename: &str) -> bool {
+        self.files()
+            .iter()
+            .any(|file| file.rsplit('/').next() == Some(basename))
+    }
+
+    /// True if exactly one project file ends with `suffix` on a `/`
+    /// boundary (or equals it outright). Zero or multiple matches are not
+    /// good enough: an ambiguous or absent reference stays reported.
+    fn has_unique_suffix(&self, suffix: &str) -> bool {
+        self.files()
+            .iter()
+            .filter(|file| path_has_suffix(file, suffix))
+            .take(2)
+            .count()
             == 1
+    }
+}
+
+fn path_has_suffix(file: &str, suffix: &str) -> bool {
+    file == suffix
+        || file
+            .strip_suffix(suffix)
+            .is_some_and(|prefix| prefix.ends_with('/'))
+}
+
+/// Directories whose contents never hold a reference worth resolving:
+/// version control metadata, build output, dependency caches, and loom's own
+/// worktree/state directories. Also skips any directory starting with `.`.
+fn should_skip_dir(name: &str) -> bool {
+    name.starts_with('.') || matches!(name, "target" | "node_modules")
+}
+
+/// Recursively collect every file under `project_root`, as relative,
+/// forward-slashed paths. Unreadable directories are skipped rather than
+/// failing the whole walk: a permission-denied subdirectory must not turn a
+/// diagnostic pass into a hard error (see [`super::path_exists`]'s rationale).
+fn walk_project_files(project_root: &Path) -> Vec<String> {
+    let mut files = Vec::new();
+    walk_dir(project_root, project_root, &mut files);
+    files
+}
+
+fn walk_dir(root: &Path, directory: &Path, files: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        if file_type.is_dir() {
+            if !should_skip_dir(&name) {
+                walk_dir(root, &path, files);
+            }
+        } else if file_type.is_file() {
+            if let Ok(relative) = path.strip_prefix(root) {
+                files.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
 }
 
 /// Return the `src` directories of Cargo packages that can be established

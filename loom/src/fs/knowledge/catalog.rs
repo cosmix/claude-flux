@@ -17,7 +17,7 @@ mod source_roots;
 mod tests_prose;
 
 use order::compare_issues;
-use source_roots::{cargo_package_source_roots, repository_source_path_exists};
+use source_roots::{cargo_package_source_roots, ProjectFileIndex, SourceRefContext};
 
 /// A problem found in the knowledge base. REPORTED, never repaired: this
 /// subsystem does not modify one byte of the knowledge tree.
@@ -97,8 +97,7 @@ pub struct Catalog {
 fn collect_chunk_issues(
     root: &Path,
     relative_path: &Path,
-    project_root: Option<&Path>,
-    cargo_source_roots: &[PathBuf],
+    source_refs: &SourceRefContext,
     chunk: &KnowledgeChunk,
     heading_counts: &mut BTreeMap<PathBuf, BTreeMap<String, usize>>,
     issues: &mut Vec<CatalogIssue>,
@@ -123,10 +122,10 @@ fn collect_chunk_issues(
             });
         }
     }
-    if let Some(project_root) = project_root {
+    if let Some(project_root) = source_refs.project_root {
         for source_path in &chunk.source_paths {
             if looks_like_repository_path(source_path)
-                && !repository_source_path_exists(project_root, cargo_source_roots, source_path)
+                && !source_refs.path_exists(project_root, source_path)
             {
                 issues.push(CatalogIssue::MissingSourceRef {
                     file: relative_path.to_path_buf(),
@@ -145,8 +144,7 @@ fn collect_chunk_issues(
 fn process_file(
     root: &Path,
     relative_path: &Path,
-    project_root: Option<&Path>,
-    cargo_source_roots: &[PathBuf],
+    source_refs: &SourceRefContext,
     heading_counts: &mut BTreeMap<PathBuf, BTreeMap<String, usize>>,
     issues: &mut Vec<CatalogIssue>,
 ) -> anyhow::Result<Vec<KnowledgeChunk>> {
@@ -171,8 +169,7 @@ fn process_file(
         collect_chunk_issues(
             root,
             relative_path,
-            project_root,
-            cargo_source_roots,
+            source_refs,
             chunk,
             heading_counts,
             issues,
@@ -214,6 +211,9 @@ pub fn build(root: &Path) -> anyhow::Result<Catalog> {
         .as_deref()
         .map(cargo_package_source_roots)
         .unwrap_or_default();
+    let project_files = ProjectFileIndex::new(project_root.clone());
+    let source_refs =
+        SourceRefContext::new(project_root.as_deref(), &cargo_source_roots, &project_files);
     let mut chunks = Vec::new();
     let mut issues = Vec::new();
     let mut heading_counts: BTreeMap<PathBuf, BTreeMap<String, usize>> = BTreeMap::new();
@@ -222,8 +222,7 @@ pub fn build(root: &Path) -> anyhow::Result<Catalog> {
         let file_chunks = process_file(
             root,
             &relative_path,
-            project_root.as_deref(),
-            &cargo_source_roots,
+            &source_refs,
             &mut heading_counts,
             &mut issues,
         )?;

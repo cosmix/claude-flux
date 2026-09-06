@@ -111,7 +111,7 @@ fn test_append_target_new_topic_with_own_title_skips_scaffold() {
     assert!(!content.contains("Topic notes for the"));
 
     let index = knowledge.read_index().unwrap();
-    assert!(index.contains("My Real Title"));
+    assert!(index.contains("[admin1-overlay](architecture/admin1-overlay.md)"));
     assert!(index.contains("My real one-line blurb."));
 }
 

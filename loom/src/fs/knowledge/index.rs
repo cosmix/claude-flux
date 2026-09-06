@@ -62,7 +62,7 @@ fn escape_cell(value: &str) -> String {
 }
 
 /// Keeping table entries short makes the generated index inexpensive to pull.
-const MAX_BLURB_CHARS: usize = 120;
+const MAX_BLURB_CHARS: usize = 100;
 
 /// Preserve enough context to identify a topic without letting one description
 /// dominate a retrieved index.
@@ -164,10 +164,10 @@ pub fn generate_index(root: &Path) -> Result<String> {
     out.push_str(GENERATED_MARKER);
     out.push_str("\n\n# Knowledge Index\n\n");
     out.push_str(
-        "> Your Knowledge Brief already quotes what retrieval judged relevant. Pull more \
-         with `loom knowledge context --query`. Open a file here only when a pull comes \
-         back empty; then read the tier-1 summary for the area, and only the tier-2 \
-         topics you touch.\n\n",
+        "> Read this index first, then only what it points to: the section for your area \
+         in a tier-1 summary (`rg -n '^## ' <file>` lists them) and the tier-2 topics your \
+         task touches. A specific question is cheaper to pull than to read — `loom \
+         knowledge context --query \"...\"` returns the matching sections quoted.\n\n",
     );
 
     append_tier1_table(&mut out, root)?;
@@ -199,7 +199,9 @@ fn append_tier1_table(out: &mut String, root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// One table per category, in the order `scan_topics` returned them.
+/// One table per category, in the order `scan_topics` returned them. The
+/// link text is the slug alone; the blurb carries what the title used to, so
+/// a separate Title column would only repeat it.
 fn append_topic_tables(out: &mut String, topics: &[TopicEntry]) {
     if topics.is_empty() {
         return;
@@ -214,14 +216,14 @@ fn append_topic_tables(out: &mut String, topics: &[TopicEntry]) {
                 out.push('\n');
             }
             out.push_str(&format!("### {}\n\n", topic.category.dir_name()));
-            out.push_str("| Topic | Title | Blurb | Lines |\n");
-            out.push_str("| --- | --- | --- | --- |\n");
+            out.push_str("| Topic | Blurb | Lines |\n");
+            out.push_str("| --- | --- | --- |\n");
             current_category = Some(topic.category);
         }
         let rel = topic.relative_path().display().to_string();
         out.push_str(&format!(
-            "| [{rel}]({rel}) | {} | {} | {} |\n",
-            escape_cell(&topic.title),
+            "| [{}]({rel}) | {} | {} |\n",
+            topic.slug,
             escape_cell(&topic.blurb),
             topic.line_count
         ));
@@ -287,14 +289,14 @@ mod tests {
         let blurb = format!("{}extra", "word, ".repeat(20));
         let truncated = truncate_blurb(&blurb);
 
-        assert_eq!(truncated, format!("{}word…", "word, ".repeat(19)));
+        assert_eq!(truncated, format!("{}word…", "word, ".repeat(15)));
         assert!(truncated.ends_with('…'));
         assert!(truncated.chars().count() <= MAX_BLURB_CHARS + 1);
     }
 
     /// A full-sized concise description should not lose useful detail.
     #[test]
-    fn test_truncate_blurb_preserves_exactly_120_characters() {
+    fn test_truncate_blurb_preserves_exactly_max_blurb_chars() {
         let blurb = "x".repeat(MAX_BLURB_CHARS);
         assert_eq!(truncate_blurb(&blurb), blurb);
     }
@@ -328,14 +330,15 @@ mod tests {
         assert!(content.starts_with(GENERATED_MARKER));
         assert!(content.contains("architecture.md"));
         assert!(content.contains("architecture/merge-flow.md"));
-        assert!(content.contains("Merge Flow"));
-        // The brief-first protocol, asserted positively. The superseded
-        // "read the index, then tier-1, then the topics" wording is
-        // deliberately NOT quoted here to assert its absence: a stage truth
-        // check greps this file for that sentence, and a negative assertion
-        // that spells it out would keep it alive in the source forever.
-        assert!(content.contains("Your Knowledge Brief already quotes"));
-        assert!(content.contains("only the tier-2 topics you touch"));
+        assert!(content.contains("[merge-flow]"));
+        assert!(content.contains("Merge details."));
+        // The current header sentence, asserted positively. Superseded
+        // wordings are deliberately NOT quoted here to assert their absence:
+        // a stage truth check greps this file for exact sentences, and a
+        // negative assertion that spells one out would keep it alive in the
+        // source forever.
+        assert!(content.contains("Read this index first"));
+        assert!(content.contains("the tier-2 topics your task touches"));
     }
 
     #[test]

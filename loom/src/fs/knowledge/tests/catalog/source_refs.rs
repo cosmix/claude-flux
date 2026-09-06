@@ -81,3 +81,107 @@ fn rule_8b_reports_ambiguous_module_relative_paths_across_workspace_members() {
         "an ambiguous module-relative path must not be assigned to either workspace member"
     );
 }
+
+#[test]
+fn rule_8c_bare_basename_resolves_against_any_project_file() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(project.join("hooks")).unwrap();
+    fs::write(project.join("hooks/commit-guard.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(root.join("notes.md"), "## Topic\n`commit-guard.sh`\n").unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert!(catalog.issues.is_empty(), "issues: {:?}", catalog.issues);
+}
+
+#[test]
+fn rule_8d_bare_basename_absent_anywhere_stays_reported() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("notes.md"), "## Topic\n`nowhere.sh`\n").unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert_eq!(
+        catalog.issues,
+        vec![CatalogIssue::MissingSourceRef {
+            file: PathBuf::from("notes.md"),
+            source_path: "nowhere.sh".to_string(),
+        }]
+    );
+}
+
+#[test]
+fn rule_8e_unique_suffix_path_resolves() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(project.join("loom/src/context/rank/corpus")).unwrap();
+    fs::write(
+        project.join("loom/src/context/rank/corpus/stopwords.rs"),
+        "// stopwords\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("notes.md"),
+        "## Topic\n`rank/corpus/stopwords.rs`\n",
+    )
+    .unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert!(catalog.issues.is_empty(), "issues: {:?}", catalog.issues);
+}
+
+#[test]
+fn rule_8f_ambiguous_suffix_path_stays_reported() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    for crate_name in ["alpha", "beta"] {
+        let dir = project.join("crates").join(crate_name).join("tests");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("fixture.rs"), "// fixture\n").unwrap();
+    }
+    fs::write(root.join("notes.md"), "## Topic\n`tests/fixture.rs`\n").unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert_eq!(
+        catalog.issues,
+        vec![CatalogIssue::MissingSourceRef {
+            file: PathBuf::from("notes.md"),
+            source_path: "tests/fixture.rs".to_string(),
+        }],
+        "two equally-plausible matches must not be assigned to either crate"
+    );
+}
+
+#[test]
+fn rule_8g_files_under_target_are_never_matched() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(project.join("target/debug")).unwrap();
+    fs::write(project.join("target/debug/build.rs"), "// build script\n").unwrap();
+    fs::write(root.join("notes.md"), "## Topic\n`debug/build.rs`\n").unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert_eq!(
+        catalog.issues,
+        vec![CatalogIssue::MissingSourceRef {
+            file: PathBuf::from("notes.md"),
+            source_path: "debug/build.rs".to_string(),
+        }],
+        "build output under target/ must never satisfy a source reference"
+    );
+}
