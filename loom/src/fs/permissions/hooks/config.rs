@@ -12,6 +12,7 @@ pub(super) fn build(hooks_dir: &str) -> Value {
             hook(hooks_dir, "*", "skill-trigger.sh"),
             hook(hooks_dir, "*", "user-prompt-context.sh"),
         ],
+        "SessionStart": [hook(hooks_dir, "*", "knowledge-orient.sh")],
     })
 }
 

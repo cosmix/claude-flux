@@ -77,7 +77,10 @@ run_test "post-tool-use: resident-token arithmetic (last record wins, torn line 
 run_test "post-tool-use: heartbeat write survives a ceiling exit 2" "$SCRIPT_DIR/post-tool-use-ceiling-heartbeat-survives.sh"
 run_test "post-tool-use: judge writes its own heartbeat, bypassing the ownership gate" "$SCRIPT_DIR/post-tool-use-judge-heartbeat.sh"
 run_test "read-guard: offset/limit arithmetic injection is dead, well-formed reads unchanged" "$SCRIPT_DIR/read-guard-offset-injection.sh"
+run_test "read-guard: INDEX.md is exempt from the tier-1 warning" "$SCRIPT_DIR/read-guard-index-exempt.sh"
 run_test "session-start: heartbeat write escapes a quoted transcript_path via jq" "$SCRIPT_DIR/session-start-heartbeat-escaping.sh"
+run_test "knowledge-orient: emits the INDEX.md pointer on startup" "$SCRIPT_DIR/knowledge-orient-emits.sh"
+run_test "knowledge-orient: silent without an index, inside a stage, on compact, past the git root" "$SCRIPT_DIR/knowledge-orient-silent.sh"
 run_test "post-tool-use: commit reminder is tokenized - heredoc body ignored, real commits fire" "$SCRIPT_DIR/post-tool-use-commit-reminder-tokenized.sh"
 
 echo ""

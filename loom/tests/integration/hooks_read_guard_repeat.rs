@@ -279,12 +279,33 @@ fn assert_knowledge_read(
     }
 }
 
+/// Run a knowledge-file read that must be exempt outright: exit 0 with nothing at all on
+/// stdout, unlike `assert_knowledge_read`'s tier-1 shape which still warns. Used for
+/// `INDEX.md`, which `_loom_is_knowledge_index_path` short-circuits ahead of rule 3.
+fn assert_knowledge_read_silent(hook: &Path, session: &Session, stub_dir: &Path, path: &Path) {
+    let out = run_read_hook(
+        hook,
+        json!({"file_path": path.to_string_lossy()}),
+        session,
+        Some(stub_dir),
+    );
+    assert_eq!(out.code, 0, "stderr={}", out.stderr);
+    assert!(
+        out.stdout.trim().is_empty(),
+        "INDEX.md must be silent: stdout={}",
+        out.stdout
+    );
+}
+
 // 13. A tier-1 knowledge file overrides rules 1 and 2 outright: always warns,
 //     never denies, even though the file is large enough for rule 1 to have
-//     denied it. A tier-2 topic file is the control - NOT exempt.
+//     denied it. `INDEX.md` is the sanctioned orientation read (CLAUDE.md
+//     rule 12) and is exempt outright - silent, exit 0, no warning at all,
+//     ahead of the tier-1 warning rule. A tier-2 topic file is the control -
+//     NOT exempt.
 #[test]
-fn tier1_knowledge_read_warns_never_denies_tier2_is_not_exempt() {
-    let test = "repeat::tier1_knowledge_read_warns_never_denies_tier2_is_not_exempt";
+fn tier1_knowledge_read_warns_index_is_exempt_tier2_is_not_exempt() {
+    let test = "repeat::tier1_knowledge_read_warns_index_is_exempt_tier2_is_not_exempt";
     if skip_unless_gate_visible(test) {
         return;
     }
@@ -304,7 +325,7 @@ fn tier1_knowledge_read_warns_never_denies_tier2_is_not_exempt() {
 
     let index = kdir.join("INDEX.md");
     fs::write(&index, "line\n".repeat(500)).expect("write INDEX.md");
-    assert_knowledge_read(&hook, &session, &stub_dir, &index, true);
+    assert_knowledge_read_silent(&hook, &session, &stub_dir, &index);
 
     let tier2_dir = kdir.join("mistakes");
     fs::create_dir_all(&tier2_dir).expect("create tier2 dir");

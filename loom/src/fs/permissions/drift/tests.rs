@@ -27,6 +27,23 @@ fn hook_drift_reports_every_registration_when_hooks_are_absent() {
     assert!(drift.obsolete.is_empty());
 }
 
+/// Pins the GLOBAL SessionStart registration for the knowledge-orient nudge:
+/// unlike session-start.sh/pre-compact.sh/session-end.sh (written only at
+/// worktree-creation time by `crate::hooks::config::HooksConfig`),
+/// knowledge-orient.sh must appear in the CANONICAL config every settings
+/// document is diffed against, since it is meant to run in every repository
+/// and every session, not just loom stage worktrees.
+#[test]
+fn canonical_config_carries_session_start_knowledge_orient() {
+    let canonical = flatten_hook_triples(&loom_hooks_config_for_dir(TEST_HOOKS_DIR));
+    assert!(
+        canonical.iter().any(|(event, matcher, command)| {
+            event == "SessionStart" && matcher == "*" && command.ends_with("/knowledge-orient.sh")
+        }),
+        "expected a canonical SessionStart:*:.../knowledge-orient.sh triple, got: {canonical:?}"
+    );
+}
+
 #[test]
 fn hook_drift_reports_a_partial_hooks_block() {
     let mut settings_obj = serde_json::Map::new();

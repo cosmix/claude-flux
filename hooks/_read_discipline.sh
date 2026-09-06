@@ -72,9 +72,11 @@ _loom_read_skip_extension() {
 }
 
 # _loom_is_tier1_knowledge_path <path> - Return 0 when <path> is a tier-1
-# knowledge file: doc/loom/knowledge/INDEX.md, or doc/loom/knowledge/<name>.md
-# with NO further directory component. A tier-2 topic file
-# (doc/loom/knowledge/<category>/<slug>.md) is excluded.
+# knowledge file: doc/loom/knowledge/<name>.md with NO further directory
+# component. A tier-2 topic file (doc/loom/knowledge/<category>/<slug>.md) is
+# excluded. INDEX.md matches this shape too, but loom_read_discipline_check
+# checks _loom_is_knowledge_index_path FIRST and exempts it outright - see
+# that function.
 _loom_is_tier1_knowledge_path() {
 	local path="$1" rest
 	case "$path" in
@@ -85,6 +87,18 @@ _loom_is_tier1_knowledge_path() {
 	case "$rest" in
 	*/*) return 1 ;;
 	*.md) return 0 ;;
+	esac
+	return 1
+}
+
+# _loom_is_knowledge_index_path <path> - Return 0 when <path> ends in
+# doc/loom/knowledge/INDEX.md (any prefix). INDEX.md is the sanctioned
+# orientation read under CLAUDE.md rule 12 - hooks/knowledge-orient.sh's
+# SessionStart nudge points every session at it directly - so warning on it
+# here would contradict the doctrine this hook exists to enforce.
+_loom_is_knowledge_index_path() {
+	case "$1" in
+	*/doc/loom/knowledge/INDEX.md | doc/loom/knowledge/INDEX.md) return 0 ;;
 	esac
 	return 1
 }
@@ -334,13 +348,17 @@ _loom_read_discipline_verdict2() {
 #      warning at all - loading one whole is the intended way to use it, not
 #      a read-discipline violation. Checked before rule 3, since a skill
 #      path is never also a tier-1 knowledge path.
+#   0b. doc/loom/knowledge/INDEX.md is exempt outright too, with no warning -
+#      it is the sanctioned orientation read (CLAUDE.md rule 12;
+#      hooks/knowledge-orient.sh's SessionStart nudge points at it directly).
+#      Checked before rule 3, for the same reason as rule 0.
 #   1. An unbounded ("full") read of a file over READ_GUARD_LINE_LIMIT lines
 #      is redirected to `loom map --outline` (denied when covered, warned
 #      when not).
 #   2. A repeat full read, or 3+ identical range reads, of the same path is
 #      warned (3rd+ full read is denied).
-#   3. A tier-1 knowledge file read in a stage session is warned, and
-#      OVERRIDES rules 1 and 2 outright (never denied).
+#   3. A tier-1 knowledge file (other than INDEX.md) read in a stage session
+#      is warned, and OVERRIDES rules 1 and 2 outright (never denied).
 #
 # Rules 1 and 2 are both computed (verdict1/verdict2), then exactly ONE
 # decision is emitted - a deny beats a warn, rule 1 wins a deny/deny tie (its
@@ -358,6 +376,11 @@ loom_read_discipline_check() {
 	ledger=$(_loom_ledger_file "reads" "$agent_id" "$fallback_sid")
 
 	if _loom_is_skill_md_path "$path"; then
+		_loom_ledger_append "$ledger" "$path" "$kind" "$lines"
+		return 0
+	fi
+
+	if _loom_is_knowledge_index_path "$path"; then
 		_loom_ledger_append "$ledger" "$path" "$kind" "$lines"
 		return 0
 	fi

@@ -121,6 +121,12 @@ pub const HOOK_POLL_GUARD: &str = include_str!("../../../../hooks/poll-guard.sh"
 /// `loom hook user-prompt`; contains no retrieval logic of its own.
 pub const HOOK_USER_PROMPT_CONTEXT: &str = include_str!("../../../../hooks/user-prompt-context.sh");
 
+/// KnowledgeOrient hook - GLOBAL SessionStart nudge pointing a freshly
+/// started session at this checkout's doc/loom/knowledge/INDEX.md, when one
+/// exists. Unlike HOOK_SESSION_START (worktree-only, wired up per stage),
+/// this runs in every repository and every session.
+pub const HOOK_KNOWLEDGE_ORIENT: &str = include_str!("../../../../hooks/knowledge-orient.sh");
+
 /// All loom hook scripts with their filenames (installed to ~/.claude/hooks/loom/)
 /// All hooks are installed to the loom/ subdirectory to keep them separate from user hooks.
 pub const LOOM_HOOKS: &[(&str, &str)] = &[
@@ -159,6 +165,8 @@ pub const LOOM_HOOKS: &[(&str, &str)] = &[
     // Skill suggestion hooks
     ("skill-trigger.sh", HOOK_SKILL_TRIGGER),
     ("user-prompt-context.sh", HOOK_USER_PROMPT_CONTEXT),
+    // Orientation hooks (SessionStart)
+    ("knowledge-orient.sh", HOOK_KNOWLEDGE_ORIENT),
 ];
 
 /// Loom permissions for the MAIN REPO context
