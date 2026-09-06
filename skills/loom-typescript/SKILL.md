@@ -5,7 +5,6 @@ triggers:
   - typescript
   - ts
   - tsx
-  - type
   - interface
   - generic
   - union

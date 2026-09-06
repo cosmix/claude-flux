@@ -2,7 +2,6 @@
 name: loom-error-handling
 description: Error handling patterns and strategies including Rust Result/Option, API error responses, data pipeline errors, and security-aware handling.
 triggers:
-  - error
   - exception
   - try
   - catch

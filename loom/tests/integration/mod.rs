@@ -15,6 +15,7 @@ pub mod hooks_git_add_guard;
 pub mod hooks_no_preexisting_failures;
 pub mod hooks_poll_guard;
 pub mod hooks_read_guard;
+pub mod hooks_skill_trigger;
 pub mod hooks_spawn_guard;
 pub mod hooks_subagent_verify_guard;
 pub mod implementer_defaults;

@@ -14,6 +14,9 @@ Output: JSON with hookSpecificOutput.additionalContext for context injection.
     - /loom-plan-writer -- <desc> (matched: kw)
   A catalogued skill has no slash command, so the line names the loader instead:
     - loom-rust -- <desc> (matched: kw) -- load with Skill(skill="loom-skills", args="loom-rust")
+  When two or more catalogued skills qualify, a final line offers one
+  combined load call instead of one per skill:
+    All catalogued matches at once: Skill(skill="loom-skills", args="loom-rust loom-react")
 
 Dependencies:
   ~/.claude/hooks/loom/skill-keywords.json (built by `loom skill-index`)
@@ -29,7 +32,9 @@ INDEX_FILE = os.path.expanduser("~/.claude/hooks/loom/skill-keywords.json")
 SKILLS_DIR = os.path.expanduser("~/.claude/skills")
 CATALOG_DIR = os.path.expanduser("~/.claude/loom-skill-catalog")
 DEBUG_LOG = os.path.expanduser("~/.claude/hooks/loom/skill-trigger.log")
-MAX_SUGGESTIONS = 3
+# Flood ceiling only - every qualifying skill (score >= MIN_SCORE) is listed;
+# this just guards against a pasted document matching dozens of skills at once.
+MAX_SUGGESTIONS = 8
 MIN_SCORE = 2  # Minimum weighted score to suggest a skill
 DEBUG = os.environ.get("LOOM_SKILL_DEBUG", "") == "1"
 
@@ -269,33 +274,24 @@ def main():
     if not qualified:
         return
 
-    # Sort by score descending, take top N
-    top = sorted(qualified.items(), key=lambda x: -x[1])[:MAX_SUGGESTIONS]
+    # "loom-skills" is the catalog loader itself; suggesting it is redundant
+    # once any other qualified skill already names the loader in its own
+    # line. Keep it when it's the only qualified skill so a prompt about
+    # "skills" in general still points somewhere.
+    if len(qualified) > 1 and "loom-skills" in qualified:
+        del qualified["loom-skills"]
 
-    lines = []
-    for skill, _score in top:
-        kws = ", ".join(matched[skill][:4])
-        path, catalogued = _locate_skill_md(skill)
-        desc = _parse_description(path) if path else ""
-        if catalogued:
-            # Not indexed by Claude Code, so there's no /{skill} slash
-            # command to name — point at the loader invocation instead.
-            loader = f'Skill(skill="loom-skills", args="{skill}")'
-            if desc:
-                lines.append(f"  - {skill} -- {desc} (matched: {kws}) -- load with {loader}")
-            else:
-                lines.append(f"  - {skill} (matched: {kws}) -- load with {loader}")
-        elif desc:
-            lines.append(f"  - /{skill} -- {desc} (matched: {kws})")
-        else:
-            lines.append(f"  - /{skill} (matched: {kws})")
+    # Sort by score desc, then by number of distinct matched keywords desc,
+    # then by name. The name tiebreaker matters because Python's set
+    # iteration order is seeded per process (PYTHONHASHSEED) — without it,
+    # equal-score ties would order differently across runs.
+    top = sorted(
+        qualified.items(),
+        key=lambda kv: (-kv[1], -len(matched[kv[0]]), kv[0]),
+    )[:MAX_SUGGESTIONS]
 
-    if lines:
-        context = (
-            "SKILL MATCH: These skills are relevant to this task."
-            ' Invoke the best match with Skill(skill="name") before implementing:\n'
-        )
-        context += "\n".join(lines)
+    context = _render(top, matched)
+    if context:
         _debug(f"SUGGEST: {context}")
         # Use JSON additionalContext format — plain text stdout is unreliable
         # for UserPromptSubmit hooks (see claude-code#13912)
@@ -307,6 +303,50 @@ def main():
         }))
     elif DEBUG:
         _debug(f"NO MATCH: scores={scores}")
+
+
+def _render(top, matched):
+    """Build the additionalContext string for the ranked (skill, score)
+    pairs in `top`. Returns None when there is nothing to render.
+    """
+    lines = []
+    catalogued_names = []
+    for skill, _score in top:
+        # Sorted for deterministic display — `matched[skill]` was built by
+        # iterating a set (tokens), whose order varies with PYTHONHASHSEED.
+        kws = ", ".join(sorted(matched[skill])[:4])
+        path, catalogued = _locate_skill_md(skill)
+        desc = _parse_description(path) if path else ""
+        if catalogued:
+            # Not indexed by Claude Code, so there's no /{skill} slash
+            # command to name — point at the loader invocation instead.
+            catalogued_names.append(skill)
+            loader = f'Skill(skill="loom-skills", args="{skill}")'
+            if desc:
+                lines.append(f"  - {skill} -- {desc} (matched: {kws}) -- load with {loader}")
+            else:
+                lines.append(f"  - {skill} (matched: {kws}) -- load with {loader}")
+        elif desc:
+            lines.append(f"  - /{skill} -- {desc} (matched: {kws})")
+        else:
+            lines.append(f"  - /{skill} (matched: {kws})")
+
+    if not lines:
+        return None
+
+    if len(catalogued_names) >= 2:
+        combined = " ".join(catalogued_names)
+        lines.append(
+            f'  All catalogued matches at once: Skill(skill="loom-skills", args="{combined}")'
+        )
+
+    context = (
+        "SKILL MATCH: These skills are relevant to this task. Load EVERY one "
+        "that applies before implementing, one at a time with the calls below "
+        "or all catalogued ones in a single call:\n"
+    )
+    context += "\n".join(lines)
+    return context
 
 
 def _locate_skill_md(skill_name):
