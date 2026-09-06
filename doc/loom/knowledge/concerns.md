@@ -855,3 +855,13 @@ wildcard-free prefix lies above the project or above a small home subdirectory.
 ## Web Dashboard Latent Issues
 
 Five issues reviewed and deliberately left unchanged in `loom/src/commands/status/web/`: a mutex-poisoning cascade risk, a cosmetic `GET /ws` status-code mismatch, a dead-looking-but-pinned `DEFAULT_PORT` literal, an inherited partial-frame truncation risk shared with the TUI, and a left-in-place bundle-size warning. Detail: [concerns/web-dashboard-latent-issues.md](concerns/web-dashboard-latent-issues.md).
+
+## Merge Path Follow-Ups After the Silent-Unmerged Fix (2026-09-06)
+
+Found while fixing the silent `Completed + !merged` outcome (`mistakes/phantom-merges.md`, last entry). Each is a separate change and was left as is.
+
+- `spawn_merge_resolution_sessions` (`orchestrator/core/merge_handler.rs`) still exempts probe failures from `MAX_MERGE_RESOLVER_ATTEMPTS`. A non-final stage now reaches `MergeBlocked` after a failed auto-merge, so a permanently dirty main checkout produces a "Failed to spawn merge resolution session" warning every 5 s until the daemon exits. The 2026-08-17 entry in phantom-merges.md already asks for a cap or an escalation path.
+- `loom stage merge` requires the cwd to be inside `.worktrees/` (`commands/stage/merge/preflight.rs::resolve_worktree_paths`). A stage whose worktree is gone but whose branch is unmerged has no loom command that merges it, and the hints printed by the daemon and `loom status` do not say to cd first.
+- `verify_merged_true_or_revert` (`orchestrator/core/recovery.rs`) treats a git error from `verify_merge_succeeded` as "not verified" (`unwrap_or(false)`) and reverts `merged` to false, so a transient git failure can flip a merged stage to unmerged.
+- `merge_stage` (`git/merge/mod.rs`) checks out the target branch in the operator's main checkout and, on success, leaves it there; only the failure paths restore the original branch.
+- `try_auto_merge` is 228 lines against the 50-line function cap and is ledgered at that size.

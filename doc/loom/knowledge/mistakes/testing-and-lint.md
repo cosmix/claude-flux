@@ -435,3 +435,13 @@ five dead `cat >/dev/null &` drains are gone from `codex_tests.rs`. A race that 
 load needs a loaded runner to catch: `scripts/flake-check.sh` re-runs `quota::`, `process::`,
 `verdict_apply_tests::` and `stalled_judge_tests::` under CPU contention, pinned to 4 CPUs where
 `taskset` exists, wired into CI, the release workflow's publish gate, and the pre-push hook.
+
+## The Pre-Commit Hook Re-Adds Every Staged File, So Partial Staging Is Silently Undone (2026-09-06)
+
+**What happened:** a commit was meant to carry only this session's hunks of `loom/maintainability-baseline.txt` and `loom/src/models/stage/methods.rs`, staged with `git apply --cached`, while another session's uncommitted edits to the same two files stayed in the working tree. The commit that landed contained the other session's ledger entries too (`methods.rs 739`, `types.rs 1166`, a `defaults.rs` entry) with none of the code those entries describe, so the snapshot could not pass its own ledger gate.
+
+**Why:** `loom/.githooks/pre-commit` records `git diff --cached --name-only` before running `cargo fmt` and markdownlint, then runs `git add "$file"` for every one of those paths unconditionally, not only for files the formatters changed. Any path with a partially staged diff is replaced by its full working-tree content. Nothing in the hook output says so; the line reads `Re-staging formatted files...`.
+
+**Prevention:** when a file you need to commit also carries someone else's uncommitted edits, do not rely on partial staging through the hook. Either land the other session's work first, or commit with `--no-verify` after running the hook's own checks by hand (`cargo fmt --check`, `cargo test --test maintainability`, `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps`, markdownlint on the touched files) and say so in the report. After any commit that involved partial staging, diff the committed file against the previous commit before moving on; `git show --stat` alone will not reveal the substitution. The hook itself could re-add only files whose content the formatters changed (`git diff --quiet -- "$file"` before and after), which would remove the trap.
+
+**Fix:** the affected commit was amended with the intended ledger content, and the follow-up commit was made with `--no-verify` after the hook's checks were run by hand.

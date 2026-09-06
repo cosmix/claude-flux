@@ -1,6 +1,6 @@
 # Phantom Merges
 
-> Seven lessons on loom's merge machinery — writing merged=true without verifying git ancestry (the costliest recurring failure class in loom), plus the preflight guards and session lifecycle around it.
+> Eight lessons on loom's merge machinery — writing merged=true without verifying git ancestry (the costliest recurring failure class in loom), the preflight guards and session lifecycle around it, and the silent resting state a failed auto-merge once left behind.
 
 ## Phantom Merges: merged=true Without Verification
 
@@ -20,11 +20,11 @@
 **Detection rules for future work:**
 
 - Any `stage.merged = true` write outside the exemption list is a phantom-merge candidate. Must be preceded by a git-verified `is_ancestor_of(completed_commit, target_branch)` returning `Ok(true)`.
-- "Stage is Completed (terminal), can't go back" is NOT a license to write merged=true. `Completed + !merged` is a valid resting place — `spawn_merge_resolution_sessions` only acts on `MergeConflict`/`MergeBlocked`, so no respawn loop results.
+- "Stage is Completed (terminal), can't go back" is NOT a license to write merged=true. It is not a license to stay silent either: since 2026-09-06 a failed auto-merge is forced to `MergeBlocked` with the error in `failure_info` (last entry in this file). `Completed + !merged` is the resting place only when auto-merge is disabled. The respawn loop that once argued for leaving a Completed stage alone is capped by `MAX_MERGE_RESOLVER_ATTEMPTS`.
 - Dependency scheduling must cross-check ancestry (`are_all_dependencies_satisfied` in `verify/transitions/state.rs`), not trust the `merged` flag alone. Knowledge stages are the only exemption.
 - `loom repair` catches stages with `merged: true` whose commit is not in the target branch — run on suspected phantom merges.
 
-**Fix (implemented in this change):** Seven writer sites (recovery.rs, merge_handler.rs × 5, progressive_complete.rs) now leave `Completed + !merged` as the resting state instead of lying. `check_merge_state` returns `Unknown` for non-knowledge stages whose merged flag can't be ancestry-verified. `are_all_dependencies_satisfied` cross-checks ancestry per dep. `start_stage` adds a spawn-time defense-in-depth check. A one-shot retry on daemon start handles the `--no-verify`-then-restart case. `loom repair` detects and reverts phantom merges. Status UI renders `Completed + !merged` as yellow "unmerged" with a hint to run `loom stage merge <id>`.
+**Fix (implemented in this change):** Seven writer sites (recovery.rs, merge_handler.rs × 5, progressive_complete.rs) now leave `Completed + !merged` as the resting state instead of lying. `check_merge_state` returns `Unknown` for non-knowledge stages whose merged flag can't be ancestry-verified. `are_all_dependencies_satisfied` cross-checks ancestry per dep. `start_stage` adds a spawn-time defense-in-depth check. A one-shot retry on daemon start handles the `--no-verify`-then-restart case. `loom repair` detects and reverts phantom merges. Status UI renders `Completed + !merged` as yellow "unmerged" with a hint to run `loom stage merge <id>`. Superseded in part on 2026-09-06: the silent resting state, and a hint that named a command which refused Completed stages, are the subject of the last entry in this file.
 
 ## Phantom Merges from `--force-unsafe` Shortcuts (2026-04-27)
 
@@ -129,3 +129,13 @@ stage branch is provably contained in the target.
 Full detail, including the detection rule ("after this returns, what can no longer be
 verified?") and the two subsidiary rules about live-cwd deferral and derived-state
 failure budgets: `mistakes/merge-cleanup-boundary.md`.
+
+## Silent `Completed + !merged` After a Failed Auto-Merge (2026-09-06)
+
+**What happened:** In projects running loom, the final stage of a plan (usually knowledge-distill) finished on its own and `loom status` showed it completed but "unmerged", the daemon gone, nothing under "Requires Attention". `loom stage merge <id>`, which the status hint and the daemon log both recommended, refused: `require_merge_state` accepted only `MergeConflict` or `MergeBlocked`. The operator merged the branch with `git merge` by hand.
+
+**Why:** The daemon writes `Completed` (merged=false, no completed_commit) when `CompleteStage` arrives, before any merge. Every failure arm in `try_auto_merge` and `verify_and_finalize_merge` then hit `if stage.status == Completed { log; return false }`, and `persist_merge_blocked` early-returned for Completed stages, so a git refusal (dirty main checkout, lock timeout, missing branch), a failed ancestry check, or the zero-commits phantom guard all left `Completed + !merged` with a `tracing::error!` line as the only trace. `all_stages_terminal` counts a Completed node as terminal, so for the last stage the daemon exited on the same tick; a non-final stage kept its dependents waiting on `merged`. The 2026-04-15 fix above chose that resting state to avoid a resolver respawn loop that `MAX_MERGE_RESOLVER_ATTEMPTS` has since capped, so the guard's reason had lapsed while its cost, invisibility, remained. Two false signals hid it: the sync logged "Completed stage commit is not an ancestor of target branch; leaving as Completed + !merged" at ERROR on every normal completion right before merging, and `merged: true` appearing a second later made that line look like noise.
+
+**Prevention:** A state the daemon can leave a stage in must be (1) visible in `loom status` with a reason and (2) actionable by the command the hint names. Check both when adding a failure arm: `commands/status/render/attention_model.rs` must produce an entry for the status, and the named command's preflight must accept it. A `return false` that only logs is a silent state. When a guard cites a reason ("avoid the respawn loop"), re-check the reason whenever the mechanism it names changes.
+
+**Fix:** `persist_merge_blocked` now applies to Completed stages, records the error in `failure_info` (`InfrastructureError`, evidence = the git error lines), forces `MergeBlocked`, and prints the `loom stage merge` hint; all failure arms route through it. The empty-branch guard routes to `NeedsHumanReview` with a `review_reason` via `route_to_human_review`. `require_merge_state` accepts `Completed + !merged` (the auto-merge-disabled resting state) and `try_complete_merge` tolerates an already-Completed stage. The sync's routine "not yet in target" line is `debug`. Tests: `orchestrator/core/merge_handler_attempt_tests.rs::failed_auto_merge_moves_completed_stage_to_merge_blocked` and `::empty_stage_branch_routes_to_human_review`.

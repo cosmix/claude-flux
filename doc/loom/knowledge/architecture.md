@@ -82,9 +82,15 @@ Three independent enforcement thresholds fire off this one ceiling — 1.0x (the
 - **Shell escaping**: escape_shell_single_quote(), escape_applescript_string() in emulator.rs
 - **permission_mode field** (`SandboxConfig` / `StageSandboxConfig`): Resolves as stage > plan > stage-type default. Default by stage type: ALL four stage types → `auto` (Knowledge, KnowledgeDistill, Standard, IntegrationVerify) — loom stages run autonomously with no human to answer prompts, so the agent auto-accepts actions its heuristics deem safe; the sandbox deny/allow rules are the safety boundary. Override to a stricter mode (`accept-edits`, `plan`) at plan or stage level if needed. **Delivery:** the resolved mode is passed as the `--permission-mode` CLI flag by `build_claude_command` at spawn — NOT via `permissions.defaultMode` in the worktree's `settings.local.json`, which Claude Code v2.1.142+ ignores for `auto` (a repo cannot grant itself auto mode; only the CLI flag or user/managed settings are honored). Auto mode itself requires a supporting account/model (Opus 4.6+/Sonnet 4.6+); loom's job is only to request it correctly. See entry-points.md §2–3 and mistakes.md.
 
-## Merge Lock (progressive_merge/lock.rs)
+## Merge Lock (git/merge/lock.rs)
 
-MergeLock prevents concurrent merges via exclusive file at `.work/merge.lock`. Atomic creation, PID + timestamp. Timeout 30s, stale lock auto-cleanup at 5min. Released via Drop.
+`MergeLock` serializes loom-driven merges with an exclusive OS advisory lock (`fs2::try_lock_exclusive`) on the stable `.work/merge.lock` inode. The file is created once and never unlinked; the holder's pid and timestamp are written into it for diagnosis only. `acquire` polls every 100 ms up to the caller's timeout (30 s from `merge_stage` and the probe). Release is by `Drop` or process exit, so there is no stale-lock reclamation and a pid left in the file after a merge is not a held lock. An earlier version of this section named `progressive_merge/lock.rs` and a five-minute stale sweep; neither exists.
+
+## Merge Flow (post-completion auto-merge) [DETAILED]
+
+The daemon writes `Completed` before any merge runs; the first merge attempt comes from the one-shot loop at the end of `sync_graph_with_stage_files`, not from the `StageCompleted` event, which arrives later in the same tick and only cleans up. Outcomes: conflicts spawn a resolver (`MergeConflict`); any other failure is forced to `MergeBlocked` with the git error in `failure_info`; an empty branch goes to `NeedsHumanReview`; only auto-merge-disabled stages rest at `Completed + !merged`. `loom stage merge <id>`, run from the worktree, accepts all three non-merged states.
+
+→ [Merge Flow](architecture/merge-flow.md)
 
 ## Skills Module (loom/src/skills/)
 

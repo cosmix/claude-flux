@@ -8,13 +8,13 @@
 
 | File | Description | Lines |
 | --- | --- | --- |
-| [architecture.md](architecture.md) | High-level component relationships, data flow, module dependencies | 542 |
+| [architecture.md](architecture.md) | High-level component relationships, data flow, module dependencies | 548 |
 | [entry-points.md](entry-points.md) | Key files agents should read first | 572 |
 | [patterns.md](patterns.md) | Architectural patterns discovered in the codebase | 799 |
 | [conventions.md](conventions.md) | Coding conventions discovered in the codebase | 697 |
-| [mistakes.md](mistakes.md) | Mistakes made and lessons learned - what to avoid | 1186 |
+| [mistakes.md](mistakes.md) | Mistakes made and lessons learned - what to avoid | 1187 |
 | [stack.md](stack.md) | Dependencies, frameworks, and tooling used in the project | 116 |
-| [concerns.md](concerns.md) | Technical debt, warnings, and issues to address | 857 |
+| [concerns.md](concerns.md) | Technical debt, warnings, and issues to address | 867 |
 
 ## Tier 2 — Topics
 
@@ -32,7 +32,7 @@
 | [architecture/hook-system.md](architecture/hook-system.md) | Hook System | Hook embedding and install, the SessionStart hookSpecificOutput contract, and the two subagent enforcement hooks. | 156 |
 | [architecture/knowledge-hierarchy.md](architecture/knowledge-hierarchy.md) | Knowledge Hierarchy | Tier-1/tier-2 knowledge mechanics: layout predicate, target parsing, INDEX.md generation, audit link rules, coverage… | 144 |
 | [architecture/memory-spool.md](architecture/memory-spool.md) | Memory Spool and Drain | Topic notes for the architecture knowledge area. | 105 |
-| [architecture/merge-flow.md](architecture/merge-flow.md) | Merge Flow | Topic notes for the architecture knowledge area. | 7 |
+| [architecture/merge-flow.md](architecture/merge-flow.md) | Merge Flow | How a completed worktree stage reaches the target branch: the daemon writes Completed first, the sync loop runs the… | 62 |
 | [architecture/quota-poller.md](architecture/quota-poller.md) | Quota Poller | How loom learns the operator's Claude and Codex subscription budget, where it caches it, and what the two dashboards do… | 29 |
 | [architecture/remote-control.md](architecture/remote-control.md) | Remote Control | Capability detection, preflight, resolution, and per-kind session naming for driving external agent binaries. | 64 |
 | [architecture/signal-generation.md](architecture/signal-generation.md) | Signal Generation | How a stage signal is assembled: stable-prefix cache, shared append_* helpers, per-stage-type prefixes, soft signals. | 175 |
@@ -77,7 +77,7 @@
 | [mistakes/ledger-tui-rendering.md](mistakes/ledger-tui-rendering.md) | Ledger Tui Rendering | Topic notes for the mistakes knowledge area. | 38 |
 | [mistakes/merge-cleanup-boundary.md](mistakes/merge-cleanup-boundary.md) | Merge Cleanup Boundary | A cleanup-boundary bug: what happened, why it survived undetected, and the fix shape worth reusing. | 170 |
 | [mistakes/parallel-worktree-shared-state.md](mistakes/parallel-worktree-shared-state.md) | Parallel Worktree Shared State | Cross-worktree state races: the one diagnostic question, concrete cases, and a blind-review-subagent instance. | 124 |
-| [mistakes/phantom-merges.md](mistakes/phantom-merges.md) | Phantom Merges | Seven lessons on loom's merge machinery — writing merged=true without verifying git ancestry (the costliest recurring… | 131 |
+| [mistakes/phantom-merges.md](mistakes/phantom-merges.md) | Phantom Merges | Eight lessons on loom's merge machinery — writing merged=true without verifying git ancestry (the costliest recurring… | 141 |
 | [mistakes/pinned-literals-ledgers-and-wiring.md](mistakes/pinned-literals-ledgers-and-wiring.md) | Pinned Literals Ledgers And Wiring | The maintainability ledger exact-match trap and goal-backward wiring checks pinning a pattern to a path. | 136 |
 | [mistakes/refactor-stragglers.md](mistakes/refactor-stragglers.md) | Refactor Stragglers | What a large removal or rename leaves behind: straggler initializers, stale comments, stale docs, duplicate modules. | 82 |
 | [mistakes/sandbox-and-settings.md](mistakes/sandbox-and-settings.md) | Sandbox And Settings | Sandbox path rules, permission sync, excludedCommands matching, and settings env leaking between main repo and… | 516 |
@@ -88,7 +88,7 @@
 | [mistakes/status-broadcast-hardening.md](mistakes/status-broadcast-hardening.md) | Status Broadcast Hardening | Topic notes for the mistakes knowledge area. | 72 |
 | [mistakes/store-without-consumer.md](mistakes/store-without-consumer.md) | Store Without Consumer | A store that was written but never read - what happened, why it stayed invisible, and the concrete trail. | 94 |
 | [mistakes/subagent-orchestration.md](mistakes/subagent-orchestration.md) | Subagent Orchestration | Liveness signals for subagents, when a missing report is not a missing result, and the one-background-watch doctrine. | 284 |
-| [mistakes/testing-and-lint.md](mistakes/testing-and-lint.md) | Testing And Lint | Lint and test discipline: --all-targets, --no-fail-fast, headless CI, ambient git config and inherited descriptors in… | 436 |
+| [mistakes/testing-and-lint.md](mistakes/testing-and-lint.md) | Testing And Lint | Lint and test discipline: --all-targets, --no-fail-fast, headless CI, ambient git config and inherited descriptors in… | 447 |
 | [mistakes/tests-that-cannot-fail.md](mistakes/tests-that-cannot-fail.md) | Tests That Cannot Fail | Tests that pass regardless of whether the bug they exist to catch is present, and how to spot the shape. | 191 |
 | [mistakes/tmux-backend.md](mistakes/tmux-backend.md) | Tmux Backend | tmux spawn-failure exit codes, cleanup-on-every-error-path discipline, and PID reuse across a retried session id. | 120 |
 | [mistakes/untrusted-value-boundaries.md](mistakes/untrusted-value-boundaries.md) | Untrusted Value Boundaries | Enumerating every producer of a rendered field, not just the field, and why containment at one render site alone is not… | 141 |
