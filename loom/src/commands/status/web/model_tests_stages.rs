@@ -29,6 +29,7 @@ macro_rules! stage {
             context_ceiling_tokens: $context_ceiling_tokens,
             review_reason: $review_reason.map(str::to_owned),
             merged: $merged,
+            merge_assumed: false,
             cleanup_warning: $cleanup_warning.map(str::to_owned),
             held: $held,
             retry_count: $retry_count,

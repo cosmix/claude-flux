@@ -193,6 +193,10 @@ describe("TUI formatter ports", () => {
       { text: "merged", tone: "merged" },
     ],
     [
+      { status: "completed", stage_type: "standard", merged: true, merge_assumed: true },
+      { text: "assumed", tone: "merged" },
+    ],
+    [
       { status: "completed", stage_type: "standard", merged: false },
       { text: "unmerged", tone: "warning" },
     ],

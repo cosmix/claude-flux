@@ -70,6 +70,7 @@ export const stageSummarySchema = z
     context_ceiling_tokens: z.number().int().nullable(),
     review_reason: z.string().nullable(),
     merged: z.boolean(),
+    merge_assumed: z.boolean(),
     cleanup_warning: z.string().nullable().optional(),
     held: z.boolean(),
     retry_count: z.number().int(),

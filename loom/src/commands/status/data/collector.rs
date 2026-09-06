@@ -4,78 +4,23 @@ use std::fs;
 
 use crate::commands::status::merge_status::build_merge_report;
 use crate::fs::work_dir::{load_config, resolve_context_ceiling_tokens, WorkDir};
-use crate::models::constants::STALENESS_THRESHOLD_SECS;
-use crate::models::session::{Session, SessionStatus};
+use crate::models::session::{Session, SessionType};
 use crate::models::stage::{Stage, StageStatus, StatusBucket};
 use crate::orchestrator::coherence::executing_stage_incoherence;
 use crate::orchestrator::get_merge_point;
-use crate::orchestrator::monitor::heartbeat::{judge_heartbeat_path, read_heartbeat, Heartbeat};
 use crate::parser::frontmatter::parse_from_markdown;
 use crate::plan::parser::extract_plan_name;
 use crate::verify::transitions::list_all_stages;
 
-use super::sanitize::{sanitize_stage_summary, valid_stage_id};
-use super::timing::execution_secs_live;
-use super::{
-    execution_models_for_stage, ActivityStatus, MergeSummary, ProgressSummary, StageSummary,
-    StatusData,
-};
+use super::heartbeat_facts::{heartbeat_facts, stage_extras};
+use super::sanitize::sanitize_stage_summary;
+use super::timing::{elapsed_secs_live, execution_secs_live};
+use super::{MergeSummary, ProgressSummary, StageSummary, StatusData};
 
 #[cfg(test)]
 use super::SessionSummary;
 #[cfg(test)]
 use crate::process::is_process_alive;
-
-/// Read one of a stage's heartbeat files from the heartbeat directory.
-///
-/// Both callers join `stage_id` into the path, and the id comes from a stage
-/// file's frontmatter, so it is validated here: an id carrying `../` would
-/// otherwise make the daemon read an arbitrary `*.json` and put its strings in
-/// the payload every subscriber renders.
-fn read_stage_heartbeat(stage_id: &str, path: &std::path::Path) -> Option<Heartbeat> {
-    if !valid_stage_id(stage_id) || !path.exists() {
-        return None;
-    }
-    read_heartbeat(path).ok()
-}
-
-fn read_heartbeat_for_stage(stage_id: &str, work_dir: &WorkDir) -> Option<Heartbeat> {
-    let path = work_dir
-        .root()
-        .join("heartbeat")
-        .join(format!("{stage_id}.json"));
-    read_stage_heartbeat(stage_id, &path)
-}
-
-fn read_judge_heartbeat_for_stage(stage_id: &str, work_dir: &WorkDir) -> Option<Heartbeat> {
-    read_stage_heartbeat(stage_id, &judge_heartbeat_path(work_dir.root(), stage_id))
-}
-
-/// Calculate activity status from session state, heartbeat staleness, and the
-/// stage's own status. `stage_status` matters only for the no-session case:
-/// no session while the stage sits somewhere idle is unremarkable, but no
-/// session while the stage claims `Executing` means the tracking data itself
-/// is missing (killed daemon, lost session file) — that is `Orphaned`, not
-/// `Idle`, and the dashboard must not render it as a quiet agent.
-fn determine_activity_status(
-    session: Option<&Session>,
-    staleness_secs: Option<u64>,
-    stage_status: &StageStatus,
-) -> ActivityStatus {
-    match (session, staleness_secs) {
-        // No session, but the stage claims to be running - the session
-        // record is missing, not merely quiet.
-        (None, _) if *stage_status == StageStatus::Executing => ActivityStatus::Orphaned,
-        // No session and the stage isn't claiming to run - idle.
-        (None, _) => ActivityStatus::Idle,
-        // Session crashed
-        (Some(s), _) if s.status == SessionStatus::Crashed => ActivityStatus::Error,
-        // Session running but stale heartbeat (> 5 minutes)
-        (Some(_), Some(secs)) if secs > STALENESS_THRESHOLD_SECS => ActivityStatus::Stale,
-        // Session running with recent heartbeat
-        (Some(_), _) => ActivityStatus::Working,
-    }
-}
 
 /// Load all sessions from the state directory's sessions/ directory
 pub fn load_all_sessions(work_dir: &WorkDir) -> Result<Vec<Session>> {
@@ -172,9 +117,23 @@ fn assigned_session<'a>(stage: &Stage, sessions: &'a [Session]) -> Option<&'a Se
     sessions.iter().find(|s| s.id == session_id)
 }
 
-/// Build a StageSummary from a Stage and optional associated Session.
-///
-fn build_stage_summary(stage: &Stage, sessions: &[Session], work_dir: &WorkDir) -> StageSummary {
+/// Everything a stage's summary takes from its session record. Extracted from
+/// `build_stage_summary` to keep that function within the line limit.
+struct SessionFacts<'a> {
+    session: Option<&'a Session>,
+    session_type: Option<SessionType>,
+    incoherence: Option<String>,
+    context_tokens: Option<u32>,
+    context_ceiling_tokens: Option<u32>,
+    pid: Option<u32>,
+    session_alive: bool,
+}
+
+fn session_facts<'a>(
+    stage: &Stage,
+    sessions: &'a [Session],
+    work_dir: &WorkDir,
+) -> SessionFacts<'a> {
     let session = session_for_stage(stage, sessions);
     let assigned = assigned_session(stage, sessions);
     let session_type = assigned.or(session).map(|s| s.session_type);
@@ -183,13 +142,26 @@ fn build_stage_summary(stage: &Stage, sessions: &[Session], work_dir: &WorkDir) 
     let context_tokens = reading.map(|s| s.context_tokens);
     let context_ceiling_tokens = reading
         .map(|_| resolve_context_ceiling_tokens(work_dir.root(), stage.context_ceiling_tokens));
-
     let pid = session.and_then(|s| s.pid);
     let session_alive = pid.map(crate::process::is_process_alive).unwrap_or(false);
 
-    let now = Utc::now();
+    SessionFacts {
+        session,
+        session_type,
+        incoherence,
+        context_tokens,
+        context_ceiling_tokens,
+        pid,
+        session_alive,
+    }
+}
 
-    let heartbeat = heartbeat_facts(stage, session, work_dir);
+/// Build a StageSummary from a Stage and optional associated Session.
+///
+fn build_stage_summary(stage: &Stage, sessions: &[Session], work_dir: &WorkDir) -> StageSummary {
+    let facts = session_facts(stage, sessions, work_dir);
+    let now = Utc::now();
+    let heartbeat = heartbeat_facts(stage, facts.session, work_dir);
     let extras = stage_extras(stage, work_dir);
 
     StageSummary {
@@ -198,8 +170,8 @@ fn build_stage_summary(stage: &Stage, sessions: &[Session], work_dir: &WorkDir) 
         status: stage.status.clone(),
         stage_type: stage.stage_type,
         dependencies: stage.dependencies.clone(),
-        context_tokens,
-        elapsed_secs: Some((now - stage.created_at).num_seconds()),
+        context_tokens: facts.context_tokens,
+        elapsed_secs: elapsed_secs_live(stage, now),
         execution_secs: execution_secs_live(stage, now),
         base_branch: stage.base_branch.clone(),
         base_merged_from: stage.base_merged_from.clone(),
@@ -208,73 +180,23 @@ fn build_stage_summary(stage: &Stage, sessions: &[Session], work_dir: &WorkDir) 
         last_tool: heartbeat.last_tool,
         last_activity: heartbeat.last_activity,
         staleness_secs: heartbeat.staleness_secs,
-        context_ceiling_tokens,
+        context_ceiling_tokens: facts.context_ceiling_tokens,
         review_reason: stage.review_reason.clone(),
         merged: stage.merged,
+        merge_assumed: stage.merge_assumed,
         cleanup_warning: stage.cleanup_warning.clone(),
         held: stage.held,
         retry_count: stage.retry_count,
         max_retries: stage.max_retries,
-        pid,
-        session_alive,
+        pid: facts.pid,
+        session_alive: facts.session_alive,
         model: stage.effective_model().to_string(),
-        session_type,
-        incoherence,
+        session_type: facts.session_type,
+        incoherence: facts.incoherence,
         execution_models: extras.execution_models,
         dispute_count: stage.dispute_count,
         judge_heartbeat_secs: extras.judge_heartbeat_secs,
-        session_backend: session.map(|s| s.backend),
-    }
-}
-
-/// Heartbeat-derived facts for a stage's [`StageSummary`]: staleness, current
-/// activity, and the last recorded tool/activity strings. Extracted from
-/// `build_stage_summary` to keep that function within the line limit.
-struct HeartbeatFacts {
-    staleness_secs: Option<u64>,
-    activity_status: ActivityStatus,
-    last_tool: Option<String>,
-    last_activity: Option<String>,
-}
-
-struct StageExtras {
-    execution_models: Vec<String>,
-    judge_heartbeat_secs: Option<u64>,
-}
-
-fn stage_extras(stage: &Stage, work_dir: &WorkDir) -> StageExtras {
-    let judge_heartbeat_secs = read_judge_heartbeat_for_stage(&stage.id, work_dir).map(|hb| {
-        Utc::now()
-            .signed_duration_since(hb.timestamp)
-            .num_seconds()
-            .max(0) as u64
-    });
-    StageExtras {
-        execution_models: execution_models_for_stage(work_dir, &stage.id),
-        judge_heartbeat_secs,
-    }
-}
-
-fn heartbeat_facts(stage: &Stage, session: Option<&Session>, work_dir: &WorkDir) -> HeartbeatFacts {
-    let heartbeat = read_heartbeat_for_stage(&stage.id, work_dir);
-
-    // Calculate staleness (seconds since last heartbeat)
-    let staleness_secs = heartbeat.as_ref().map(|hb| {
-        let age = Utc::now().signed_duration_since(hb.timestamp);
-        age.num_seconds().max(0) as u64
-    });
-
-    // Determine activity status based on session, heartbeat, and stage status
-    let activity_status = determine_activity_status(session, staleness_secs, &stage.status);
-
-    let last_tool = heartbeat.as_ref().and_then(|hb| hb.last_tool.clone());
-    let last_activity = heartbeat.as_ref().and_then(|hb| hb.activity.clone());
-
-    HeartbeatFacts {
-        staleness_secs,
-        activity_status,
-        last_tool,
-        last_activity,
+        session_backend: facts.session.map(|s| s.backend),
     }
 }
 
@@ -395,6 +317,9 @@ pub fn collect_status_data(work_dir: &WorkDir) -> Result<StatusData> {
     })
 }
 
+#[cfg(test)]
+#[path = "collector_activity_tests.rs"]
+mod activity_tests;
 #[cfg(test)]
 #[path = "collector_tests.rs"]
 mod tests;

@@ -23,7 +23,8 @@ const HINT = {
   model: "The model the stage's own session runs, from the plan or the stage type's default.",
   executionModels:
     "Models the stage's subagents have run on, first seen first. Empty until a subagent spawns.",
-  elapsed: "Wall-clock time since the stage was created.",
+  elapsed:
+    "Wall-clock time from the stage's first start to its completion, or to now while it is still open. Includes waits and retry backoff, which execution excludes. Shown once the stage has started.",
   execution:
     "Time spent in a session, excluding waits and retry backoff. For an executing stage it counts the attempt in flight.",
   tokens: "Resident tokens in the active session's context window, as the hook last reported them.",
@@ -35,14 +36,16 @@ const HINT = {
   sessionType:
     "What the session was spawned to do: stage work, a merge, a base-conflict fix, knowledge, or adjudication.",
   activity:
-    "Working: a tool ran recently. Idle: alive, nothing happening. Stale: no heartbeat for 5 min. Orphaned: executing with no session record. Error: the process died.",
+    "Working: a tool ran recently. Idle: no live session, or the stage is finished. Stale: no heartbeat for 5 min. Orphaned: executing with no session record. Error: the process died.",
   lastTool: "The tool the session used most recently, from its heartbeat.",
-  lastActivity: "The heartbeat's description of what the session last did.",
+  lastActivity:
+    "The heartbeat's description of what the session last did. Usually names the last tool, but session start and a subagent finishing are recorded here with no tool.",
   staleness: "Time since the last heartbeat.",
   retries: "Automatic retries so far, of the stage's limit.",
   disputes: "Acceptance criteria the stage's agent disputed. A judge session settles them.",
   judge: "Time since the adjudication judge for this stage last reported in.",
-  merged: "Whether the stage's branch has been merged into the merge point.",
+  merged:
+    "Whether the stage's branch has been merged into the merge point. Assumed: an operator completed the stage with --force-unsafe --assume-merged, so loom did not perform the merge itself.",
   baseBranch:
     "The branch the stage's worktree was cut from: the target branch, or a base built by merging several dependencies.",
   baseMergedFrom:
@@ -97,7 +100,7 @@ function sessionRows(stage: StageSummary) {
   if (!hasSession) return [];
   return present([
     row("pid", HINT.pid, stage.pid === null ? null : String(stage.pid), true),
-    row("alive", HINT.alive, yesNo(stage.session_alive)),
+    row("alive", HINT.alive, yesNo(stage.session_alive), true),
     row("backend", HINT.backend, stage.session_backend, true),
     row("session type", HINT.sessionType, stage.session_type, true),
     row("activity", HINT.activity, stage.activity_status, true),
@@ -143,7 +146,12 @@ function mergeRows(stage: StageSummary) {
     row(
       "merged",
       HINT.merged,
-      MERGE_STATES.has(stage.status) || stage.merged ? yesNo(stage.merged) : null,
+      MERGE_STATES.has(stage.status) || stage.merged
+        ? stage.merge_assumed
+          ? "assumed"
+          : yesNo(stage.merged)
+        : null,
+      true,
     ),
     row("base branch", HINT.baseBranch, stage.base_branch, true),
     row("base merged from", HINT.baseMergedFrom, stage.base_merged_from.join(", "), true),
@@ -155,7 +163,7 @@ function noteRows(stage: StageSummary) {
   return present([
     row("review reason", HINT.reviewReason, stage.review_reason),
     row("incoherence", HINT.incoherence, stage.incoherence, true),
-    row("held", HINT.held, stage.held ? "yes" : null),
+    row("held", HINT.held, stage.held ? "yes" : null, true),
   ]);
 }
 

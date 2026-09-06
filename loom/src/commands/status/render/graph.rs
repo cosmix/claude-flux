@@ -109,7 +109,7 @@ fn format_stage_annotations(stage: &StageSummary) -> String {
     // Merge status for completed stages
     if stage.status == StageStatus::Completed {
         if stage.merged {
-            parts.push(format!("{}", "merged".green().dimmed()));
+            parts.push(format!("{}", stage.merge_label().green().dimmed()));
         } else if !matches!(stage.stage_type, StageType::Knowledge) {
             // Completed but not merged and not a knowledge stage — needs manual merge
             parts.push(format!("{}", "unmerged".yellow()));

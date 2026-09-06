@@ -730,6 +730,13 @@ pub struct Stage {
     /// use the merge point as their base, containing all dependency work.
     #[serde(default)]
     pub merged: bool,
+    /// Whether `merged` was asserted by an operator through
+    /// `loom stage complete --force-unsafe --assume-merged` rather than set
+    /// by a merge loom performed. Written on every `--force-unsafe`
+    /// completion, so a later one without the flag resets it with `merged`;
+    /// merges loom performs never touch it.
+    #[serde(default)]
+    pub merge_assumed: bool,
     /// Whether stage has unresolved merge conflicts
     #[serde(default)]
     pub merge_conflict: bool,
@@ -1144,78 +1151,6 @@ where
                  dropping to None and falling back to the stage-type default"
             );
             Ok(None)
-        }
-    }
-}
-
-impl Default for Stage {
-    fn default() -> Self {
-        let now = chrono::Utc::now();
-        Self {
-            id: String::new(),
-            name: String::new(),
-            description: None,
-            status: StageStatus::WaitingForDeps,
-            dependencies: Vec::new(),
-            parallel_group: None,
-            acceptance: Vec::new(),
-            setup: Vec::new(),
-            files: Vec::new(),
-            stage_type: StageType::default(),
-            plan_id: None,
-            worktree: None,
-            session: None,
-            held: false,
-            parent_stage: None,
-            child_stages: Vec::new(),
-            created_at: now,
-            updated_at: now,
-            completed_at: None,
-            started_at: None,
-            duration_secs: None,
-            execution_secs: None,
-            attempt_started_at: None,
-            close_reason: None,
-            auto_merge: None,
-            working_dir: Some(".".to_string()),
-            retry_count: 0,
-            max_retries: None,
-            last_failure_at: None,
-            failure_info: None,
-            resolved_base: None,
-            base_branch: None,
-            base_merged_from: Vec::new(),
-            outputs: Vec::new(),
-            completed_commit: None,
-            cleanup_warning: None,
-            merged: false,
-            merge_conflict: false,
-            verification_status: Default::default(),
-            context_ceiling_tokens: None,
-            plan_overview: None,
-            artifacts: Vec::new(),
-            wiring: Vec::new(),
-            wiring_tests: Vec::new(),
-            dead_code_check: None,
-            before_stage: Vec::new(),
-            after_stage: Vec::new(),
-            code_review: None,
-            fix_attempts: 0,
-            dispute_count: 0,
-            evidence_rounds: 0,
-            amendments_applied: 0,
-            stall_recoveries: 0,
-            sandbox: Default::default(),
-            execution_mode: None,
-            max_fix_attempts: None,
-            review_reason: None,
-            bug_fix: None,
-            regression_test: None,
-            model: None,
-            reasoning_effort: None,
-            ultracode: false,
-            implementers: Implementers::default(),
-            subagent_timeout_secs: None,
         }
     }
 }

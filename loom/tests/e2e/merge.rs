@@ -1,7 +1,7 @@
 //! E2E tests for auto-merge workflow
 
 use chrono::Utc;
-use loom::models::stage::{Implementers, Stage, StageStatus};
+use loom::models::stage::{Stage, StageStatus};
 use loom::orchestrator::auto_merge::is_auto_merge_enabled;
 use loom::plan::schema::{LoomMetadata, StageDefinition};
 
@@ -10,68 +10,12 @@ fn create_test_stage(id: &str, auto_merge: Option<bool>) -> Stage {
     Stage {
         id: id.to_string(),
         name: format!("Test Stage {id}"),
-        description: None,
-        code_review: None,
         status: StageStatus::Completed,
-        dependencies: vec![],
-        parallel_group: None,
-        acceptance: vec![],
-        setup: vec![],
-        files: vec![],
-        stage_type: loom::models::stage::StageType::default(),
-        plan_id: None,
         worktree: Some(id.to_string()),
-        session: None,
-        held: false,
-        parent_stage: None,
-        child_stages: vec![],
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
         completed_at: Some(Utc::now()),
-        started_at: None,
-        duration_secs: None,
-        execution_secs: None,
-        attempt_started_at: None,
-        close_reason: None,
         auto_merge,
         working_dir: None,
-        sandbox: Default::default(),
-        fix_attempts: 0,
-        dispute_count: 0,
-        evidence_rounds: 0,
-        amendments_applied: 0,
-        stall_recoveries: 0,
-        retry_count: 0,
-        max_retries: None,
-        last_failure_at: None,
-        failure_info: None,
-        resolved_base: None,
-        base_branch: None,
-        base_merged_from: vec![],
-        outputs: vec![],
-        completed_commit: None,
-        cleanup_warning: None,
-        merged: false,
-        merge_conflict: false,
-        verification_status: Default::default(),
-        context_ceiling_tokens: None,
-        plan_overview: None,
-        artifacts: Vec::new(),
-        wiring: Vec::new(),
-        wiring_tests: Vec::new(),
-        dead_code_check: None,
-        before_stage: Vec::new(),
-        after_stage: Vec::new(),
-        execution_mode: None,
-        max_fix_attempts: None,
-        review_reason: None,
-        bug_fix: None,
-        regression_test: None,
-        model: None,
-        reasoning_effort: None,
-        ultracode: false,
-        implementers: Implementers::default(),
-        subagent_timeout_secs: None,
+        ..Stage::default()
     }
 }
 

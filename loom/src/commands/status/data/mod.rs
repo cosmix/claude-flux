@@ -1,5 +1,6 @@
 mod collector;
 mod execution_models;
+mod heartbeat_facts;
 mod sanitize;
 mod timing;
 
@@ -16,7 +17,8 @@ pub use crate::models::stage::{StageStatus, StageType};
 /// Activity status derived from heartbeat and session state
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub enum ActivityStatus {
-    /// No active session or session is idle
+    /// No active session, the session ended without crashing, or the stage
+    /// is finished (Completed/Skipped).
     #[default]
     Idle,
     /// Session is actively working (recent heartbeat)
@@ -84,6 +86,8 @@ pub struct StageSummary {
     pub dependencies: Vec<String>,
     /// Resident context tokens for the active session.
     pub context_tokens: Option<u32>,
+    /// Wall-clock life of the stage: from its first start to completion, or to
+    /// now while still open. `None` until the stage has started.
     pub elapsed_secs: Option<i64>,
     /// Accumulated execution time (excludes wait/backoff time). For an
     /// `Executing` stage this includes the attempt currently in flight, not
@@ -106,6 +110,9 @@ pub struct StageSummary {
     pub review_reason: Option<String>,
     /// Whether stage changes have been merged to the merge point
     pub merged: bool,
+    /// `merged` was asserted by `--assume-merged`, not set by a merge loom performed.
+    #[serde(default)]
+    pub merge_assumed: bool,
     /// Why the post-merge cleanup failed, if it did (worktree/branch still on disk)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_warning: Option<String>,
@@ -144,6 +151,18 @@ pub struct StageSummary {
     /// Which terminal backend hosts this stage's session, when one is known.
     #[serde(default)]
     pub session_backend: Option<crate::models::session::SessionBackendKind>,
+}
+
+impl StageSummary {
+    /// The word a merged stage wears: `assumed` when an operator asserted the
+    /// merge with `--assume-merged`, `merged` when loom performed it.
+    pub fn merge_label(&self) -> &'static str {
+        if self.merge_assumed {
+            "assumed"
+        } else {
+            "merged"
+        }
+    }
 }
 
 /// Session display data (test-only)

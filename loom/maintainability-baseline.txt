@@ -9,11 +9,11 @@
 
 file src/commands/graph/tests.rs 425
 file src/commands/hook/tests_reconcile_graph.rs 432
-file src/commands/init/tests.rs 687
+file src/commands/init/tests.rs 570
 file src/commands/plan/verify.rs 599
 file src/commands/review/generate.rs 439
 file src/commands/run/tests.rs 463
-file src/commands/stage/complete.rs 861
+file src/commands/stage/complete.rs 771
 file src/commands/stage/merge.rs 546
 file src/commands/stage/tests/complete.rs 544
 file src/context/refresh/tests_source_graph.rs 679
@@ -30,8 +30,8 @@ file src/fs/work_dir/tests.rs 863
 file src/git/worktree/base.rs 545
 file src/git/worktree/settings.rs 706
 file src/hooks/tests.rs 514
-file src/models/stage/methods.rs 801
-file src/models/stage/types.rs 1231
+file src/models/stage/methods.rs 739
+file src/models/stage/types.rs 1166
 file src/orchestrator/core/merge_handler.rs 1328
 file src/orchestrator/core/orchestrator.rs 547
 file src/orchestrator/core/recovery.rs 1569
@@ -82,8 +82,6 @@ function src/commands/init/tests.rs test_cleanup_orphaned_sessions_reaps_live_on
 function src/commands/init/tests.rs test_create_stage_from_definition_no_dependencies 88
 function src/commands/init/tests.rs test_initialize_with_plan_creates_config 51
 function src/commands/init/tests.rs test_initialize_with_plan_creates_stage_files 90
-function src/commands/init/tests.rs test_serialize_stage_to_markdown_minimal 74
-function src/commands/init/tests.rs test_serialize_stage_to_markdown_with_all_fields 83
 function src/commands/knowledge/tests.rs test_knowledge_update_in_worktree_writes_to_worktree 74
 function src/commands/knowledge/tests.rs test_parse_file_type 70
 function src/commands/plan/verify.rs execute 272
@@ -103,7 +101,6 @@ function src/commands/sessions.rs kill_single_session 51
 function src/commands/skill_index.rs parse_skill_triggers 80
 function src/commands/stage/acceptance_runner.rs resolve_acceptance_dir 60
 function src/commands/stage/complete.rs complete 173
-function src/commands/stage/complete.rs handle_force_unsafe_completion 83
 function src/commands/stage/complete.rs route_complete_for_conflicts 159
 function src/commands/stage/complete.rs run_verification_phase 99
 function src/commands/stage/knowledge_complete.rs complete_knowledge_stage 122
@@ -112,12 +109,9 @@ function src/commands/stage/merge.rs merge_retry 199
 function src/commands/stage/merge_resolver.rs spawn_merge_resolver 64
 function src/commands/stage/progressive_complete.rs attempt_progressive_merge 113
 function src/commands/stage/progressive_complete.rs complete_with_merge 80
-function src/commands/stage/recover.rs test_determine_recovery_reason 89
 function src/commands/stage/skip_retry.rs retry 214
 function src/commands/stage/tests/complete.rs test_complete_no_verify_refuses_zero_commits_ahead 66
 function src/commands/status.rs execute_static 81
-function src/commands/status/data/collector.rs build_stage_summary 52
-function src/commands/status/data/collector_tests.rs make_test_stage 68
 function src/commands/status/render/compact.rs render_compact 74
 function src/commands/status/render/completion.rs render_completion_lines 55
 function src/commands/status/render/completion.rs render_completion_screen 84
@@ -158,7 +152,6 @@ function src/fs/work_integrity.rs validate_work_dir_state 60
 function src/fs/worktree_files/sessions.rs cleanup_sessions_for_stage 79
 function src/git/hooks.rs install_pre_commit_hook 60
 function src/git/merge/mod.rs merge_stage 112
-function src/git/merge/status.rs make_test_stage 68
 function src/git/worktree/base.rs resolve_base_branch 92
 function src/git/worktree/discovery.rs find_worktree_by_prefix 55
 function src/git/worktree/operations.rs create_worktree 115
@@ -170,11 +163,10 @@ function src/handoff/generator/formatter.rs format_handoff_markdown 112
 function src/hooks/generator.rs generate_hooks_settings 136
 function src/hooks/generator.rs test_generate_hooks_settings_includes_global_hooks 56
 function src/hooks/tests.rs test_generate_hooks_merges_with_global_hooks 75
+function src/models/stage/defaults.rs default 70
 function src/models/stage/methods.rs from_definition_copies_all_runtime_policy_fields 128
-function src/models/stage/methods.rs new 71
 function src/models/stage/transitions.rs can_transition_to 74
 function src/models/stage/transitions.rs valid_transitions 58
-function src/models/stage/types.rs default#3 69
 function src/orchestrator/auto_merge.rs attempt_auto_merge 63
 function src/orchestrator/core/completion_handler.rs handle_stage_completed 78
 function src/orchestrator/core/crash_handler.rs handle_session_crashed 122
@@ -284,7 +276,6 @@ function tests/e2e/daemon_config/parallel_sessions.rs test_orchestrator_respects
 function tests/e2e/daemon_config/tests.rs test_auto_merge_config_cascade 75
 function tests/e2e/daemon_config/tests.rs test_daemon_respects_auto_merge 62
 function tests/e2e/handoff/generation.rs test_handoff_generation 63
-function tests/e2e/merge.rs create_test_stage 68
 function tests/e2e/parallel.rs test_diamond_dependency_pattern 75
 function tests/e2e/parallel.rs test_fan_out_fan_in 80
 function tests/e2e/parallel.rs test_parallel_group_isolation 58

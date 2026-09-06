@@ -227,6 +227,7 @@ mod tests {
             context_ceiling_tokens: None,
             review_reason: None,
             merged: false,
+            merge_assumed: false,
             cleanup_warning: None,
             held: false,
             retry_count: 0,

@@ -323,7 +323,7 @@ fn merge_cell(stage: &StageSummary) -> Cell {
         },
         StageStatus::Completed if stage.stage_type != StageType::Knowledge && stage.merged => {
             Cell {
-                text: "merged".to_owned(),
+                text: stage.merge_label().to_owned(),
                 style: Theme::status_merged(),
             }
         }

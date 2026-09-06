@@ -213,9 +213,12 @@ export function mergeText(stage: StageSummary): { text: string; tone: Tone } | n
     return { text: "cleanup!", tone: "warning" };
   }
   if (stage.status === "completed" && stage.stage_type !== "knowledge") {
-    return stage.merged
-      ? { text: "merged", tone: "merged" }
-      : { text: "unmerged", tone: "warning" };
+    if (!stage.merged) {
+      return { text: "unmerged", tone: "warning" };
+    }
+    return stage.merge_assumed
+      ? { text: "assumed", tone: "merged" }
+      : { text: "merged", tone: "merged" };
   }
   if (stage.status === "merge-conflict") {
     return { text: "conflict", tone: "warning" };

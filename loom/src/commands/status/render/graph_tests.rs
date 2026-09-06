@@ -22,6 +22,7 @@ fn make_stage_summary(id: &str, deps: Vec<&str>, status: StageStatus) -> StageSu
         context_ceiling_tokens: None,
         review_reason: None,
         merged: false,
+        merge_assumed: false,
         cleanup_warning: None,
         held: false,
         retry_count: 0,
@@ -189,6 +190,26 @@ fn test_completed_merged_standard_shows_merged() {
     assert!(
         !output_str.contains("unmerged"),
         "Should not show 'unmerged' when stage is merged"
+    );
+}
+
+#[test]
+fn test_completed_merge_assumed_standard_shows_assumed() {
+    // A merge asserted through --assume-merged reads "assumed", not "merged" -
+    // the dashboard must not claim loom performed a merge it never ran.
+    let mut stage = make_stage_summary("my-stage", vec![], StageStatus::Completed);
+    stage.merged = true;
+    stage.merge_assumed = true;
+    stage.stage_type = StageType::Standard;
+
+    let data = make_status_data(vec![stage]);
+    let mut output = Vec::new();
+    render_graph(&mut output, &data).unwrap();
+    let output_str = String::from_utf8(output).unwrap();
+
+    assert!(
+        output_str.contains("assumed"),
+        "Expected 'assumed' label in output"
     );
 }
 

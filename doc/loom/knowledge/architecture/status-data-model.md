@@ -51,7 +51,7 @@ Related enums on `Stage`: `StageType` (`types.rs:14-29`) is Standard, Knowledge,
 - **Identity/graph**: id, name, description, status, dependencies, stage_type, worktree, session, held.
 - **Timing**: created_at/updated_at/completed_at, started_at (first transition to Executing, `types.rs:658-661`), duration_secs (final elapsed time), execution_secs (accumulated active time, excludes backoff, `types.rs:666-670`), attempt_started_at (`types.rs:671-675`).
 - **Retry/failure**: retry_count (`types.rs:685`), max_retries (`types.rs:688`, `None` means the global default of 3), last_failure_at (`types.rs:690`), failure_info: `Option<FailureInfo>` with failure_type, detected_at, evidence (`loom/src/models/failure.rs:54-63`).
-- **Merge**: base_branch, base_merged_from, completed_commit, cleanup_warning (`types.rs:712-718`), merged, merge_conflict, verification_status.
+- **Merge**: base_branch, base_merged_from, completed_commit, cleanup_warning (`types.rs:712-718`), merged, merge_assumed, merge_conflict, verification_status.
 - **Context**: context_ceiling_tokens.
 - **Adjudication/verification**: fix_attempts, max_fix_attempts, dispute_count (capped at 3, `methods.rs:11`), evidence_rounds, amendments_applied, stall_recoveries (`types.rs:777-784`), review_reason.
 - **Execution policy**: model (override), reasoning_effort, implementers, subagent_timeout_secs, files, auto_merge, outputs.
@@ -82,7 +82,7 @@ Written by the agent hook to `.loom/work/heartbeat/<stage_id>.json` (`write_hear
 
 Staleness is seconds since the heartbeat timestamp (`collector.rs:230-234`); the threshold is 5 minutes (`collector.rs:57`).
 
-`ActivityStatus` (`data/mod.rs:14-30`): Idle, Working, Error (session crashed), Stale, Orphaned (stage Executing but no session record). Computed by `determine_activity_status` (`collector.rs:43-61`).
+`ActivityStatus` (`data/mod.rs:14-30`): Idle, Working, Error (session crashed), Stale, Orphaned (stage Executing but no session record). Computed by `determine_activity_status` (`collector.rs:43-61`). A finished stage (Completed/Skipped) and a session that ended without crashing both report `Idle`, regardless of heartbeat age.
 
 PID liveness comes from `crate::process::is_process_alive` (`collector.rs:175`), recomputed on every collection and never persisted.
 
@@ -90,7 +90,7 @@ A context reading is shown only when `context_tokens > 0` and the session is not
 
 ## Payload Shapes
 
-**`StageSummary`** (`data/mod.rs:77-147`, static/compact/live view — all three read the same struct): id, name, status, stage_type, dependencies, context_tokens, elapsed_secs (since created_at), execution_secs, base_branch, base_merged_from, failure_info, activity_status, last_tool, last_activity, staleness_secs, context_ceiling_tokens, review_reason, merged, cleanup_warning, held, retry_count, max_retries, pid, session_alive, model, session_type, incoherence (`data/mod.rs:131`), execution_models, dispute_count, judge_heartbeat_secs, session_backend (`data/mod.rs:136-146`).
+**`StageSummary`** (`data/mod.rs:77-147`, static/compact/live view — all three read the same struct): id, name, status, stage_type, dependencies, context_tokens, elapsed_secs (started_at to completed_at, or to now while open; None until started), execution_secs, base_branch, base_merged_from, failure_info, activity_status, last_tool, last_activity, staleness_secs, context_ceiling_tokens, review_reason, merged, merge_assumed, cleanup_warning, held, retry_count, max_retries, pid, session_alive, model, session_type, incoherence (`data/mod.rs:131`), execution_models, dispute_count, judge_heartbeat_secs, session_backend (`data/mod.rs:136-146`).
 
 `execution_models: Vec<String>` is distinct execution-model display names observed for the stage's subagents, first-seen order (spawn ledger then codex ledger), empty until a subagent spawns — see "Execution-Model Ledgers" below. `dispute_count` and `judge_heartbeat_secs` surface adjudication state. `session_backend: Option<SessionBackendKind>` (Native/Tmux) is populated by the collector but has no reader anywhere in the tree today — see concerns.md.
 
