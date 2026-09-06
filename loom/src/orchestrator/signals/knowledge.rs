@@ -10,7 +10,7 @@ use crate::models::session::Session;
 use crate::models::stage::Stage;
 
 use super::cache::generate_knowledge_stable_prefix;
-use super::format::{extract_tasks_from_description, format_knowledge_brief};
+use super::format::{extract_tasks_from_description, format_stage_brief};
 use super::generate::build_embedded_context_for_stage;
 use super::retrieval::STAGE_QUERY_INPUTS;
 use super::types::DependencyStatus;
@@ -73,7 +73,7 @@ fn format_knowledge_signal_content(
     // Brief — read it first"). Placed directly after the prefix so it sits
     // where the semi-stable section puts it on every other signal path.
     if let Some(pack) = &embedded_context.context_pack {
-        content.push_str(&format_knowledge_brief(pack, &stage.id, STAGE_QUERY_INPUTS));
+        content.push_str(&format_stage_brief(pack, &stage.id, STAGE_QUERY_INPUTS));
     }
 
     // Target section

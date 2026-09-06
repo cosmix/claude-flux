@@ -21,7 +21,8 @@ fn demoted(confidence: Confidence) -> ContextItem {
 
 #[test]
 fn a_medium_knowledge_item_says_so_after_its_reasons() {
-    let rendered = format_knowledge_brief(&pack(vec![demoted(Confidence::Medium)], 0), "s", "q");
+    let rendered =
+        format_knowledge_brief(&pack(vec![demoted(Confidence::Medium)], 0), Some("s"), "q");
 
     assert!(
         rendered.contains("Reason: lexical, exact-path; medium | state: active"),
@@ -31,7 +32,7 @@ fn a_medium_knowledge_item_says_so_after_its_reasons() {
 
 #[test]
 fn a_low_knowledge_item_says_so_after_its_reasons() {
-    let rendered = format_knowledge_brief(&pack(vec![demoted(Confidence::Low)], 0), "s", "q");
+    let rendered = format_knowledge_brief(&pack(vec![demoted(Confidence::Low)], 0), Some("s"), "q");
 
     assert!(
         rendered.contains("Reason: lexical, exact-path; low | state: active"),
@@ -44,7 +45,8 @@ fn a_low_knowledge_item_says_so_after_its_reasons() {
 /// would spend them on every item of every brief.
 #[test]
 fn a_high_knowledge_item_renders_no_confidence_at_all() {
-    let rendered = format_knowledge_brief(&pack(vec![demoted(Confidence::High)], 0), "s", "q");
+    let rendered =
+        format_knowledge_brief(&pack(vec![demoted(Confidence::High)], 0), Some("s"), "q");
 
     assert!(
         rendered.contains("Reason: lexical, exact-path | state: active"),
@@ -61,7 +63,7 @@ fn a_demoted_source_item_carries_its_label_inside_the_reason_parentheses() {
         confidence: Confidence::Medium,
         ..rank_source_item(Some(23), Some(28))
     };
-    let rendered = format_knowledge_brief(&pack(vec![demoted], 0), "s", "q");
+    let rendered = format_knowledge_brief(&pack(vec![demoted], 0), Some("s"), "q");
 
     assert!(
         rendered.contains("— `rank` function :23-28 (lexical, exact-path; medium)"),
@@ -71,8 +73,11 @@ fn a_demoted_source_item_carries_its_label_inside_the_reason_parentheses() {
 
 #[test]
 fn a_high_source_item_renders_its_reasons_alone() {
-    let rendered =
-        format_knowledge_brief(&pack(vec![rank_source_item(Some(1), None)], 0), "s", "q");
+    let rendered = format_knowledge_brief(
+        &pack(vec![rank_source_item(Some(1), None)], 0),
+        Some("s"),
+        "q",
+    );
 
     assert!(
         rendered.contains("— `rank` function :1 (lexical, exact-path)"),

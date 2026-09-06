@@ -67,6 +67,11 @@ struct DeliveryTarget {
     project_root: PathBuf,
     plan: String,
     stage_id: String,
+    /// The stage the brief's "Pull more with" footer may name, or `None` for
+    /// a checkout. `stage_id` stays the delivery-record key on every target,
+    /// including a checkout's local-overlay address; naming that address in
+    /// `--stage` would point at a command that fails with "Stage file not found".
+    pull_stage: Option<String>,
 }
 
 /// One prompt's brief: the line to print, and what filing it commits to.
@@ -129,7 +134,7 @@ fn retrieve_for_prompt(prompt: String, session_id: Option<&str>) -> Option<Emiss
     };
 
     let delivered = target.already_delivered(&pack, &recipient);
-    let composed = compose::compose(&target.stage_id, &pack, &delivered, &config);
+    let composed = compose::compose(target.pull_stage.as_deref(), &pack, &delivered, &config);
 
     // Printed before anything else below, and deliberately so: a reconcile
     // nudge or a delivery record (filed by the caller, only after this
@@ -199,6 +204,7 @@ impl DeliveryTarget {
             project_root: work_dir.project_root()?.to_path_buf(),
             work_dir: work_dir.root().to_path_buf(),
             plan: delivery::plan_key(&stage).to_string(),
+            pull_stage: Some(stage_id.clone()),
             stage_id,
         })
     }
@@ -229,6 +235,7 @@ impl DeliveryTarget {
             project_root,
             plan,
             stage_id,
+            pull_stage: None,
         })
     }
 

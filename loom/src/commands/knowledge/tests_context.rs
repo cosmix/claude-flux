@@ -276,6 +276,45 @@ fn a_high_confidence_item_renders_the_line_it_always_did() {
     assert!(!line.contains("(high)"), "{line}");
 }
 
+/// A knowledge-chunk item carrying an excerpt — `format_item_block`'s only
+/// path that renders anything past the summary line.
+fn item_with_excerpt(excerpt: &str) -> ContextItem {
+    ContextItem {
+        excerpt: Some(excerpt.to_string()),
+        ..item_with_confidence(Confidence::High)
+    }
+}
+
+/// Before this, the only way to see a chunk's quoted content from this
+/// command was `--json`, which defeats CLAUDE.md's "pull instead of read" by
+/// forcing a full read of the raw pack.
+#[test]
+fn a_knowledge_chunk_excerpt_renders_fenced_under_its_item_line() {
+    let block = format_item_block(&item_with_excerpt("## Overview\n\nSome text."), false);
+
+    let item_line_at = block.find("Architecture overview").expect("the item line");
+    let fence_at = block.find("```text\n").expect("a fenced excerpt block");
+    assert!(item_line_at < fence_at, "{block}");
+    assert!(
+        block.contains("```text\n## Overview\n\nSome text.\n```\n"),
+        "{block}"
+    );
+}
+
+/// A source item never carries an excerpt in practice (`context::pack` leaves
+/// it `None`), but the guard is on `kind`, not just `excerpt`, so this pins
+/// that even a stray `Some` on a source item renders no fence.
+#[test]
+fn a_source_item_prints_no_fence_even_with_an_excerpt_set() {
+    let mut source = item_with_confidence(Confidence::High);
+    source.kind = ItemKind::SourceNode;
+    source.excerpt = Some("fn widget() {}".to_string());
+
+    let block = format_item_block(&source, true);
+
+    assert!(!block.contains("```"), "{block}");
+}
+
 /// A pack carrying only the fields the observability lines read.
 fn pack_with(dropped_terms: Vec<String>, degraded: Option<String>) -> ContextPack {
     ContextPack {

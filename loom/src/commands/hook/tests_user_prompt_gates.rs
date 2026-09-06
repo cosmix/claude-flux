@@ -27,7 +27,7 @@ fn weak_source_item(id: &str) -> ContextItem {
 fn a_weak_lexical_source_item_alone_clears_no_floor() {
     let pack = pack_of(vec![weak_source_item("src#zorble#0")]);
     assert!(
-        compose("stage-a", &pack, &BTreeSet::new(), &default_config()).is_none(),
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &default_config()).is_none(),
         "one weak lexical match on a source node says nothing worth surfacing"
     );
 }
@@ -47,7 +47,7 @@ fn a_pack_of_only_source_nodes_is_emitted_once_one_clears_the_term_floor() {
     let pack = pack_of(vec![weak_source_item("src#other#0"), strong]);
 
     assert!(
-        compose("stage-a", &pack, &BTreeSet::new(), &config).is_some(),
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &config).is_some(),
         "a source node clearing the term floor must be emitted like a knowledge chunk would be"
     );
 }
@@ -63,7 +63,7 @@ fn a_pack_of_only_source_nodes_all_below_the_term_floor_is_still_silent() {
     let pack = pack_of(vec![weak_source_item("src#other#0"), unit]);
 
     assert!(
-        compose("stage-a", &pack, &BTreeSet::new(), &config).is_none(),
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &config).is_none(),
         "one term short of the floor is exactly the case it exists to silence, source node or not"
     );
 }
@@ -78,7 +78,7 @@ fn a_source_item_exactly_at_the_term_floor_is_emitted() {
     let pack = pack_of(vec![unit]);
 
     assert!(
-        compose("stage-a", &pack, &BTreeSet::new(), &config).is_some(),
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &config).is_some(),
         "the boundary: exactly min_knowledge_terms clears the floor for a source node too"
     );
 }
@@ -89,7 +89,7 @@ fn an_exact_rung_item_clears_the_floor_on_its_own() {
     unit.reasons = vec![SelectionReason::ExactSymbol];
     let pack = pack_of(vec![unit]);
     assert!(
-        compose("stage-a", &pack, &BTreeSet::new(), &default_config()).is_some(),
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &default_config()).is_some(),
         "an exact-rung reason clears the floor regardless of term count"
     );
 }
@@ -102,7 +102,7 @@ fn a_knowledge_item_at_exactly_the_term_floor_is_emitted() {
     let pack = pack_of(vec![unit]);
 
     assert!(
-        compose("stage-a", &pack, &BTreeSet::new(), &config).is_some(),
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &config).is_some(),
         "the boundary: exactly min_knowledge_terms clears the floor"
     );
 }
@@ -115,7 +115,7 @@ fn a_knowledge_item_one_below_the_term_floor_is_silent() {
     let pack = pack_of(vec![unit]);
 
     assert!(
-        compose("stage-a", &pack, &BTreeSet::new(), &config).is_none(),
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &config).is_none(),
         "one below the floor is exactly the case it exists to silence"
     );
 }
@@ -134,8 +134,13 @@ fn a_dedupe_drop_is_folded_into_the_omitted_count() {
     let two_already_delivered =
         delivered(&[("arch#loop#0", "sha256:aa"), ("arch#merge#0", "sha256:bb")]);
 
-    let (_, handed_over) = compose("stage-a", &pack, &two_already_delivered, &default_config())
-        .expect("one undelivered unit survives");
+    let (_, handed_over) = compose(
+        Some("stage-a"),
+        &pack,
+        &two_already_delivered,
+        &default_config(),
+    )
+    .expect("one undelivered unit survives");
 
     assert_eq!(
         handed_over.omitted.omitted,

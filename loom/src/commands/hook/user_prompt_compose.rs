@@ -40,7 +40,7 @@ const QUERY_INPUTS: &str = "this prompt";
 /// this epoch already delivered to this recipient; or a single surviving unit
 /// is over the ceiling by itself and so cannot be trimmed into fitting.
 pub(super) fn compose(
-    stage_id: &str,
+    pull_stage: Option<&str>,
     pack: &ContextPack,
     delivered: &BTreeSet<(String, String)>,
     config: &RetrievalConfig,
@@ -50,7 +50,7 @@ pub(super) fn compose(
     }
     let mut handed_over = undelivered(pack, delivered)?;
     loop {
-        let line = render_payload(stage_id, &handed_over)?;
+        let line = render_payload(pull_stage, &handed_over)?;
         if line.len() <= config.max_payload_bytes {
             return Some((line, handed_over));
         }
@@ -123,9 +123,9 @@ fn is_exact_rung(reason: &SelectionReason) -> bool {
 
 /// The single stdout line for `handed_over`: the shared brief wrapped in the
 /// hook's JSON envelope.
-fn render_payload(stage_id: &str, handed_over: &ContextPack) -> Option<String> {
+fn render_payload(pull_stage: Option<&str>, handed_over: &ContextPack) -> Option<String> {
     let brief =
-        crate::orchestrator::signals::format_knowledge_brief(handed_over, stage_id, QUERY_INPUTS);
+        crate::orchestrator::signals::format_knowledge_brief(handed_over, pull_stage, QUERY_INPUTS);
     let payload = serde_json::json!({
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",

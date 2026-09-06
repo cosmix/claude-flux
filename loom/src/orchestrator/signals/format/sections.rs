@@ -5,7 +5,7 @@ use crate::models::worktree::Worktree;
 
 use super::super::retrieval::STAGE_QUERY_INPUTS;
 use super::super::types::{DependencyStatus, EmbeddedContext};
-use super::brief::format_knowledge_brief;
+use super::brief::format_stage_brief;
 use super::codex::format_codex_implementers_section;
 use super::helpers::append_stage_end_sequence;
 use super::helpers::{
@@ -27,7 +27,7 @@ pub(super) fn format_semi_stable_section(
     // anything. Labelled with the query's INPUT FIELDS, never `pack.query`
     // itself: that is the whole stage description, re-embedded a second time.
     if let Some(pack) = &embedded_context.context_pack {
-        content.push_str(&format_knowledge_brief(pack, stage_id, STAGE_QUERY_INPUTS));
+        content.push_str(&format_stage_brief(pack, stage_id, STAGE_QUERY_INPUTS));
     }
 
     // Stage-type-aware reminder box. Knowledge/integration-verify/distill stages

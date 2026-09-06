@@ -137,6 +137,12 @@ fn a_session_with_no_stage_at_all_still_gets_a_brief() {
             .all(|item| item.kind == ItemKind::SourceNode),
         "no knowledge tree means a source-only brief"
     );
+    assert!(
+        emission.payload.contains("loom knowledge context --query")
+            && !emission.payload.contains("--stage"),
+        "a stage-less session must not point the reader at a stage that does not exist: {}",
+        emission.payload
+    );
 }
 
 #[test]

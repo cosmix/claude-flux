@@ -95,7 +95,7 @@ fn brief_of(line: &str) -> String {
 fn brief_for_excerpt(excerpt: &str) -> String {
     let pack = pack_of(vec![item("arch#loop#0", "sha256:aa", Some(excerpt))]);
     let (line, _) =
-        compose("stage-a", &pack, &BTreeSet::new(), &default_config()).expect("a payload");
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &default_config()).expect("a payload");
     brief_of(&line)
 }
 
@@ -180,7 +180,7 @@ fn a_fresh_pack_composes_exactly_one_json_object() {
     )]);
 
     let (line, handed_over) =
-        compose("stage-a", &pack, &BTreeSet::new(), &default_config()).expect("a payload");
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &default_config()).expect("a payload");
 
     assert!(!line.contains('\n'), "exactly one line: {line}");
     let payload: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
@@ -198,6 +198,27 @@ fn a_fresh_pack_composes_exactly_one_json_object() {
     assert_eq!(handed_over.items.len(), 1);
 }
 
+/// A checkout-scope target (`DeliveryTarget::for_checkout`) names no stage on
+/// disk, so its footer must not point the reader at a `--stage` flag that
+/// would fail with "Stage file not found".
+#[test]
+fn a_checkout_scope_pack_composes_a_stage_less_pull_command() {
+    let pack = pack_of(vec![item(
+        "arch#loop#0",
+        "sha256:aa",
+        Some("The loop polls."),
+    )]);
+
+    let (line, _) = compose(None, &pack, &BTreeSet::new(), &default_config()).expect("a payload");
+    let brief = brief_of(&line);
+
+    assert!(
+        brief.contains("loom knowledge context --query \"<question>\""),
+        "{brief}"
+    );
+    assert!(!brief.contains("--stage"), "{brief}");
+}
+
 #[test]
 fn units_already_delivered_in_this_epoch_are_dropped() {
     let pack = pack_of(vec![
@@ -206,7 +227,7 @@ fn units_already_delivered_in_this_epoch_are_dropped() {
     ]);
 
     let (_, handed_over) = compose(
-        "stage-a",
+        Some("stage-a"),
         &pack,
         &delivered(&[("arch#loop#0", "sha256:aa")]),
         &default_config(),
@@ -221,7 +242,7 @@ fn units_already_delivered_in_this_epoch_are_dropped() {
 
     let all = delivered(&[("arch#loop#0", "sha256:aa"), ("arch#merge#0", "sha256:bb")]);
     assert!(
-        compose("stage-a", &pack, &all, &default_config()).is_none(),
+        compose(Some("stage-a"), &pack, &all, &default_config()).is_none(),
         "nothing new to say means nothing at all"
     );
 }
@@ -232,7 +253,7 @@ fn a_changed_content_hash_re_opens_delivery() {
 
     assert!(
         compose(
-            "stage-a",
+            Some("stage-a"),
             &pack,
             &delivered(&[("arch#loop#0", "sha256:old")]),
             &default_config(),
@@ -245,7 +266,7 @@ fn a_changed_content_hash_re_opens_delivery() {
 #[test]
 fn an_empty_pack_produces_no_payload() {
     assert!(compose(
-        "stage-a",
+        Some("stage-a"),
         &pack_of(Vec::new()),
         &BTreeSet::new(),
         &default_config()
@@ -261,7 +282,7 @@ fn a_single_unit_over_the_ceiling_is_not_emitted() {
 
     // Nothing left to shed: one unit that does not fit cannot be trimmed into
     // fitting, so this is the one case that still emits nothing.
-    assert!(compose("stage-a", &pack, &BTreeSet::new(), &config).is_none());
+    assert!(compose(Some("stage-a"), &pack, &BTreeSet::new(), &config).is_none());
 }
 
 #[test]
@@ -274,7 +295,7 @@ fn an_oversized_pack_sheds_its_weakest_units_until_it_fits() {
         scored("arch#weak#0", 1.0, &body),
     ]);
 
-    let (line, handed_over) = compose("stage-a", &pack, &BTreeSet::new(), &config)
+    let (line, handed_over) = compose(Some("stage-a"), &pack, &BTreeSet::new(), &config)
         .expect("a trimmed payload, not silence");
 
     assert!(
@@ -328,7 +349,7 @@ fn an_item_without_an_excerpt_contributes_a_pointer_and_no_quote() {
     let pack = pack_of(vec![item("arch#loop#0", "sha256:aa", None)]);
 
     let (line, _) =
-        compose("stage-a", &pack, &BTreeSet::new(), &default_config()).expect("a payload");
+        compose(Some("stage-a"), &pack, &BTreeSet::new(), &default_config()).expect("a payload");
     assert!(line.contains("arch#loop#0"), "the pointer still ships");
     // The guard sentence now lives once in the brief's header, ahead of every
     // item - present even when THIS item has nothing to quote.

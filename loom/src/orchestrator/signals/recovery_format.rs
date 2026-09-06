@@ -4,7 +4,7 @@ use crate::models::stage::Stage;
 
 use super::cache::stable_prefix_for;
 use super::format::{
-    format_codex_implementers_section, format_knowledge_brief, format_subagent_timeout_section,
+    format_codex_implementers_section, format_stage_brief, format_subagent_timeout_section,
 };
 use super::recovery_types::{LastHeartbeatInfo, RecoverySignalContent};
 use super::retrieval::STAGE_QUERY_INPUTS;
@@ -120,7 +120,7 @@ pub fn format_recovery_signal(
     // brief it was spawned with, even though the SAME retrieval ran again to
     // build `embedded_context`.
     if let Some(pack) = &embedded_context.context_pack {
-        signal.push_str(&format_knowledge_brief(pack, &stage.id, STAGE_QUERY_INPUTS));
+        signal.push_str(&format_stage_brief(pack, &stage.id, STAGE_QUERY_INPUTS));
     }
 
     // Target information

@@ -12,9 +12,11 @@ use crate::context::retrieve::{resolve_roots, retrieve_for_stage, StageQuery};
 use crate::context::store::ContextStore;
 use crate::context::untrusted::inline_safe;
 use crate::context::{
-    Channel, Confidence, ContextItem, ContextPack, Freshness, OmissionSummary, SelectionReason,
+    Channel, Confidence, ContextItem, ContextPack, Freshness, ItemKind, OmissionSummary,
+    SelectionReason,
 };
 use crate::fs::work_dir::WorkDir;
+use crate::orchestrator::signals::render_excerpt_block;
 use crate::verify::transitions::load_stage;
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
@@ -227,7 +229,29 @@ fn format_item_line(item: &ContextItem) -> String {
 }
 
 fn print_item(item: &ContextItem, explain: bool) {
-    println!("{}", format_item_line(item));
+    print!("{}", format_item_block(item, explain));
+}
+
+/// One item's full block: its summary line, its `--explain` reasons line when
+/// asked, and — for a knowledge chunk carrying one — its excerpt, fenced the
+/// same way the Knowledge Brief renders it, followed by the blank line that
+/// separates it from whatever prints next. Returned as a string, the
+/// convention every other renderer in this file follows, so callers only
+/// print it.
+///
+/// A source-node item keeps its single line: `context::extract` never stores
+/// a node's body (see `orchestrator::signals::format::brief`'s module docs),
+/// so there is nothing to quote past the signature already on the line.
+///
+/// The excerpt is rendered through the SAME [`render_excerpt_block`] the
+/// Knowledge Brief uses, so the escape-proofing has one implementation rather
+/// than a second copy for this command. CLAUDE.md tells every agent "pull
+/// instead of read": before this, the only way to see a chunk's quoted
+/// content from this command was `--json`, which defeats that instruction by
+/// forcing a full read of the raw pack.
+fn format_item_block(item: &ContextItem, explain: bool) -> String {
+    let mut out = format_item_line(item);
+    out.push('\n');
     if explain {
         let reasons = item
             .reasons
@@ -235,12 +259,19 @@ fn print_item(item: &ContextItem, explain: bool) {
             .map(SelectionReason::to_string)
             .collect::<Vec<_>>()
             .join(", ");
-        println!(
-            "          {reasons} | confidence: {} | state: {}",
+        out.push_str(&format!(
+            "          {reasons} | confidence: {} | state: {}\n",
             confidence_label(item.confidence),
             item.state
-        );
+        ));
     }
+    if item.kind == ItemKind::KnowledgeChunk {
+        if let Some(excerpt) = &item.excerpt {
+            out.push_str(&render_excerpt_block(excerpt));
+            out.push('\n');
+        }
+    }
+    out
 }
 
 fn confidence_label(confidence: Confidence) -> &'static str {
