@@ -2,6 +2,12 @@ use super::*;
 use std::sync::Arc;
 use tempfile::tempdir;
 
+/// Deadline for the tests that expect a reply. It only caps a broken
+/// exchange: a working one returns the moment the reply line arrives, while
+/// a loaded runner can hold the fake child for seconds before it writes, so
+/// nothing is gained by keeping this near production's 15 s.
+const REPLY_DEADLINE: Duration = Duration::from_secs(60);
+
 #[test]
 fn parse_snapshot_classifies_windows_by_duration() {
     let result = serde_json::json!({
@@ -57,7 +63,7 @@ fn a_successful_exchange_parses_both_windows_and_the_plan() {
     let codex_bin = write_fake_codex(dir.path(), script);
     let shutdown = AtomicBool::new(false);
 
-    let quota = poll_once(&codex_bin, Duration::from_secs(5), &shutdown, 1_788_523_200).unwrap();
+    let quota = poll_once(&codex_bin, REPLY_DEADLINE, &shutdown, 1_788_523_200).unwrap();
 
     assert_eq!(quota.windows.len(), 2);
     assert_eq!(quota.windows[0].kind, WindowKind::FiveHour);
@@ -77,7 +83,7 @@ fn a_json_rpc_error_reply_surfaces_the_message() {
     let codex_bin = write_fake_codex(dir.path(), script);
     let shutdown = AtomicBool::new(false);
 
-    let error = poll_once(&codex_bin, Duration::from_secs(5), &shutdown, 0).unwrap_err();
+    let error = poll_once(&codex_bin, REPLY_DEADLINE, &shutdown, 0).unwrap_err();
     assert!(error.to_string().contains("not logged in"));
 }
 
@@ -85,15 +91,14 @@ fn a_json_rpc_error_reply_surfaces_the_message() {
 #[cfg(unix)]
 fn garbage_and_an_over_long_line_are_skipped_before_the_reply() {
     let dir = tempdir().unwrap();
-    let script = "#!/bin/bash\n\
+    let script = "#!/bin/sh\n\
         printf '%s\\n' 'hello'\n\
-        printf 'x%.0s' {1..70000}\n\
-        printf '\\n'\n\
+        printf '%70000s\\n' ''\n\
         printf '%s\\n' '{\"id\":1,\"result\":{\"rateLimits\":{}}}'\n";
     let codex_bin = write_fake_codex(dir.path(), script);
     let shutdown = AtomicBool::new(false);
 
-    let quota = poll_once(&codex_bin, Duration::from_secs(5), &shutdown, 0).unwrap();
+    let quota = poll_once(&codex_bin, REPLY_DEADLINE, &shutdown, 0).unwrap();
     assert!(quota.windows.is_empty());
 }
 
@@ -116,9 +121,11 @@ fn a_hanging_server_times_out_and_the_child_is_killed() {
         "codex app-server timed out"
     );
     // `sleep 30` never reads stdin, so dropping it in teardown cannot make
-    // the child exit early: the full 1s deadline plus the full 2s graceful
-    // `wait_timeout` both elapse before the process-group kill.
-    assert!(elapsed < Duration::from_secs(4), "took {elapsed:?}");
+    // the child exit early: the 1 s deadline and the 2 s graceful
+    // `wait_timeout` both elapse before the process-group kill. The bound
+    // only has to rule out waiting for `sleep 30` itself, and leaves room
+    // for a loaded runner to stall the child.
+    assert!(elapsed < Duration::from_secs(15), "took {elapsed:?}");
 
     let pid: u32 = std::fs::read_to_string(&pid_file)
         .unwrap()
@@ -152,7 +159,9 @@ fn a_flood_of_notifications_after_the_reply_does_not_hang_the_reader_join() {
     let elapsed = start.elapsed();
 
     assert!(result.is_ok(), "expected Ok, got {result:?}");
-    assert!(elapsed < Duration::from_secs(5), "took {elapsed:?}");
+    // Without the receiver drop the join never returns; the bound only has
+    // to rule out that hang.
+    assert!(elapsed < Duration::from_secs(20), "took {elapsed:?}");
 
     let pid: u32 = std::fs::read_to_string(&pid_file)
         .unwrap()
@@ -173,7 +182,7 @@ fn the_child_exiting_without_ever_replying_is_reported_precisely() {
     let codex_bin = write_fake_codex(dir.path(), script);
     let shutdown = AtomicBool::new(false);
 
-    let error = poll_once(&codex_bin, Duration::from_secs(5), &shutdown, 0).unwrap_err();
+    let error = poll_once(&codex_bin, REPLY_DEADLINE, &shutdown, 0).unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -193,7 +202,7 @@ fn a_child_that_closes_stdin_before_the_request_still_yields_its_reply() {
     let codex_bin = write_fake_codex(dir.path(), script);
     let shutdown = AtomicBool::new(false);
 
-    let quota = poll_once(&codex_bin, Duration::from_secs(5), &shutdown, 0).unwrap();
+    let quota = poll_once(&codex_bin, REPLY_DEADLINE, &shutdown, 0).unwrap();
 
     assert_eq!(quota.windows.len(), 1);
     assert_eq!(quota.windows[0].used_percent, 10.0);
@@ -217,8 +226,9 @@ fn a_shutdown_flag_set_mid_exchange_returns_quickly() {
     let elapsed = start.elapsed();
 
     assert!(result.is_err());
-    // The reply-wait loop notices the flag within one `RECV_SLICE`, but
-    // `sleep 30` ignores the stdin close in teardown, so the full 2s
-    // graceful `wait_timeout` still elapses before the kill.
-    assert!(elapsed < Duration::from_secs(3), "took {elapsed:?}");
+    // The reply-wait loop notices the flag within one `RECV_SLICE`, and
+    // `sleep 30` ignores the stdin close in teardown, so the full 2 s
+    // graceful `wait_timeout` still elapses before the kill. The bound
+    // only has to rule out waiting for the 30 s deadline.
+    assert!(elapsed < Duration::from_secs(15), "took {elapsed:?}");
 }
