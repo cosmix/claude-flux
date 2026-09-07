@@ -239,11 +239,11 @@ export function buildEdges(
         : traced.has(source) || traced.has(target);
     return on ? "traced" : "dim";
   };
-  return layout.edges.map(({ source, target }) => ({
+  return layout.edges.map(({ source, target, points }) => ({
     id: `${source}->${target}`,
     source,
     target,
     type: "thread",
-    data: { thread: threadOf(byId.get(source)!), emphasis: emphasis(source, target) },
+    data: { thread: threadOf(byId.get(source)!), emphasis: emphasis(source, target), points },
   }));
 }

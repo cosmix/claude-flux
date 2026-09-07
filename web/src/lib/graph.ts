@@ -1,6 +1,7 @@
 import dagre from "@dagrejs/dagre";
 
 import type { StageStatus, StageSummary } from "@/api/schema";
+import { routeEdges, type Point } from "@/lib/edge-routing";
 import {
   activityText,
   contextUsage,
@@ -81,6 +82,7 @@ export interface LaidOutNode {
 export interface LaidOutEdge {
   source: string;
   target: string;
+  points: Point[];
 }
 
 export interface RankRow {
@@ -130,12 +132,10 @@ export function layoutStages(stages: readonly StageSummary[]): GraphLayout {
   for (const stage of unique) {
     graph.setNode(stage.id, { width: NODE_WIDTH, height: nodeHeight(stage) });
   }
-  const edges: LaidOutEdge[] = [];
   for (const stage of unique) {
     for (const dependency of stage.dependencies) {
       if (dependency !== stage.id && ids.has(dependency)) {
         graph.setEdge(dependency, stage.id);
-        edges.push({ source: dependency, target: stage.id });
       }
     }
   }
@@ -145,6 +145,10 @@ export function layoutStages(stages: readonly StageSummary[]): GraphLayout {
     const { x, y, width, height } = graph.node(stage.id);
     return { stage, x: x - width / 2, y: y - height / 2, width, height };
   });
+  const edges = routeEdges(
+    graph.edges().map(({ v, w }) => ({ source: v, target: w, points: graph.edge(v, w).points })),
+    nodes,
+  );
   const rows = [...new Set(nodes.map((node) => node.y + node.height / 2))].sort((a, b) => a - b);
   const ranks = rows.map((y, rank) => ({ rank, y }));
   const left = nodes.length === 0 ? 0 : Math.min(...nodes.map((node) => node.x));

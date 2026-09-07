@@ -34,7 +34,7 @@ describe("layoutStages", () => {
     const twice = layoutStages([...stages, phantom, byId("server")]);
     expect(twice.nodes.filter((node) => node.stage.id === "server").length).toBe(1);
     expect(twice.edges.filter((edge) => edge.target === "ghost")).toEqual([
-      { source: "server", target: "ghost" },
+      expect.objectContaining({ source: "server", target: "ghost" }),
     ]);
   });
 
