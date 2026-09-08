@@ -23,13 +23,13 @@
 | Topic | Blurb | Lines |
 | --- | --- | --- |
 | [codex-concurrency](architecture/codex-concurrency.md) | Codex fan-out concurrency limits, what is measured, and what degrades under load (the shared… | 102 |
-| [codex-plugin](architecture/codex-plugin.md) | Codex plugin install and identity, the codex-rescue subagent, and the loom-codex-forwarder lane. | 397 |
+| [codex-plugin](architecture/codex-plugin.md) | Codex plugin install and identity, the codex-rescue subagent, and the loom-codex-forwarder lane. | 400 |
 | [context-ceiling](architecture/context-ceiling.md) | The absolute resident-token ceiling: resolution order, and the three independent thresholds (hook… | 71 |
 | [context-retrieval](architecture/context-retrieval.md) | The retrieval subsystem: two graphs, two lanes, query-side gating, two-tier fusion, and the… | 525 |
 | [core-abstractions](architecture/core-abstractions.md) | ExecutionGraph, Stage, Session, Orchestrator, TerminalBackend — plus data flow and .work/ file… | 93 |
 | [directory-structure](architecture/directory-structure.md) | Full loom/src module tree, the .work/ state layout, and the repo-root asset directories. | 49 |
 | [execution-containment](architecture/execution-containment.md) | What sandboxed command containment means in loom, its two confinement levels, and what routes… | 193 |
-| [hook-system](architecture/hook-system.md) | Hook embedding and install, the SessionStart hookSpecificOutput contract, and the two subagent… | 159 |
+| [hook-system](architecture/hook-system.md) | Hook embedding and install, the SessionStart hookSpecificOutput contract, and the two subagent… | 175 |
 | [knowledge-hierarchy](architecture/knowledge-hierarchy.md) | Tier-1/tier-2 knowledge mechanics: layout predicate, target parsing, INDEX.md generation, audit… | 150 |
 | [memory-spool](architecture/memory-spool.md) | Topic notes for the architecture knowledge area. | 105 |
 | [merge-flow](architecture/merge-flow.md) | How a completed worktree stage reaches the target branch: the daemon writes Completed first, the… | 62 |
@@ -46,7 +46,7 @@
 
 | Topic | Blurb | Lines |
 | --- | --- | --- |
-| [hooks](entry-points/hooks.md) | Every hook script and the event it binds to, _common.sh's command-matching and subagent-detection… | 112 |
+| [hooks](entry-points/hooks.md) | Every hook script and the event it binds to, _common.sh's command-matching and subagent-detection… | 114 |
 | [remote-control](entry-points/remote-control.md) | Files and call sites for remote-control capability detection and permission-mode resolution. | 97 |
 
 ### patterns

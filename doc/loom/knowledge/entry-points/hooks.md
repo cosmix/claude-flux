@@ -6,6 +6,7 @@
 
 - `hooks/*.sh` - Shell scripts (commit-guard.sh, commit-filter.sh, etc.)
 - `fs/permissions/hooks.rs` - install_loom_hooks()
+- `fs/permissions/codex_hooks.rs` - installs assets to `~/.codex/hooks/loom/` and merges `~/.codex/hooks.json`
 - `fs/permissions/settings.rs` - ensure_loom_permissions(), create_worktree_settings()
 - `fs/permissions/constants.rs` - Embedded hook scripts via include_str!()
 - `orchestrator/hooks/config.rs` - HookEvent enum
@@ -22,6 +23,7 @@
 - `hooks/generator.rs` - `generate_hooks_settings()` (merge session hooks into settings.json), `setup_hooks_for_worktree()`, `find_hooks_dir()`
 - `hooks/events.rs` - `log_hook_event()`, `read_recent_events()`, event log CRUD
 - `hooks/validators/` - Validator scripts for PreToolUse hooks (commit-filter, git-add-guard, worktree-isolation, prefer-modern-tools)
+- `hooks/codex-apply-patch.sh` - translates Codex `apply_patch` targets into canonical file-guard payloads and records successful edits
 
 **7 emitted session-hook events** (`HooksConfig::to_settings_hooks()`, derives the map by iterating `HookEvent::all()` — `config.rs:183` — rather than seven hand-written blocks, so the list and the map can no longer diverge):
 

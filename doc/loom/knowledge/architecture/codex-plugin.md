@@ -226,7 +226,7 @@ capability/preflight/resolve shape as [Remote Control](remote-control.md)'s `pre
   signal tells the orchestrator to do at spawn time, the same way Remote Control's `resolve()`
   gates the `--remote-control` flag without touching `.work/config.toml`.
 
-## Hooks (hooks/hooks.json)
+## Plugin-owned hooks and Loom-native hooks
 
 | Event        | Script                       | Timeout |
 | ------------ | ---------------------------- | ------- |
@@ -238,6 +238,9 @@ The Stop gate is **OPT-IN**: `main()` returns early unless `config.stopReviewGat
 (`stop-review-gate-hook.mjs:154-156`; `defaultState()` sets it `false`), and
 `STOP_REVIEW_TIMEOUT_MS = 15 * 60 * 1000` (`:16`). When it does run and fails it emits
 `{"decision":"block", ...}` (`:169`). loom also binds Stop via `commit-guard.sh` — **both run**.
+
+Those are the external Claude plugin's hooks. Loom separately installs a Codex-native subset under
+`~/.codex/hooks/loom/`; see [Hook System](hook-system.md#codex-native-subset).
 
 ## What loom shipped for this lane
 

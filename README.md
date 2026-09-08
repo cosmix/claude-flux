@@ -20,7 +20,7 @@ Autonomous agent work fails in a small number of predictable ways. Loom answers 
 
 ### Deterministic guardrails
 
-The rules that matter are not left to the model. Loom installs **16 Claude Code hooks** and a git `pre-commit` hook that fire regardless of what an agent intends:
+The rules that matter are not left to the model. Loom installs Claude Code hooks, a Codex-native hook subset, and a git `pre-commit` hook that fire regardless of what an agent intends:
 
 - `commit-guard.sh` blocks a session from ending with uncommitted work or a stage still `Executing`
 - `git-add-guard.sh` blocks `git add -A` / `git add .`; `git-pre-commit-hook.sh` blocks commits containing `.work` or `.worktrees`
@@ -115,7 +115,7 @@ Loom is under active development. Signed binaries are published for Linux x86_64
 curl -fsSL https://raw.githubusercontent.com/cosmix/loom/main/install.sh | bash
 ```
 
-This downloads the signed release binary for your platform to `~/.local/bin/loom`, then installs loom's agents, skills, commands, hooks and orchestration rules into `~/.claude/` and `~/.codex/` from the assets embedded in that binary.
+This downloads the signed release binary for your platform to `~/.local/bin/loom`, then installs Loom's agents, skills, commands, hooks, and orchestration rules into `~/.claude/` and `~/.codex/` from the assets embedded in that binary. Codex asks you to review new or changed non-managed hooks with `/hooks` before they run.
 
 To build from source instead — required on Linux ARM64, and what you want when working on loom itself:
 
@@ -172,9 +172,12 @@ loom stop
 | `~/.claude/skills/loom-*/`   | 9 core domain knowledge modules, always loaded (per-item, non-destructive) |
 | `~/.claude/loom-skill-catalog/loom-*/` | 53 more domain knowledge modules, loaded on demand (`--skills core`, the default) |
 | `~/.claude/commands/*.md`    | Loom slash commands (`/pressure`, `/address`, `/distill`) |
-| `~/.claude/hooks/loom/`      | 16 lifecycle and guardrail hooks + shared library         |
+| `~/.claude/hooks/loom/`      | Embedded lifecycle and guardrail hooks + shared libraries |
 | `~/.claude/CLAUDE.md`        | Orchestration rules                                       |
 | `~/.codex/skills/pressure/`  | Codex pressure-testing skill (`$pressure`)                |
+| `~/.codex/hooks/loom/`       | Loom hook assets used by Codex-native registrations      |
+| `~/.codex/hooks.json`        | Non-destructively merged Codex hook registrations        |
+| `~/.codex/AGENTS.md`         | Codex navigation and execution doctrine                   |
 | `~/.local/bin/loom`          | Loom CLI                                                  |
 
 ## Core Workflow
@@ -511,6 +514,8 @@ Stage sessions do not have to ask. Signal generation embeds a per-stage **Knowle
 `--scope` selects which channels to search: `knowledge` searches the curated prose, `source` searches the derived source graph of symbols extracted from the code, and `all` (the default) fuses both. The two are ranked separately — prose over chunk text, symbols over their scope and signature — and then fused, so one pack can mix curated prose with the exact symbols a query names. A symbol whose file the parser could not fully read is still returned, but without a high-confidence claim.
 
 **The source graph maintains itself.** `loom init` and `loom run` publish a base layer for the current revision before anything else starts, and each stage's working-tree overlay is refreshed immediately before its signal is written — so a stage's brief describes the code as that stage will actually find it. Publication is advisory: when it cannot run, loom prints one line and carries on, because a missing graph must degrade retrieval rather than block a run. A base layer is keyed to a revision and so is never published from a dirty tree; there, `loom knowledge sync` builds a working-tree overlay instead and tells you which layer it wrote.
+
+Codex's native `PostToolUse:apply_patch` hook records every patched path into the stage overlay, and its `UserPromptSubmit` hook uses the same retrieval entry point as Claude. Shell-based edits remain outside file-tool hook visibility and are reconciled by the next explicit graph refresh.
 
 Run `loom knowledge sync` after editing knowledge outside the CLI; it reports whether both derived layers are current, naming the source-graph layer it produced — `base`, `local-overlay` or `skipped`, with the reason.
 

@@ -4,7 +4,7 @@
 
 ## Hook System Architecture (hooks/)
 
-The `hooks/` module provides Claude Code hooks integration for session lifecycle management. It is a **top-level module** — currently imported by `orchestrator/` and `git/worktree/`, which is a known layering violation (both should import a stable hooks interface instead).
+The `hooks/` module provides Claude Code hooks integration for session lifecycle management, plus a Codex-native subset installed through `fs/permissions/codex_hooks.rs`. It is a **top-level module** — currently imported by `orchestrator/` and `git/worktree/`, which is a known layering violation (both should import a stable hooks interface instead).
 
 **Layering:** `hooks/` is used by `orchestrator/core/stage_executor.rs` (worktree hook setup) and `git/worktree/settings.rs` (settings injection). The intended fix is to extract hooks as a fully independent top-level module with no reverse imports.
 
@@ -13,7 +13,23 @@ The `hooks/` module provides Claude Code hooks integration for session lifecycle
 - **Global hooks** include commit filtering, Git-add protection, Bash isolation, the canonical five-tool file guard, plan-path protection, `prefer-modern-tools.sh`, and the forwarding guard. They are installed under `~/.claude/hooks/loom/` and registered by `fs/permissions/hooks.rs`, so they persist across sessions. `prefer-modern-tools.sh` lives here as a global `PreToolUse:Bash` hook (`fs/permissions/hooks/config.rs:25`) — there is no `PreferModernTools` `HookEvent` variant (deleted); it never was one of the session hooks below.
 - **Session hooks** (session-start.sh, post-tool-use.sh, pre-compact.sh, session-end.sh, learning-validator.sh, subagent-start.sh, subagent-stop.sh): generated fresh per-session by `hooks/generator.rs:generate_hooks_settings()` from the **7** `HookEvent`s that `HooksConfig::to_settings_hooks()` (`hooks/config.rs:183`) emits, derived by iterating `HookEvent::all()` rather than seven hand-written blocks. Merged into worktree's `settings.local.json` with duplicate detection.
 
-`LOOM_HOOKS` (the full inventory: session hooks, global `PreToolUse` guards, and sourced-library hooks like `_common.sh`/`_read_discipline.sh`/`_read_ledger.sh`) is 29 rows; the global `PreToolUse` registration alone is 39 entries, including `spawn-guard.sh` (Task+Agent), `read-guard.sh` (Read) and `poll-guard.sh` (Bash). A sourced library needs 4 registration sites (a `HOOK_*` const, its `LOOM_HOOKS` row, both `install.sh` hook-file arrays) but never a 5th (no `PreToolUse` entry, no `HookEvent` variant) — see [Registration Sites for a New Hook](../entry-points/hooks.md).
+`LOOM_HOOKS` (the full inventory: session hooks, global `PreToolUse` guards, compatibility bridges, and sourced-library hooks like `_common.sh`/`_read_discipline.sh`/`_read_ledger.sh`) is 33 rows; Claude's global `PreToolUse` registration alone is 47 entries, including `spawn-guard.sh` (Task+Agent), `read-guard.sh` (Read), and `poll-guard.sh` (Bash). Installers iterate `LOOM_HOOKS`; trigger configuration and tests remain separate registration surfaces — see [Registration Sites for a New Hook](../entry-points/hooks.md).
+
+### Codex-native subset
+
+`install_codex_hooks_to` installs the same embedded asset inventory under
+`~/.codex/hooks/loom/` and non-destructively merges Loom-owned rules into
+`~/.codex/hooks.json`. User rules and top-level metadata survive; malformed JSON is refused rather
+than replaced. Codex registers `SessionStart:knowledge-orient`,
+`UserPromptSubmit:user-prompt-context`, the Bash-compatible guards, and an `apply_patch` bridge.
+The bridge presents each patch target to the canonical file guards as a synthetic `Write` or
+`Edit`, then records successful patch paths with `loom context record-edit` so the stage source
+overlay can be reconciled on the next prompt.
+
+The stage lifecycle hooks are intentionally absent from the Codex-global config. A Codex worker
+forwarded from a Loom stage inherits the parent `LOOM_*` variables; registering `session-start`,
+`pre-compact`, or `session-end` there would let the worker claim, hand off, or end its parent's
+session. Codex requires explicit trust for changed non-managed hooks, surfaced through `/hooks`.
 
 ## Hook System — Session-Start Behavior and hookSpecificOutput Pattern
 
