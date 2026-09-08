@@ -13,6 +13,8 @@
 @import "./aurora-ui/feedback/busy-roundel.css";
 @import "./aurora-ui/feedback/hazard.css";
 @import "./graph.css";
+@import "@xterm/xterm/css/xterm.css";
+@import "./components/terminal/terminal.css";
 @import "./components/settings.css";
 
 @font-face {

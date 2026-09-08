@@ -337,6 +337,7 @@
   "daemon": "running",
   "tick_age_secs": 4,
   "source": "daemon",
+  "terminals": false,
   "generated_at": "2026-09-04T12:00:00Z",
   "version": "0.0.0-fixture"
 }

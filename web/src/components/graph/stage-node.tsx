@@ -8,6 +8,7 @@ import { ActivityRoundel } from "@/components/activity-roundel";
 import { ContextMeter } from "@/components/context-meter";
 import { useGraphActions, type Emphasis } from "@/components/graph/context";
 import { StateBadge, toneClass } from "@/components/state-badge";
+import { TerminalGlyph } from "@/components/terminal/terminal-glyph";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { activityText, hazardTone, mergeText, stateMeta, timeText } from "@/lib/format";
 import { hasFooter, NODE_WIDTH, nodeHeight } from "@/lib/graph";
@@ -44,7 +45,7 @@ const TYPE_TAG: Partial<Record<StageSummary["stage_type"], string>> = {
 /// then the live row. The card re-keys on status so a change washes it.
 export function StageNode({ data }: NodeProps<StageNodeType>) {
   const { stage, index, emphasis } = data;
-  const { open } = useGraphActions();
+  const { open, openTerminal } = useGraphActions();
   const tone = stateMeta(stage.status).tone;
   const style = {
     "--i": index,
@@ -70,6 +71,7 @@ export function StageNode({ data }: NodeProps<StageNodeType>) {
       <div key={stage.status} className="stage-card">
         <header className="flex items-center gap-1.5">
           <StateBadge status={stage.status} className="text-xs" />
+          <TerminalGlyph stage={stage} onOpen={openTerminal} className="nodrag" />
           {TYPE_TAG[stage.stage_type] && (
             <span className="stage-tag">{TYPE_TAG[stage.stage_type]}</span>
           )}

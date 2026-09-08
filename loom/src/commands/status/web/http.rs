@@ -26,9 +26,13 @@ pub const CSRF_HEADER: &str = "X-Loom-Csrf";
 pub struct RequestHead {
     pub method: String,
     pub path: String,
+    /// The raw request query, without the leading `?`.
+    pub query: Option<String>,
     pub upgrade_websocket: bool,
     pub origin: Option<String>,
     pub host: Option<String>,
+    /// The raw `Cookie` header, used only by the opt-in terminal lane.
+    pub cookie: Option<String>,
     /// `Content-Type`, needed only by the config write route.
     pub content_type: Option<String>,
     /// `Content-Length`, unparsed: a malformed one is a client error the write
@@ -86,10 +90,9 @@ pub fn parse_head_with_len(buf: &[u8]) -> Result<Option<(RequestHead, usize)>> {
         .context("request method is missing")?
         .to_owned();
     let raw_path = request.path.context("request path is missing")?;
-    let path = raw_path
+    let (path, query) = raw_path
         .split_once('?')
-        .map_or(raw_path, |(path, _)| path)
-        .to_owned();
+        .map_or((raw_path, None), |(path, query)| (path, Some(query)));
     if !path.starts_with('/') {
         bail!("request path must start with '/'");
     }
@@ -101,10 +104,12 @@ pub fn parse_head_with_len(buf: &[u8]) -> Result<Option<(RequestHead, usize)>> {
     Ok(Some((
         RequestHead {
             method,
-            path,
+            path: path.to_owned(),
+            query: query.map(str::to_owned),
             upgrade_websocket,
             origin: header_value(&request, "Origin")?,
             host: header_value(&request, "Host")?,
+            cookie: header_value(&request, "Cookie")?,
             content_type: header_value(&request, "Content-Type")?,
             content_length: header_value(&request, "Content-Length")?,
             csrf_token: header_value(&request, CSRF_HEADER)?,
@@ -247,9 +252,18 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'self' 'uns
 
 /// Encode the status line and the dashboard's fixed security headers for a
 /// body of `content_length` bytes.
-fn response_head(status: u16, reason: &str, content_type: &str, content_length: usize) -> String {
+fn response_head(
+    status: u16,
+    reason: &str,
+    content_type: &str,
+    content_length: usize,
+    location: Option<&str>,
+    set_cookie: Option<&str>,
+) -> String {
     format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Length: {content_length}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: {CONTENT_SECURITY_POLICY}\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 {status} {reason}\r\nContent-Length: {content_length}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: {CONTENT_SECURITY_POLICY}\r\n{}{}Connection: close\r\n\r\n",
+        location.map(|value| format!("Location: {value}\r\n")).unwrap_or_default(),
+        set_cookie.map(|value| format!("Set-Cookie: {value}\r\n")).unwrap_or_default(),
     )
 }
 
@@ -260,7 +274,7 @@ pub(crate) fn response_bytes(
     content_type: &str,
     body: &[u8],
 ) -> Vec<u8> {
-    response_head(status, reason, content_type, body.len())
+    response_head(status, reason, content_type, body.len(), None, None)
         .into_bytes()
         .into_iter()
         .chain(body.iter().copied())
@@ -281,8 +295,27 @@ pub fn write_response(
     let bytes = if send_body {
         response_bytes(status, reason, content_type, body)
     } else {
-        response_head(status, reason, content_type, body.len()).into_bytes()
+        response_head(status, reason, content_type, body.len(), None, None).into_bytes()
     };
     stream.write_all(&bytes)?;
+    stream.flush()
+}
+
+/// Drain a peeked request, then redirect while setting an optional cookie.
+pub(super) fn write_redirect(
+    stream: &mut TcpStream,
+    location: &str,
+    set_cookie: Option<&str>,
+) -> std::io::Result<()> {
+    super::connection::drain_pending(stream);
+    let bytes = response_head(
+        302,
+        "Found",
+        "text/plain; charset=utf-8",
+        0,
+        Some(location),
+        set_cookie,
+    );
+    stream.write_all(bytes.as_bytes())?;
     stream.flush()
 }

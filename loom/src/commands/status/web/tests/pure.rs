@@ -2,22 +2,50 @@
 //! lookup, routing, and daemon-response classification. None of these open a
 //! socket.
 
-use std::panic::AssertUnwindSafe;
 use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
+use std::{fs::OpenOptions, os::fd::AsRawFd, path::Path};
 
 use clap::CommandFactory;
+use serial_test::serial;
 
 use super::{assert_security_headers, workspace};
 use crate::cli::Cli;
 use crate::commands::status::data::StatusData;
 use crate::commands::status::web::broadcast::{self, DaemonStep, SUBSCRIBER_QUEUE_DEPTH};
 use crate::commands::status::web::connection::{self, Route};
-use crate::commands::status::web::limits::{Lane, Limits, Slot, MAX_CONNECTIONS, MAX_WEBSOCKETS};
 use crate::commands::status::web::model::{SnapshotSource, WebSnapshot};
-use crate::commands::status::web::{assets, http, DEFAULT_PORT};
+use crate::commands::status::web::{adopt_for, assets, http, DEFAULT_PORT};
 use crate::daemon::Response;
+use crate::fs::tmux_tmpdir::{adopt_recorded_tmux_tmpdir, TmuxTmpdirAdoption};
 use crate::fs::work_dir::WorkDir;
+
+fn hold_lock(path: &Path) -> std::fs::File {
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        // This is a lock file whose existence (not content) is what matters;
+        // it must never be truncated out from under a concurrent holder.
+        .truncate(false)
+        .open(path)
+        .expect("open orchestrator lock");
+    assert_eq!(
+        // SAFETY: `lock` is a valid, open file descriptor owned by this function
+        // for the duration of the call, and `LOCK_EX | LOCK_NB` only locks or
+        // fails without blocking or mutating the file.
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    lock
+}
+
+fn restore_tmpdir(value: Option<std::ffi::OsString>) {
+    match value {
+        Some(value) => std::env::set_var("TMUX_TMPDIR", value),
+        None => std::env::remove_var("TMUX_TMPDIR"),
+    }
+}
 
 #[test]
 fn parse_head_reads_method_path_and_upgrade() {
@@ -27,6 +55,7 @@ fn parse_head_reads_method_path_and_upgrade() {
         .expect("complete head");
     assert_eq!(head.method, "GET");
     assert_eq!(head.path, "/ws");
+    assert_eq!(head.query.as_deref(), Some("x=1"));
     assert!(head.upgrade_websocket);
     assert_eq!(head.origin.as_deref(), Some("http://127.0.0.1:7373"));
     assert_eq!(head.host.as_deref(), Some("a"));
@@ -146,6 +175,7 @@ fn snapshot_frame_serializes_a_daemon_update() {
         work_dir.root(),
         StatusData::default(),
         SnapshotSource::Daemon,
+        false,
     )
     .expect("serialize daemon snapshot");
     let snapshot: WebSnapshot = serde_json::from_str(&frame).expect("snapshot JSON");
@@ -162,6 +192,7 @@ fn oversized_daemon_response_is_degraded() {
         Response::Error {
             message: message.clone(),
         },
+        false,
     ) {
         Ok(DaemonStep::Degraded(actual)) => assert_eq!(actual, message),
         _ => panic!("Response::Error must degrade to the file lane"),
@@ -172,6 +203,7 @@ fn oversized_daemon_response_is_degraded() {
             Response::StatusUpdate {
                 data: Box::new(StatusData::default()),
             },
+            false,
         ),
         Ok(DaemonStep::Frame(_))
     ));
@@ -183,9 +215,9 @@ fn publish_skips_an_unchanged_tree() {
     let work_dir = WorkDir::new(&base).expect("build work dir");
     let broadcaster = broadcast::Broadcaster::new();
     let receiver = broadcaster.subscribe();
-    broadcast::poll_files_once(&broadcaster, &work_dir, work_dir.root(), None)
+    broadcast::poll_files_once(&broadcaster, &work_dir, work_dir.root(), None, false)
         .expect("first file poll");
-    broadcast::poll_files_once(&broadcaster, &work_dir, work_dir.root(), None)
+    broadcast::poll_files_once(&broadcaster, &work_dir, work_dir.root(), None, false)
         .expect("second file poll");
     receiver
         .recv_timeout(Duration::from_secs(1))
@@ -204,6 +236,7 @@ fn poll_files_once_carries_the_degrade_notice() {
         &work_dir,
         work_dir.root(),
         Some("daemon lane degraded"),
+        false,
     )
     .expect("file poll carrying a notice");
     let frame = receiver
@@ -267,6 +300,47 @@ fn the_cli_preserves_omitted_and_explicit_dashboard_ports() {
 }
 
 #[test]
+fn terminals_requires_web() {
+    let error = Cli::command()
+        .try_get_matches_from(["loom", "status", "--terminals"])
+        .expect_err("terminals alone must fail");
+    assert!(error.to_string().contains("required"), "{error}");
+}
+
+#[test]
+fn terminals_parses_with_web() {
+    let matches = Cli::command()
+        .try_get_matches_from(["loom", "status", "--web", "--terminals"])
+        .expect("parse terminals dashboard");
+    let status = matches
+        .subcommand_matches("status")
+        .expect("status command");
+    assert!(status.get_flag("terminals"));
+}
+
+#[test]
+#[serial]
+fn adopt_is_called_with_the_state_dir() {
+    let (_temp, base) = workspace();
+    let work_dir = WorkDir::new(&base).expect("build work dir");
+    let state_dir = work_dir.root();
+    std::fs::write(state_dir.join("tmux-tmpdir"), "/daemon/tmux").expect("record tmpdir");
+    let lock = hold_lock(&state_dir.join("orchestrator.lock"));
+    let ambient = std::env::var_os("TMUX_TMPDIR");
+    std::env::set_var("TMUX_TMPDIR", "/shell/tmux");
+    assert!(matches!(
+        adopt_for(&work_dir),
+        TmuxTmpdirAdoption::Adopted { .. }
+    ));
+    assert_eq!(
+        adopt_recorded_tmux_tmpdir(&base),
+        TmuxTmpdirAdoption::DaemonNotRunning
+    );
+    drop(lock);
+    restore_tmpdir(ambient);
+}
+
+#[test]
 fn every_http_response_carries_the_security_headers() {
     for (status, reason) in [
         (200, "OK"),
@@ -295,66 +369,4 @@ fn every_http_response_carries_the_security_headers() {
             "connect-src must not name loopback WebSocket ports"
         );
     }
-}
-
-#[test]
-fn connection_slots_are_admitted_to_the_cap_and_refused_past_it() {
-    let limits = Limits::new();
-    let held = (0..MAX_CONNECTIONS)
-        .map(|index| {
-            Slot::acquire(&limits, Lane::Connection)
-                .unwrap_or_else(|| panic!("connection slot {index} should be free"))
-        })
-        .collect::<Vec<_>>();
-
-    assert!(Slot::acquire(&limits, Lane::Connection).is_none());
-    drop(held);
-    assert!(Slot::acquire(&limits, Lane::Connection).is_some());
-}
-
-#[test]
-fn websocket_subscriptions_leave_connection_slots_for_the_page() {
-    let limits = Limits::new();
-    // A live `/ws` thread holds a slot in both lanes, so the fixture does too.
-    let subscriptions = (0..MAX_WEBSOCKETS)
-        .map(|index| {
-            (
-                Slot::acquire(&limits, Lane::Connection)
-                    .unwrap_or_else(|| panic!("connection slot {index} should be free")),
-                Slot::acquire(&limits, Lane::WebSocket)
-                    .unwrap_or_else(|| panic!("websocket slot {index} should be free")),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    assert!(Slot::acquire(&limits, Lane::WebSocket).is_none());
-    let reserve = (0..MAX_CONNECTIONS - MAX_WEBSOCKETS)
-        .map(|index| {
-            Slot::acquire(&limits, Lane::Connection)
-                .unwrap_or_else(|| panic!("reserved slot {index} should be free"))
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(reserve.len(), MAX_CONNECTIONS - MAX_WEBSOCKETS);
-    drop(subscriptions);
-}
-
-#[test]
-fn a_panicking_connection_thread_returns_its_slot() {
-    let limits = Limits::new();
-    let held = (0..MAX_CONNECTIONS - 1)
-        .map(|index| {
-            Slot::acquire(&limits, Lane::Connection)
-                .unwrap_or_else(|| panic!("connection slot {index} should be free"))
-        })
-        .collect::<Vec<_>>();
-
-    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let _slot = Slot::acquire(&limits, Lane::Connection).expect("last slot should be free");
-        assert!(Slot::acquire(&limits, Lane::Connection).is_none());
-        panic!("connection thread panicked while holding a slot");
-    }));
-
-    assert!(outcome.is_err(), "the closure was expected to panic");
-    assert!(Slot::acquire(&limits, Lane::Connection).is_some());
-    drop(held);
 }

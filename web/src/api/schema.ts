@@ -148,6 +148,7 @@ export const snapshotSchema = z
     daemon: daemonStateSchema,
     tick_age_secs: z.number().int().nullable(),
     source: z.enum(["daemon", "files"]),
+    terminals: z.boolean(),
     notice: z.string().optional(),
     generated_at: z.string(),
     version: z.string(),

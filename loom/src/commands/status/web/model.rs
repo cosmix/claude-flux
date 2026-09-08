@@ -27,6 +27,8 @@ pub struct WebSnapshot {
     pub tick_age_secs: Option<i64>,
     /// Whether this frame came from the daemon or local files.
     pub source: SnapshotSource,
+    /// Whether this server accepts browser terminal attachments (`loom status --web --terminals`).
+    pub terminals: bool,
     /// An explanation shown when the daemon lane is degraded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
@@ -172,6 +174,7 @@ pub fn collect_snapshot(
     work_path: &Path,
     status: StatusData,
     source: SnapshotSource,
+    terminals: bool,
 ) -> WebSnapshot {
     let daemon = DaemonState::from(DaemonServer::check_status(work_path));
     let attention = crate::commands::status::render::attention_entries(&status.stages)
@@ -193,6 +196,7 @@ pub fn collect_snapshot(
         daemon,
         tick_age_secs,
         source,
+        terminals,
         notice: None,
         generated_at: Utc::now(),
         version: crate::version::VERSION.to_owned(),

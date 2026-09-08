@@ -13,7 +13,7 @@ pub(super) const HEAD_TIMEOUT: Duration = Duration::from_secs(5);
 /// Outcome of one peek-and-parse attempt for a request head.
 enum HeadAttempt {
     /// The peeked bytes hold a complete head.
-    Ready(RequestHead),
+    Ready(Box<RequestHead>),
     /// The head is still partial; peek again after a short sleep.
     Retry,
     /// The head can never complete (too large, timed out, or malformed); an
@@ -37,7 +37,7 @@ fn peek_head(stream: &mut TcpStream, buffer: &mut [u8], started: Instant) -> Hea
             HeadAttempt::Failed
         }
         Ok(read) => match http::parse_head(&buffer[..read]) {
-            Ok(Some(head)) => HeadAttempt::Ready(head),
+            Ok(Some(head)) => HeadAttempt::Ready(Box::new(head)),
             Ok(None) if read >= MAX_HEAD_BYTES => fail_head(
                 stream,
                 431,
@@ -82,7 +82,7 @@ pub(super) fn complete(stream: &mut TcpStream, running: &AtomicBool) -> Option<R
     let mut buffer = [0_u8; MAX_HEAD_BYTES];
     while running.load(Ordering::SeqCst) {
         match peek_head(stream, &mut buffer, started) {
-            HeadAttempt::Ready(head) => return Some(head),
+            HeadAttempt::Ready(head) => return Some(*head),
             HeadAttempt::Retry => std::thread::sleep(Duration::from_millis(5)),
             HeadAttempt::Failed => return None,
         }

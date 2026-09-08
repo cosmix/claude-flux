@@ -48,6 +48,7 @@ struct Inner {
     latest: Mutex<Option<Arc<String>>>,
     last_body: Mutex<Option<String>>,
     subscribers: Mutex<Vec<mpsc::SyncSender<Arc<String>>>>,
+    terminals: bool,
 }
 
 /// The result of interpreting one daemon response.
@@ -65,10 +66,10 @@ enum DaemonExit {
 
 impl Broadcaster {
     /// Start the producer thread for `base`.
-    pub fn spawn(base: PathBuf, running: Arc<AtomicBool>) -> Self {
-        let this = Self::new();
+    pub fn spawn(base: PathBuf, running: Arc<AtomicBool>, terminals: bool) -> Self {
+        let this = Self::with_terminals(terminals);
         let producer = this.clone();
-        thread::spawn(move || run(producer, base, running));
+        thread::spawn(move || run(producer, base, running, terminals));
         this
     }
 
@@ -96,14 +97,24 @@ impl Broadcaster {
             .clone()
     }
 
+    #[cfg(test)]
     pub(super) fn new() -> Self {
+        Self::with_terminals(false)
+    }
+
+    fn with_terminals(terminals: bool) -> Self {
         Self {
             inner: Arc::new(Inner {
                 latest: Mutex::new(None),
                 last_body: Mutex::new(None),
                 subscribers: Mutex::new(Vec::new()),
+                terminals,
             }),
         }
+    }
+
+    pub(super) fn terminals(&self) -> bool {
+        self.inner.terminals
     }
 
     pub(super) fn publish(&self, json: String) {
@@ -138,16 +149,22 @@ pub fn snapshot_frame(
     work_path: &Path,
     data: StatusData,
     source: SnapshotSource,
+    terminals: bool,
 ) -> Result<String> {
-    serde_json::to_string(&collect_snapshot(work_path, data, source))
+    serde_json::to_string(&collect_snapshot(work_path, data, source, terminals))
         .context("serialize dashboard snapshot")
 }
 
 /// Classify a daemon response without opening a daemon socket.
-pub fn classify_response(work_path: &Path, response: Response) -> Result<DaemonStep> {
+pub fn classify_response(
+    work_path: &Path,
+    response: Response,
+    terminals: bool,
+) -> Result<DaemonStep> {
     match response {
         Response::StatusUpdate { data } => {
-            snapshot_frame(work_path, *data, SnapshotSource::Daemon).map(DaemonStep::Frame)
+            snapshot_frame(work_path, *data, SnapshotSource::Daemon, terminals)
+                .map(DaemonStep::Frame)
         }
         Response::Error { message } => Ok(DaemonStep::Degraded(message)),
         _ => Ok(DaemonStep::Ignore),
@@ -155,14 +172,14 @@ pub fn classify_response(work_path: &Path, response: Response) -> Result<DaemonS
 }
 
 /// Produce a fresh file-backed frame for an HTTP request with no cached frame.
-pub(super) fn fresh_file_snapshot(base: &Path) -> Result<String> {
+pub(super) fn fresh_file_snapshot(base: &Path, terminals: bool) -> Result<String> {
     let work_dir = WorkDir::new(base)?;
     work_dir.load()?;
     let data = collect_status_data(&work_dir)?;
-    snapshot_frame(work_dir.root(), data, SnapshotSource::Files)
+    snapshot_frame(work_dir.root(), data, SnapshotSource::Files, terminals)
 }
 
-fn run(this: Broadcaster, base: PathBuf, running: Arc<AtomicBool>) {
+fn run(this: Broadcaster, base: PathBuf, running: Arc<AtomicBool>, terminals: bool) {
     let Ok(work_dir) = WorkDir::new(&base).and_then(|work_dir| {
         work_dir.load()?;
         Ok(work_dir)
@@ -174,9 +191,16 @@ fn run(this: Broadcaster, base: PathBuf, running: Arc<AtomicBool>) {
     let mut failures = 0;
     while running.load(Ordering::SeqCst) {
         match daemon_session(&work_path) {
-            Ok(stream) => match forward_daemon(&this, stream, &work_path, &running) {
+            Ok(stream) => match forward_daemon(&this, stream, &work_path, &running, terminals) {
                 DaemonExit::Degraded(message) => {
-                    poll_files(&this, &work_dir, &work_path, &running, Some(&message));
+                    poll_files(
+                        &this,
+                        &work_dir,
+                        &work_path,
+                        &running,
+                        Some(&message),
+                        terminals,
+                    );
                     failures = 0;
                 }
                 DaemonExit::Disconnected { received_frame }
@@ -187,14 +211,14 @@ fn run(this: Broadcaster, base: PathBuf, running: Arc<AtomicBool>) {
                     failures += 1;
                     sleep_while_running(&running, Duration::from_millis(500));
                     if failures >= RECONNECT_ATTEMPTS {
-                        poll_files(&this, &work_dir, &work_path, &running, None);
+                        poll_files(&this, &work_dir, &work_path, &running, None, terminals);
                         failures = 0;
                     }
                 }
             },
             Err(error) => {
                 tracing::debug!("dashboard daemon subscription unavailable: {error}");
-                poll_files(&this, &work_dir, &work_path, &running, None);
+                poll_files(&this, &work_dir, &work_path, &running, None, terminals);
                 failures = 0;
             }
         }
@@ -213,11 +237,12 @@ fn forward_daemon(
     mut stream: UnixStream,
     work_path: &Path,
     running: &AtomicBool,
+    terminals: bool,
 ) -> DaemonExit {
     let mut received_frame = false;
     while running.load(Ordering::SeqCst) {
         match read_message::<Response, _>(&mut stream) {
-            Ok(response) => match classify_response(work_path, response) {
+            Ok(response) => match classify_response(work_path, response, terminals) {
                 Ok(DaemonStep::Frame(frame)) => {
                     broadcaster.publish(frame);
                     received_frame = true;
@@ -245,12 +270,13 @@ fn poll_files(
     work_path: &Path,
     running: &AtomicBool,
     notice: Option<&str>,
+    terminals: bool,
 ) {
     for _ in 0..FILE_POLL_COUNT {
         if !running.load(Ordering::SeqCst) {
             return;
         }
-        if let Err(error) = poll_files_once(broadcaster, work_dir, work_path, notice) {
+        if let Err(error) = poll_files_once(broadcaster, work_dir, work_path, notice, terminals) {
             tracing::warn!("dashboard file snapshot failed: {error}");
         }
         sleep_while_running(running, FILE_POLL_INTERVAL);
@@ -262,9 +288,10 @@ pub(super) fn poll_files_once(
     work_dir: &WorkDir,
     work_path: &Path,
     notice: Option<&str>,
+    terminals: bool,
 ) -> Result<()> {
     let data = collect_status_data(work_dir)?;
-    let mut snapshot = collect_snapshot(work_path, data, SnapshotSource::Files);
+    let mut snapshot = collect_snapshot(work_path, data, SnapshotSource::Files, terminals);
     snapshot.notice = notice.map(str::to_owned);
     broadcaster.publish(serde_json::to_string(&snapshot).context("serialize file snapshot")?);
     Ok(())

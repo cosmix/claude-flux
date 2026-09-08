@@ -11,9 +11,13 @@ export type Emphasis = "plain" | "traced" | "dim";
 
 export interface GraphActions {
   open: (id: string) => void;
+  openTerminal: (id: string) => void;
 }
 
-export const GraphActionsContext = createContext<GraphActions>({ open: () => {} });
+export const GraphActionsContext = createContext<GraphActions>({
+  open: () => {},
+  openTerminal: () => {},
+});
 
 export function useGraphActions(): GraphActions {
   return useContext(GraphActionsContext);

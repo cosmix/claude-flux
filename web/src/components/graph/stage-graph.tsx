@@ -22,7 +22,7 @@ import { RankNode, type RankNodeType } from "@/components/graph/rank-node";
 import { StageNode, type StageNodeType } from "@/components/graph/stage-node";
 import { StateKey } from "@/components/graph/state-key";
 import { ThreadEdge, type ThreadEdgeType } from "@/components/graph/thread-edge";
-import { useOpenStage } from "@/components/stage-modal";
+import { useOpenStage, useOpenTerminal } from "@/components/stage-modal";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
 import { layoutStages, lineage, threadOf, type GraphLayout } from "@/lib/graph";
@@ -67,6 +67,7 @@ export function StageGraph() {
 
 function Canvas({ stages }: { stages: StageSummary[] }) {
   const open = useOpenStage();
+  const openTerminal = useOpenTerminal();
   const { fitView } = useReactFlow();
   const [pinned, setPinned] = useState<Focus>(null);
   const [hovered, setHovered] = useState<Focus>(null);
@@ -75,7 +76,7 @@ function Canvas({ stages }: { stages: StageSummary[] }) {
   const layout = useMemo(() => layoutStages(stages), [stages]);
   const nodes = useMemo(() => buildNodes(layout, stages, focus), [layout, stages, focus]);
   const edges = useMemo(() => buildEdges(layout, stages, focus), [layout, stages, focus]);
-  const actions = useMemo(() => ({ open }), [open]);
+  const actions = useMemo(() => ({ open, openTerminal }), [open, openTerminal]);
 
   // Refit when stages appear or vanish; the `fitView` prop covers first paint.
   const count = layout.nodes.length;

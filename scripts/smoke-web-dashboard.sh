@@ -32,6 +32,8 @@ curl -fsS "$base/stages/anything" | rg -q '<div id="root">'
 curl -fsS -o /dev/null -w '%{content_type}\n' "$base/assets/index.js" | rg -q '^text/javascript'
 code=$(curl -s -o /dev/null -w '%{http_code}' "$base/assets/nope.js")
 [ "$code" = "404" ] || { echo "expected 404 for a missing asset, got $code"; exit 1; }
+code=$(curl -s -o /dev/null -w '%{http_code}' "$base/ws/terminal/x/view")
+[ "$code" = "404" ] || { echo "expected 404 for a plain terminal route, got $code"; exit 1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Origin: http://evil.example' "$base/api/status")
 [ "$code" = "403" ] || { echo "expected 403 for a foreign origin, got $code"; exit 1; }
 code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example' "$base/api/status")

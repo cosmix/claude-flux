@@ -70,7 +70,7 @@ pub fn execute(stage_id: Option<String>) -> Result<()> {
 /// purely for testability — together with [`pick_newest`] it IS the selection
 /// invariant this command exists to get right, and unlike the rest of
 /// `attach_direct` the pair needs neither tmux, a TTY, nor `exec` to exercise.
-fn matches_for_stage<'a>(sessions: &'a [Session], stage_id: &str) -> Vec<&'a Session> {
+pub(crate) fn matches_for_stage<'a>(sessions: &'a [Session], stage_id: &str) -> Vec<&'a Session> {
     sessions
         .iter()
         .filter(|s| s.stage_id.as_deref() == Some(stage_id))
@@ -81,7 +81,7 @@ fn matches_for_stage<'a>(sessions: &'a [Session], stage_id: &str) -> Vec<&'a Ses
 /// (`max_by_key` returns the LAST maximum, the determinism this command
 /// relies on). Kept separate from [`matches_for_stage`] so `attach_direct`
 /// can report `matches.len()` without filtering the same predicate twice.
-fn pick_newest<'a>(candidates: &[&'a Session]) -> Option<&'a Session> {
+pub(crate) fn pick_newest<'a>(candidates: &[&'a Session]) -> Option<&'a Session> {
     candidates.iter().copied().max_by_key(|s| s.created_at)
 }
 

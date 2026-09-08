@@ -1,0 +1,321 @@
+/*
+ * The terminal: a pane of glass cut into the card with the agent live behind
+ * it. The well is dark in both themes (a lightbox set into paper); the only
+ * literal colours on this sheet are that well palette. The glass is the mode:
+ * viewing shows a diagonal sheen and a hairline frame, taking control lifts
+ * the sheen and lights the frame in the stage's tone. `data-mode` (view |
+ * control) and `data-phase` (the six TerminalPhase values) sit on the well
+ * and are mirrored on the frame and the dialog content.
+ */
+@layer components {
+  .terminal-frame[data-frame="dialog"] {
+    display: contents;
+  }
+  .terminal-frame[data-frame="page"] {
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-height: 0;
+    height: 100%;
+  }
+
+  /* ── Header: name and state on the left, the mode switch on the right ── */
+  .terminal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .terminal-head .rise {
+    animation: terminal-rise 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+
+  .terminal-seg {
+    display: inline-flex;
+    padding: 2px;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: var(--muted);
+  }
+  .terminal-seg button {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .terminal-seg button[aria-checked="true"] {
+    background: var(--popover);
+    color: var(--foreground);
+    box-shadow: 0 1px 0 var(--hairline);
+  }
+  .terminal-seg button[data-control][aria-checked="true"] {
+    color: var(--tone-executing);
+  }
+  .terminal-seg button:disabled {
+    cursor: default;
+  }
+  .terminal-seg:has(button:disabled) {
+    opacity: 0.5;
+  }
+
+  .terminal-conn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+  .terminal-dot {
+    --tone: var(--tone-executing);
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--tone);
+  }
+  [data-phase="ended"] .terminal-conn .terminal-dot,
+  [data-phase="dropped"] .terminal-conn .terminal-dot,
+  [data-phase="refused"] .terminal-conn .terminal-dot {
+    --tone: var(--tone-warning);
+    animation: none;
+  }
+
+  /* ── The well ── */
+  .terminal-well-wrap {
+    min-height: 0;
+    padding: 14px 20px;
+  }
+  .terminal-well {
+    --well: oklch(0.17 0.012 255);
+    --well-fg: oklch(0.9 0.01 255);
+    --well-dim: oklch(0.62 0.02 255);
+    --well-rule: oklch(1 0 0 / 0.08);
+    --sheen: oklch(1 0 0 / 0.06);
+    position: relative;
+    height: 100%;
+    border-radius: 8px;
+    background: var(--well);
+    color: var(--well-fg);
+    box-shadow: inset 0 0 0 1px var(--well-rule);
+    overflow: hidden;
+    animation: terminal-fade 240ms ease-out both;
+    transition: box-shadow 300ms ease;
+  }
+  .dark .terminal-well {
+    --well: oklch(0.13 0.012 255);
+    --sheen: oklch(1 0 0 / 0.045);
+  }
+  .terminal-well:focus-within {
+    outline: none;
+  }
+
+  /* xterm mounts here; the fit addon sizes it to this box. */
+  .terminal-host {
+    position: absolute;
+    inset: 14px 18px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.4;
+    transition: filter 600ms ease;
+  }
+  .terminal-host .xterm {
+    height: 100%;
+  }
+  .terminal-host .xterm .xterm-viewport {
+    background-color: transparent !important;
+  }
+
+  .terminal-sheen {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    background: linear-gradient(115deg, transparent 30%, var(--sheen) 46%, transparent 58%);
+    pointer-events: none;
+    transition: opacity 300ms ease;
+  }
+  .terminal-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    height: 2px;
+    background: var(--tone-executing);
+    opacity: 0;
+    transition: opacity 300ms ease;
+  }
+
+  /* View: the agent's own screen, framed by a hairline inside the well. */
+  .terminal-well[data-mode="view"] .terminal-host {
+    border-radius: 4px;
+    box-shadow: 0 0 0 1px var(--well-rule);
+  }
+
+  /* Control: the glass lifts, the frame lights. */
+  .terminal-well[data-mode="control"] .terminal-sheen {
+    opacity: 0;
+  }
+  .terminal-well[data-mode="control"] .terminal-bar {
+    opacity: 1;
+  }
+  .terminal-well[data-mode="control"] {
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--tone-executing) 70%, transparent);
+  }
+
+  /* Ended: the last screen stays and drifts grey. */
+  .terminal-well[data-phase="ended"] .terminal-host {
+    filter: grayscale(0.6) opacity(0.85);
+  }
+  .terminal-well[data-phase="ended"] .terminal-bar {
+    opacity: 0;
+  }
+
+  /* Nothing to show behind the glass while waiting, dropped, or refused. */
+  .terminal-well[data-phase="waiting"] .terminal-host,
+  .terminal-well[data-phase="refused"] .terminal-host,
+  .terminal-well[data-phase="connecting"] .terminal-host {
+    visibility: hidden;
+  }
+
+  .terminal-stamp {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .terminal-stamp .eyebrow {
+    color: var(--tone-warning);
+  }
+  .terminal-stamp button {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--well-fg);
+    background: color-mix(in oklch, var(--tone-executing) 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--tone-executing) 60%, transparent);
+    transition: background-color 150ms ease;
+  }
+  .terminal-stamp button:hover {
+    background: color-mix(in oklch, var(--tone-executing) 30%, transparent);
+  }
+
+  .terminal-notice {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 24px;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--well-dim);
+  }
+  .terminal-notice .line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--well-fg);
+  }
+
+  /* ── Footer ── */
+  .terminal-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 9px 20px;
+    border-top: 1px solid var(--hairline);
+    background: color-mix(in oklch, var(--muted) 40%, transparent);
+    font-size: 12px;
+    color: var(--muted-foreground);
+  }
+  .terminal-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .terminal-hint[data-control] {
+    color: var(--tone-executing);
+  }
+
+  /* ── The entry glyph on cards and rows ── */
+  .terminal-glyph {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 5px;
+    border-radius: 4px;
+    border: 1px solid color-mix(in oklch, var(--tone) 40%, transparent);
+    background: color-mix(in oklch, var(--tone) 8%, transparent);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 15px;
+    letter-spacing: 0.04em;
+    color: var(--tone);
+    animation: glyph-live 2.4s ease-in-out infinite;
+    transition: background-color 150ms ease;
+  }
+  .terminal-glyph:hover,
+  .terminal-glyph:focus-visible {
+    background: color-mix(in oklch, var(--tone) 18%, transparent);
+  }
+
+  @media (max-width: 720px) {
+    .terminal-head {
+      flex-direction: column;
+    }
+    .terminal-head .right {
+      align-items: flex-start;
+    }
+  }
+}
+
+@keyframes terminal-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes terminal-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes glyph-live {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--tone) 35%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-head .rise,
+  .terminal-well,
+  .terminal-glyph {
+    animation: none;
+  }
+  .terminal-well,
+  .terminal-sheen,
+  .terminal-bar,
+  .terminal-host,
+  .terminal-seg button {
+    transition: none;
+  }
+}
