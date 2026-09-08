@@ -208,6 +208,67 @@ fn merge_section<T: serde::Serialize>(work_dir: &Path, section: &str, value: &T)
     })
 }
 
+/// Insert `field = value` into `[section]` of an in-flight document, creating
+/// the section when absent.
+///
+/// Writes the one key rather than a serialized struct, which is what
+/// `write_section` and `merge_section` do. A caller setting a single
+/// operator-chosen key must not freeze its section's other values into the
+/// file as a side effect: `[context]`'s `subagent_ceiling_tokens` is DERIVED
+/// unless the file states it, and writing the derived number would silently
+/// pin it, while `prompt_cache_split` belongs to no struct at all and would be
+/// dropped by a replacing write.
+///
+/// Takes the document rather than the work directory so the caller can pair it
+/// with [`remove_key`] and its own before/after reads inside ONE
+/// [`update_config`] closure — that is, inside one hold of the directory lock.
+pub fn insert_key(
+    doc: &mut DocumentMut,
+    section: &str,
+    field: &str,
+    value: toml_edit::Value,
+) -> Result<()> {
+    let table = doc
+        .entry(section)
+        .or_insert(toml_edit::table())
+        .as_table_like_mut()
+        .ok_or_else(|| anyhow::anyhow!("[{section}] in the workspace config is not a table"))?;
+    table.insert(field, toml_edit::Item::Value(value));
+    Ok(())
+}
+
+/// Remove `field` from `[section]`, dropping the section itself when that
+/// leaves it empty.
+///
+/// Dropping the emptied section is the point, not tidiness. The workspace
+/// tier's fallback to `~/.loom/config.toml` is SECTION-level (see
+/// [`read_context_config`]), so a section left present but keyless still wins
+/// WHOLE and resolves to the derived built-in — an operator clearing the one
+/// key they had set would find the user tier still shadowed by a section that
+/// no longer says anything.
+///
+/// A section still holding another key stays, because it still means
+/// something — and for `[context]` that is the COMMON case, not an exotic one.
+/// `loom init` writes `ceiling_tokens` and `subagent_ceiling_tokens` together
+/// whenever a plan sets either (`commands::init::plan_setup`), so removing
+/// `ceiling_tokens` from such a workspace leaves the section alive and the
+/// ceiling resolving to the built-in rather than to the user tier. That is the
+/// truth about the file, and a caller reporting the result must report it as
+/// still project-sourced rather than as a reset. `prompt_cache_split`, owned
+/// by no struct at all, behaves the same way.
+pub fn remove_key(doc: &mut DocumentMut, section: &str, field: &str) {
+    let Some(table) = doc
+        .get_mut(section)
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        return;
+    };
+    table.remove(field);
+    if table.is_empty() {
+        doc.remove(section);
+    }
+}
+
 /// Read the persisted plan-level sandbox config (`[plan_sandbox]`).
 ///
 /// Returns `Ok(None)` if the section is missing — callers should fall back

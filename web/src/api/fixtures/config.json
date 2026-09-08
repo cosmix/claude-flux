@@ -1,0 +1,145 @@
+{
+  "csrf_token": "83ef66cf82bf4d6aaf25ebba856a7becf86613d3dab44c2b9c708d8afa1d5761",
+  "project": {
+    "available": true,
+    "path": ".loom/work/config.toml"
+  },
+  "entries": [
+    {
+      "name": "update.check",
+      "help": "Whether loom checks for updates on startup",
+      "kind": {
+        "type": "bool"
+      },
+      "scopes": ["user"],
+      "default": "true",
+      "user": {
+        "value": "false",
+        "set": true
+      },
+      "project": null,
+      "effective": {
+        "value": "false",
+        "source": "user"
+      }
+    },
+    {
+      "name": "update.check_interval_hours",
+      "help": "Hours between update checks",
+      "kind": {
+        "type": "u32"
+      },
+      "scopes": ["user"],
+      "default": "24",
+      "user": {
+        "value": "24",
+        "set": false
+      },
+      "project": null,
+      "effective": {
+        "value": "24",
+        "source": "default"
+      }
+    },
+    {
+      "name": "terminal.backend",
+      "help": "Terminal backend loom run defaults to",
+      "kind": {
+        "type": "enum",
+        "variants": ["native", "tmux"]
+      },
+      "scopes": ["user", "project"],
+      "default": "native",
+      "user": {
+        "value": "native",
+        "set": false
+      },
+      "project": {
+        "value": "native",
+        "set": false
+      },
+      "effective": {
+        "value": "native",
+        "source": "default"
+      }
+    },
+    {
+      "name": "context.ceiling_tokens",
+      "help": "Default context ceiling, in resident tokens, for a stage's agent session",
+      "kind": {
+        "type": "u32"
+      },
+      "scopes": ["user", "project"],
+      "default": "800000",
+      "user": {
+        "value": "800000",
+        "set": false
+      },
+      "project": {
+        "value": "900000",
+        "set": true
+      },
+      "effective": {
+        "value": "900000",
+        "source": "project"
+      }
+    },
+    {
+      "name": "pressure.claude_model",
+      "help": "Claude model loom pressure uses for the /pressure step",
+      "kind": {
+        "type": "enum",
+        "variants": ["haiku", "sonnet", "opus", "fable"]
+      },
+      "scopes": ["user"],
+      "default": "opus",
+      "user": {
+        "value": "opus",
+        "set": false
+      },
+      "project": null,
+      "effective": {
+        "value": "opus",
+        "source": "default"
+      }
+    },
+    {
+      "name": "pressure.codex_model",
+      "help": "Codex model loom pressure uses for the $pressure step",
+      "kind": {
+        "type": "enum",
+        "variants": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+      },
+      "scopes": ["user"],
+      "default": "gpt-5.6-sol",
+      "user": {
+        "value": "gpt-5.6-sol",
+        "set": false
+      },
+      "project": null,
+      "effective": {
+        "value": "gpt-5.6-sol",
+        "source": "default"
+      }
+    },
+    {
+      "name": "pressure.address_model",
+      "help": "Claude model loom pressure uses for the /address reconciliation step",
+      "kind": {
+        "type": "enum",
+        "variants": ["haiku", "sonnet", "opus", "fable"]
+      },
+      "scopes": ["user"],
+      "default": "opus",
+      "user": {
+        "value": "opus",
+        "set": false
+      },
+      "project": null,
+      "effective": {
+        "value": "opus",
+        "source": "default"
+      }
+    }
+  ]
+}

@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::assets;
 use super::broadcast::{self, Broadcaster};
+use super::config_api;
 use super::head::complete as complete_head;
 use super::http::{self, RequestHead};
 use super::limits::{Lane, Limits, Slot};
@@ -54,6 +55,8 @@ const DRAIN_DEADLINE: Duration = Duration::from_millis(300);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Route {
     Api,
+    /// The read/write config surface — the one route that accepts `POST`.
+    Config,
     Asset {
         body: &'static [u8],
         mime: &'static str,
@@ -93,15 +96,21 @@ pub(super) fn handle(
         return;
     }
 
-    let Ok(head) = http::read_head(&mut stream) else {
+    let Ok((head, body_prefix)) = http::read_head(&mut stream) else {
         fail(&mut stream, 400, "Bad Request", b"bad request");
         return;
     };
-    if !matches!(head.method.as_str(), "GET" | "HEAD") {
-        fail(&mut stream, 405, "Method Not Allowed", b"GET required");
-        return;
+    // Routed before the method gate so `POST` opens for `/api/config` and
+    // nothing else: every other path answers a `POST` with the same 405 it
+    // always has.
+    let route = route(&head.path);
+    match head.method.as_str() {
+        "GET" | "HEAD" => handle_route(&mut stream, &head, route, broadcaster, base),
+        "POST" if route == Route::Config => {
+            config_api::handle_post(&mut stream, &head, body_prefix, base)
+        }
+        _ => fail(&mut stream, 405, "Method Not Allowed", b"GET required"),
     }
-    handle_route(&mut stream, &head, broadcaster, base);
 }
 
 /// Upgrade an accepted `/ws` connection, or reject it if the origin check or
@@ -144,7 +153,7 @@ fn handle_websocket_upgrade(
 /// makes Linux answer with RST instead of FIN, which discards the response we
 /// just wrote before it reaches the client. Draining first makes the close a
 /// clean FIN, so the error status actually arrives.
-fn drain_pending(stream: &mut TcpStream) {
+pub(super) fn drain_pending(stream: &mut TcpStream) {
     if stream
         .set_read_timeout(Some(Duration::from_millis(50)))
         .is_err()
@@ -192,11 +201,13 @@ pub(super) fn fail(stream: &mut TcpStream, status: u16, reason: &str, body: &[u8
 fn handle_route(
     stream: &mut TcpStream,
     head: &RequestHead,
+    route: Route,
     broadcaster: &Broadcaster,
     base: &Path,
 ) {
-    match route(&head.path) {
+    match route {
         Route::Api => serve_api(stream, head, broadcaster, base),
+        Route::Config => config_api::serve_get(stream, head, base),
         Route::Asset { body, mime } => respond(stream, head, 200, "OK", mime, body),
         Route::Missing => respond(
             stream,
@@ -272,7 +283,7 @@ fn serve_index(stream: &mut TcpStream, head: &RequestHead) {
 }
 
 /// Answer a routed request, omitting the body when the client sent HEAD.
-fn respond(
+pub(super) fn respond(
     stream: &mut TcpStream,
     head: &RequestHead,
     status: u16,
@@ -308,6 +319,8 @@ pub(super) fn route(path: &str) -> Route {
         Route::Asset { body, mime }
     } else if path == "/api/status" {
         Route::Api
+    } else if path == "/api/config" {
+        Route::Config
     } else if path.starts_with("/assets/") || path.starts_with("/api/") {
         Route::Missing
     } else {

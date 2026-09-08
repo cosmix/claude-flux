@@ -15,6 +15,8 @@ use crate::fs::work_dir::WorkDir;
 use crate::process::sandbox_probe::{loopback_bindable, skip_unless};
 use tempfile::TempDir;
 
+#[path = "tests/config_api.rs"]
+mod config_api;
 #[path = "tests/errors.rs"]
 mod errors;
 #[path = "tests/ports.rs"]

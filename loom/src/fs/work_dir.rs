@@ -9,8 +9,8 @@ use crate::fs::knowledge::KnowledgeDir;
 
 mod config_sections;
 pub use config_sections::{
-    read_config, read_context_config, read_plan_sandbox, read_remote_control_config,
-    read_terminal_config, resolve_context_ceiling_tokens, update_config, write_config,
+    insert_key, read_config, read_context_config, read_plan_sandbox, read_remote_control_config,
+    read_terminal_config, remove_key, resolve_context_ceiling_tokens, update_config, write_config,
     write_context_config, write_plan_sandbox, write_remote_control_config, write_terminal_config,
 };
 

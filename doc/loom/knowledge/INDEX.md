@@ -9,7 +9,7 @@
 | File | Description | Lines |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | High-level component relationships, data flow, module dependencies | 548 |
-| [entry-points.md](entry-points.md) | Key files agents should read first | 573 |
+| [entry-points.md](entry-points.md) | Key files agents should read first | 576 |
 | [patterns.md](patterns.md) | Architectural patterns discovered in the codebase | 799 |
 | [conventions.md](conventions.md) | Coding conventions discovered in the codebase | 697 |
 | [mistakes.md](mistakes.md) | Mistakes made and lessons learned - what to avoid | 1194 |
@@ -40,7 +40,7 @@
 | [source-graph](architecture/source-graph.md) | What the source graph is and is not, its honesty contract, extractor trait, node/edge and cache… | 244 |
 | [status-data-model](architecture/status-data-model.md) | Where each field shown by `loom status` (static, compact, and `--live`) comes from, and what the… | 176 |
 | [terminal-backends](architecture/terminal-backends.md) | The native and tmux session backends behind one dispatcher, lane resolution, and session-recorded… | 251 |
-| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — a read-only HTTP/WebSocket server on `127.0.0.1` that serves an… | 35 |
+| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — an HTTP/WebSocket server on `127.0.0.1` that serves an embedded React… | 47 |
 
 ### entry-points
 

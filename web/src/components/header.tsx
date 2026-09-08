@@ -1,12 +1,13 @@
 import { useAtomValue } from "jotai/react";
 import { Link } from "react-router";
-import { CircleHelpIcon } from "lucide-react";
+import { CircleHelpIcon, SlidersHorizontalIcon } from "lucide-react";
 
 import { ThemeToggle } from "@/aurora-ui/theme/ThemeToggle";
 import { WorkRoundel } from "@/components/activity-roundel";
 import { ConnectionBadge } from "@/components/connection-badge";
 import { DaemonLine, MergeLine, ProgressLine, SummaryLine } from "@/components/header-lines";
 import { Logo } from "@/components/logo";
+import { useOpenSettings } from "@/components/settings-dialog";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,6 +20,7 @@ import { attentionAtom, snapshotAtom } from "@/state/atoms";
 export function Header({ onOpenLegend }: { onOpenLegend: () => void }) {
   const snapshot = useAtomValue(snapshotAtom);
   const attention = useAtomValue(attentionAtom);
+  const openSettings = useOpenSettings();
 
   return (
     <header className="border-b border-hairline bg-linear-to-b from-card to-background">
@@ -39,6 +41,15 @@ export function Header({ onOpenLegend }: { onOpenLegend: () => void }) {
             <ConnectionBadge />
             <ViewSwitch />
             <ThemeToggle />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openSettings()}
+              aria-label="open settings"
+            >
+              <SlidersHorizontalIcon />
+              <span className="hidden sm:inline">settings</span>
+            </Button>
             <Button variant="ghost" size="sm" onClick={onOpenLegend} aria-label="open legend">
               <CircleHelpIcon />
               <span className="hidden sm:inline">legend</span>

@@ -9,6 +9,7 @@ import { Header } from "@/components/header";
 import { useNow } from "@/components/hooks/use-now";
 import { LegendDialog } from "@/components/legend-dialog";
 import { QuotaMeters } from "@/components/quota-meters";
+import { SettingsDialog } from "@/components/settings-dialog";
 import { toneClass } from "@/components/state-badge";
 import { StageModal } from "@/components/stage-modal";
 import { Kbd } from "@/components/ui/kbd";
@@ -18,7 +19,8 @@ import { providerRows } from "@/lib/quota";
 import { snapshotAtom } from "@/state/atoms";
 
 /// Header, routed body, footer, the stage dialog (`?stage=<id>` on any
-/// route), and the legend dialog with its `?` shortcut. Each route sets its
+/// route), the settings dialog (`?settings=<scope>`), and the legend dialog
+/// with its `?` shortcut. Each route sets its
 /// own width: the overview runs wide, the ledger and stage pages are bounded.
 export function Shell() {
   const [legendOpen, setLegendOpen] = useState(false);
@@ -46,6 +48,7 @@ export function Shell() {
         </main>
         <Footer />
         <StageModal />
+        <SettingsDialog />
         <LegendDialog open={legendOpen} onOpenChange={setLegendOpen} />
       </div>
     </TooltipProvider>

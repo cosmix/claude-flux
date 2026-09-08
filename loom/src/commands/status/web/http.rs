@@ -9,6 +9,18 @@ use anyhow::{bail, Context, Result};
 /// Largest request head accepted by the server.
 pub const MAX_HEAD_BYTES: usize = 16 * 1024;
 
+/// Largest request body accepted by the server.
+///
+/// The only body the dashboard reads is a `/api/config` update — one key name
+/// and one value — so the cap sits far below anything a browser would stream.
+/// It bounds the declared `Content-Length` *and* the bytes [`read_body`]
+/// actually consumes, so a length that understates what the client goes on to
+/// send cannot make the server buffer more than this.
+pub const MAX_BODY_BYTES: usize = 8 * 1024;
+
+/// Header carrying the double-submit CSRF token on a mutating request.
+pub const CSRF_HEADER: &str = "X-Loom-Csrf";
+
 /// The parsed subset of an HTTP request head needed for routing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestHead {
@@ -17,15 +29,25 @@ pub struct RequestHead {
     pub upgrade_websocket: bool,
     pub origin: Option<String>,
     pub host: Option<String>,
+    /// `Content-Type`, needed only by the config write route.
+    pub content_type: Option<String>,
+    /// `Content-Length`, unparsed: a malformed one is a client error the write
+    /// route reports, not a parse failure for every request that carries one.
+    pub content_length: Option<String>,
+    /// The [`CSRF_HEADER`] value presented by a mutating request.
+    pub csrf_token: Option<String>,
 }
 
 /// Read one header's value as UTF-8, if the request carries it.
 ///
 /// A second copy of the header is an error rather than a first-one-wins pick.
-/// Both headers read here gate access, and RFC 9112 section 3.2 forbids a
-/// duplicate `Host` outright; taking the first value would let a request that
-/// pairs a loopback `Host` with an attacker's own pass the rebinding gate on
-/// the strength of a header the far end may never have intended to send.
+/// Every header read through here gates access or frames the body, and RFC 9112
+/// section 3.2 forbids a duplicate `Host` outright; taking the first value
+/// would let a request that pairs a loopback `Host` with an attacker's own pass
+/// the rebinding gate on the strength of a header the far end may never have
+/// intended to send, and a request carrying two `Content-Length` values would
+/// get its body framed by whichever this server picked rather than by
+/// agreement.
 fn header_value(request: &httparse::Request<'_, '_>, name: &str) -> Result<Option<String>> {
     let mut matching = request
         .headers
@@ -44,11 +66,21 @@ fn header_value(request: &httparse::Request<'_, '_>, name: &str) -> Result<Optio
 
 /// Parse a complete request head, or return `None` while it remains partial.
 pub fn parse_head(buf: &[u8]) -> Result<Option<RequestHead>> {
+    Ok(parse_head_with_len(buf)?.map(|(head, _)| head))
+}
+
+/// [`parse_head`], also reporting how many bytes of `buf` the head occupied.
+///
+/// The count is what separates the head from a body that arrived in the same
+/// read: httparse reports it exactly, including for the bare-LF line endings a
+/// scan for `\r\n\r\n` would misjudge.
+pub fn parse_head_with_len(buf: &[u8]) -> Result<Option<(RequestHead, usize)>> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut request = httparse::Request::new(&mut headers);
-    if request.parse(buf)? == httparse::Status::Partial {
-        return Ok(None);
-    }
+    let head_len = match request.parse(buf)? {
+        httparse::Status::Complete(len) => len,
+        httparse::Status::Partial => return Ok(None),
+    };
     let method = request
         .method
         .context("request method is missing")?
@@ -66,17 +98,29 @@ pub fn parse_head(buf: &[u8]) -> Result<Option<RequestHead>> {
             && std::str::from_utf8(header.value)
                 .is_ok_and(|value| value.eq_ignore_ascii_case("websocket"))
     });
-    Ok(Some(RequestHead {
-        method,
-        path,
-        upgrade_websocket,
-        origin: header_value(&request, "Origin")?,
-        host: header_value(&request, "Host")?,
-    }))
+    Ok(Some((
+        RequestHead {
+            method,
+            path,
+            upgrade_websocket,
+            origin: header_value(&request, "Origin")?,
+            host: header_value(&request, "Host")?,
+            content_type: header_value(&request, "Content-Type")?,
+            content_length: header_value(&request, "Content-Length")?,
+            csrf_token: header_value(&request, CSRF_HEADER)?,
+        },
+        head_len,
+    )))
 }
 
-/// Consume an HTTP request head from `stream`.
-pub fn read_head(stream: &mut TcpStream) -> Result<RequestHead> {
+/// Consume an HTTP request head from `stream`, with whatever body bytes
+/// arrived alongside it.
+///
+/// Reads land in chunks, so the last one routinely carries the head's final
+/// bytes and the start of a body. Returning that remainder is what lets
+/// [`read_body`] account for bytes already off the socket instead of waiting
+/// for them a second time.
+pub fn read_head(stream: &mut TcpStream) -> Result<(RequestHead, Vec<u8>)> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     let mut buffer = Vec::with_capacity(1024);
     let mut chunk = [0_u8; 1024];
@@ -88,13 +132,43 @@ pub fn read_head(stream: &mut TcpStream) -> Result<RequestHead> {
             bail!("client closed connection before completing request head");
         }
         buffer.extend_from_slice(&chunk[..read]);
-        if let Some(head) = parse_head(&buffer)? {
-            return Ok(head);
+        if let Some((head, head_len)) = parse_head_with_len(&buffer)? {
+            let body = buffer.split_off(head_len);
+            return Ok((head, body));
         }
         if buffer.len() >= MAX_HEAD_BYTES {
             bail!("request head exceeds {MAX_HEAD_BYTES} bytes");
         }
     }
+}
+
+/// Consume exactly `length` body bytes, counting the `prefix` that already
+/// came off the socket with the head.
+///
+/// `length` is the request's `Content-Length` and is refused outright past
+/// [`MAX_BODY_BYTES`]; nothing beyond it is ever read, so a client whose body
+/// is longer than it declared gets the declared prefix parsed and the rest left
+/// on the socket for the caller's drain, never buffered here. Each individual
+/// read is bounded by the 5-second timeout [`read_head`] installed, and the
+/// whole-request bound is the connection cap, exactly as for the head.
+pub fn read_body(stream: &mut TcpStream, prefix: Vec<u8>, length: usize) -> Result<Vec<u8>> {
+    if length > MAX_BODY_BYTES {
+        bail!("request body exceeds {MAX_BODY_BYTES} bytes");
+    }
+    let mut body = prefix;
+    body.truncate(length);
+    let mut chunk = [0_u8; 1024];
+    while body.len() < length {
+        let wanted = (length - body.len()).min(chunk.len());
+        let read = stream
+            .read(&mut chunk[..wanted])
+            .context("failed to read request body")?;
+        if read == 0 {
+            bail!("client closed connection before completing request body");
+        }
+        body.extend_from_slice(&chunk[..read]);
+    }
+    Ok(body)
 }
 
 /// Hosts whose origin the dashboard accepts: the loopback interface only.
@@ -127,6 +201,21 @@ fn is_loopback_host(host: &str) -> bool {
 /// than waved through.
 pub fn host_allowed(host: Option<&str>) -> bool {
     host.is_some_and(|host| is_loopback_host(origin_host(host)))
+}
+
+/// Whether a *mutating* request's `Origin` is present and names loopback.
+///
+/// [`origin_allowed`] waves an absent `Origin` through, and must: a browser
+/// sends none on a same-origin `GET`, so rejecting absence would break the
+/// dashboard's own reads. A state-changing request is the opposite case —
+/// browsers attach `Origin` to every `POST`, same-origin included — so an
+/// absent one means the request came from something that is not a page under
+/// this origin, and there is nothing for the gate to check. Writes therefore
+/// require the header rather than defaulting open. Kept as a separate
+/// predicate so loosening or tightening one lane cannot silently move the
+/// other.
+pub fn origin_allowed_strict(origin: Option<&str>) -> bool {
+    origin.is_some() && origin_allowed(origin)
 }
 
 /// Whether an absent or loopback HTTP(S) origin is permitted.

@@ -1,0 +1,396 @@
+/*
+ * Settings dialog: a config ledger ruled by hairlines, with a resolution
+ * rail under every key. Colours come from aurora-ui's tokens and loom's
+ * `--tone-*`; the scope being edited sets `--scope-tone`, and a control the
+ * current file actually sets is drawn solid in that tone, one that falls
+ * through to the tier below is drawn dashed and muted.
+ */
+@layer components {
+  .settings-dialog {
+    --scope-tone: var(--tone-pending);
+  }
+  .settings-dialog.scope-project {
+    --scope-tone: var(--tone-queued);
+  }
+
+  .settings-head {
+    background: linear-gradient(to bottom, var(--card), var(--popover));
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  /* Two-cell scope selector; the radio itself is visually hidden and the
+   * label draws the cell, so keyboard focus lands on the cell outline. */
+  .settings-scopes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .settings-scope {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    background: var(--muted);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+    color: var(--muted-foreground);
+    cursor: pointer;
+    transition:
+      color 150ms ease,
+      background-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+  .settings-scope:hover {
+    color: var(--foreground);
+  }
+  .settings-scope.is-active {
+    background: var(--card);
+    color: var(--foreground);
+    box-shadow:
+      inset 3px 0 0 var(--scope-tone),
+      0 1px 2px rgb(0 0 0 / 0.08),
+      0 0 0 1px var(--hairline);
+  }
+  .settings-scope:has(input:focus-visible) {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .settings-scope-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .settings-scope-path {
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .settings-scope-blurb {
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+
+  .settings-writing {
+    margin: 0;
+    padding: 10px 20px;
+    font-size: 12px;
+    color: var(--muted-foreground);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .settings-writing code {
+    color: var(--foreground);
+    font-size: 11px;
+  }
+
+  .settings-section-head {
+    padding: 14px 20px 6px;
+  }
+  .settings-rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .settings-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--hairline);
+  }
+  .settings-row-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+  }
+  .settings-row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .settings-label {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+  .settings-help {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted-foreground);
+    text-wrap: pretty;
+  }
+  .settings-row-control {
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  /* Text and select share one frame: mono, hairline, scope-toned when the
+   * file sets the value, dashed when the value falls through. */
+  .settings-input {
+    height: 30px;
+    width: 12ch;
+    padding: 0 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    outline: none;
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+  .settings-select {
+    text-align: left;
+    width: auto;
+    min-width: 12ch;
+    padding-right: 28px;
+    appearance: none;
+  }
+  .settings-select-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .settings-select-chevron {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--muted-foreground);
+  }
+  .settings-input:focus-visible {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 35%, transparent);
+  }
+  .settings-input:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  .settings-input[aria-invalid="true"] {
+    border-color: var(--tone-blocked);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--tone-blocked) 25%, transparent);
+  }
+  .settings-row[data-provenance="set"] .settings-input {
+    border-color: var(--scope-tone);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--scope-tone) 45%, transparent);
+  }
+  .settings-row[data-provenance="inherited"] .settings-input {
+    border-style: dashed;
+    color: var(--muted-foreground);
+    background: transparent;
+  }
+
+  /* Native checkbox drawn as a pill switch; role="switch" is on the input. */
+  .settings-switch {
+    appearance: none;
+    position: relative;
+    width: 36px;
+    height: 20px;
+    margin: 5px 0;
+    border-radius: 999px;
+    background: var(--muted);
+    box-shadow: inset 0 0 0 1px var(--border);
+    cursor: pointer;
+    transition: background-color 150ms ease;
+  }
+  .settings-switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--card);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+    transition: transform 150ms ease;
+  }
+  .settings-switch:checked {
+    background: var(--scope-tone);
+    box-shadow: none;
+  }
+  .settings-switch:checked::after {
+    transform: translateX(16px);
+  }
+  .settings-switch:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .settings-switch:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  .settings-row[data-provenance="inherited"] .settings-switch {
+    box-shadow: inset 0 0 0 1px var(--border);
+    background: repeating-linear-gradient(
+      -45deg,
+      var(--muted) 0 3px,
+      color-mix(in oklch, var(--border) 60%, transparent) 3px 4px
+    );
+  }
+  .settings-row[data-provenance="inherited"] .settings-switch:checked {
+    background: color-mix(in oklch, var(--scope-tone) 45%, var(--muted));
+  }
+
+  .settings-unavailable {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted-foreground);
+    text-align: right;
+  }
+
+  .settings-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 16px;
+  }
+  .settings-row-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+  }
+  .settings-tag {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    letter-spacing: 0.01em;
+  }
+  .settings-clear {
+    font-size: 11px;
+  }
+
+  /* The rail: three stops joined by hairline ties. A filled dot is a tier
+   * that sets the key; the ringed dot is the tier in effect. */
+  .settings-rail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+  .settings-stop {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  .settings-stop + .settings-stop::before {
+    content: "";
+    width: 14px;
+    height: 1px;
+    margin: 0 8px;
+    background: var(--border);
+  }
+  .settings-stop-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px currentColor;
+    transition: box-shadow 150ms ease;
+  }
+  .settings-stop[data-set="true"] .settings-stop-dot {
+    background: currentColor;
+  }
+  .settings-stop[data-applicable="false"] {
+    opacity: 0.55;
+  }
+  .settings-stop[data-applicable="false"] .settings-stop-dot {
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .settings-stop-value {
+    color: var(--foreground);
+  }
+  .settings-stop[data-applicable="false"] .settings-stop-value,
+  .settings-stop[data-set="false"] .settings-stop-value {
+    color: inherit;
+  }
+  .settings-stop[aria-current="true"] {
+    color: var(--foreground);
+  }
+  .settings-stop[aria-current="true"] .settings-stop-dot {
+    background: var(--tone-executing);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--tone-executing) 28%, transparent);
+  }
+  .settings-stop[aria-current="true"] .settings-stop-tier {
+    font-weight: 600;
+  }
+
+  /* Always one line tall so a landing write never moves the rows below. */
+  .settings-status {
+    margin: 0;
+    min-height: 1.25rem;
+    font-size: 12px;
+    line-height: 1.25rem;
+    color: var(--muted-foreground);
+    text-wrap: pretty;
+  }
+
+  .settings-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0;
+    padding: 20px;
+    font-size: 13px;
+    color: var(--muted-foreground);
+  }
+
+  @media (max-width: 560px) {
+    .settings-scopes {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .settings-row-main {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .settings-row-control {
+      justify-content: flex-start;
+    }
+    .settings-unavailable {
+      text-align: left;
+    }
+  }
+}
+
+.dark .settings-scope.is-active {
+  box-shadow:
+    inset 3px 0 0 var(--scope-tone),
+    0 1px 2px rgb(0 0 0 / 0.4),
+    0 0 0 1px var(--hairline);
+}
+.dark .settings-switch::after {
+  background: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-scope,
+  .settings-input,
+  .settings-switch,
+  .settings-switch::after,
+  .settings-stop-dot {
+    transition: none;
+  }
+}

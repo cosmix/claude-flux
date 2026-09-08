@@ -11,9 +11,39 @@
 //! trade-off for an operator-run localhost dashboard, but it is a deliberate
 //! downgrade of the daemon's authentication model, not an oversight: do not
 //! bind this server to a non-loopback address without adding authentication.
+//!
+//! ## The write surface
+//!
+//! `/api/config` (`config_api`) is the one route that changes anything: it
+//! reads and writes `~/.loom/config.toml` and `.loom/work/config.toml`. It
+//! accepts the same reads as everything else here, and gates its writes three
+//! deep:
+//!
+//! 1. **`Host`** - the DNS-rebinding gate `connection::handle` already applies
+//!    to every request ahead of routing.
+//! 2. **`Origin`, strictly** - `http::origin_allowed_strict` rather than
+//!    `http::origin_allowed`. Absence is fine for a same-origin `GET`, which
+//!    carries no `Origin` at all, and is refused for a write, which always
+//!    would.
+//! 3. **A double-submit CSRF token** - minted once per server process, handed
+//!    out only in the `GET /api/config` body, required in the `X-Loom-Csrf`
+//!    header of every `POST`, and compared in constant time.
+//!
+//! The third gate holds only because this server sends no CORS header
+//! anywhere: that is what stops a cross-site page reading the token out of the
+//! `GET` or setting the header on a `POST`. Adding one would defeat it.
+//! Request bodies are capped at `http::MAX_BODY_BYTES`, and no response
+//! anywhere names an absolute path - a failure that would is logged and served
+//! generically, because every local process can read this server.
+//!
+//! What the write surface does NOT do is raise the read posture above: a local
+//! process that could already read the ledger can now also change loom's
+//! configuration, which is a real widening of what a same-host caller can do
+//! and the reason the gates above are not optional.
 
 mod assets;
 mod broadcast;
+mod config_api;
 mod connection;
 mod head;
 mod http;

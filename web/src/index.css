@@ -13,6 +13,7 @@
 @import "./aurora-ui/feedback/busy-roundel.css";
 @import "./aurora-ui/feedback/hazard.css";
 @import "./graph.css";
+@import "./components/settings.css";
 
 @font-face {
   font-family: "Inter Variable";

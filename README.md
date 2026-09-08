@@ -220,14 +220,33 @@ loom stop
 loom resume <stage-id>
 loom check <stage-id> [--suggest]
 loom diagnose <stage-id>
-loom pressure <plan-path> [--rounds N] [--dry-run]
+loom pressure <plan-path> [--rounds N] [--claude-model M] [--codex-model M] [--address-model M] [--dry-run]
 ```
 
 `loom pressure` hardens a plan before you run it by combining two external agents over `--rounds` rounds (default 2). Each round runs both pressure-tests in parallel: Claude `/pressure` edits the plan in place in the foreground (you watch it live), while Codex `$pressure` writes an independent review next to it (`codex-<plan>.md`) in the background (its output is captured to a temp log to keep the terminal clean). Once both finish, Claude `/address` folds the review back in. Claude stays interactive (subscription billing) and auto-closes when done; Codex runs from the repo root. Requires both the `claude` and `codex` CLIs on PATH. `--dry-run` prints the exact commands without spawning anything.
 
+Each of the three steps spawns with an independently selectable model: `--claude-model` for `/pressure` and `--address-model` for `/address` (both accept `haiku`, `sonnet`, `opus`, or `fable`; default `opus`), and `--codex-model` for `$pressure` (accepts `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, or `gpt-5.6-luna`; default `gpt-5.6-sol`). Absent a flag, each falls back to `pressure.claude_model`, `pressure.codex_model`, or `pressure.address_model` in `~/.loom/config.toml` (`loom config -k pressure.claude_model <value>`), then to its built-in default.
+
 `loom status --live` renders a live ledger dashboard: one row per stage across eight columns (STATE, STAGE, DEPENDS ON, MODELS, ACTIVITY, CONTEXT, TIME, MERGE). MODELS lists the orchestrator's own model first, then the models any subagents it spawned ran on. Columns drop in priority order as the terminal narrows; below a 64x16 (columns x rows) terminal a notice replaces the dashboard entirely. Press `?` to toggle a legend overlay explaining every state icon.
 
-`loom status --web [PORT]` starts a read-only web dashboard bound to `127.0.0.1` and serves the same live ledger over a WebSocket in the browser. Without `PORT`, it starts at port 7373 and automatically tries the next available port when a candidate is occupied. Supplying a nonzero `PORT` requests that exact port; `PORT` 0 asks the OS for any free port. It works without the daemon by polling `.work/` files directly when the daemon socket is unreachable.
+`loom status --web [PORT]` starts a web dashboard bound to `127.0.0.1` and serves the live ledger over a WebSocket in the browser. Without `PORT`, it starts at port 7373 and automatically tries the next available port when a candidate is occupied. Supplying a nonzero `PORT` requests that exact port; `PORT` 0 asks the OS for any free port. It works without the daemon by polling `.work/` files directly when the daemon socket is unreachable. Besides the ledger, it exposes one write surface: a settings dialog for editing loom's configuration (see below).
+
+### Web Dashboard Settings
+
+The dashboard header has a settings button; opening it (or navigating to `?settings=user` or `?settings=project`) edits loom's configuration in place, so the browser's back button closes the dialog. It edits the same seven keys `loom config` does: `update.check` / `update.check_interval_hours` (loom's self-update check), `terminal.backend` (see [Terminal Backends](#terminal-backends)), `context.ceiling_tokens` (see [Plan-Level Context Fields](#plan-level-context-fields)), and the three `pressure.claude_model` / `pressure.codex_model` / `pressure.address_model` picks described under [Primary Commands](#primary-commands). `loom config --list` prints every key with its current value and origin. Every control here writes immediately on change, one key at a time; there is no separate Save step, and validation errors from the server surface next to the control that triggered them.
+
+Two scopes:
+
+| Scope     | File                        | Applies to                       |
+| --------- | ---------------------------- | --------------------------------- |
+| `user`    | `~/.loom/config.toml`       | Every workspace on this machine   |
+| `project` | `<repo>/.loom/work/config.toml`  | This workspace only               |
+
+Only `terminal.backend` and `context.ceiling_tokens` have a project tier; the dialog marks the other five as machine-wide rather than offering a project control that would do nothing. A key's effective value resolves **project → user → built-in default**, and each row shows which tier is currently in force plus what clearing an override would fall back to.
+
+One caveat worth knowing before you rely on it: a project override replaces its whole `.loom/work/config.toml` section, not just the one key. Clearing the override removes the key and, if that empties the section, the section too — but if a sibling key is still in there (as with `[context]`, since `loom init` writes `ceiling_tokens` alongside `subagent_ceiling_tokens`), the section still wins as a whole and the value resolves to the built-in default rather than falling through to your user setting. The dialog reports that state accurately (still project-sourced); it just may not be the fallback you expected.
+
+The dashboard stays a `127.0.0.1`-only, unauthenticated tool for the person running it — the settings endpoint adds no login. Writes are gated by the same `Host` check as the rest of the dashboard, plus a strict `Origin` check (must be present and loopback) and a per-process CSRF token issued on load.
 
 ### Plan Commands
 
