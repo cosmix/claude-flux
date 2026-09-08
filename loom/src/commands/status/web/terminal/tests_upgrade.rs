@@ -8,15 +8,15 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use super::{
+use crate::commands::status::web::limits::{acquire_terminal_slot, Limits, MAX_TERMINALS};
+use crate::commands::status::web::tests::{
     assert_security_headers, body, request, skip_without_loopback, start, start_with, stop,
     workspace,
 };
-use crate::commands::status::web::limits::{acquire_terminal_slot, Limits, MAX_TERMINALS};
 use crate::commands::status::web::{self, ServeOptions, TerminalLane};
 use tungstenite::client::IntoClientRequest;
 
-pub(super) fn terminal_options() -> ServeOptions {
+pub(in crate::commands::status::web) fn terminal_options() -> ServeOptions {
     ServeOptions {
         terminal_token: Some("a".repeat(64)),
     }

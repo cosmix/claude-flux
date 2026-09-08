@@ -27,11 +27,9 @@ mod ports;
 mod pure;
 #[path = "tests/socket.rs"]
 mod socket;
-#[path = "tests/terminal.rs"]
-mod terminal;
 
 /// Build a fresh `.loom/work` directory for a test server.
-fn workspace() -> (TempDir, PathBuf) {
+pub(super) fn workspace() -> (TempDir, PathBuf) {
     let temp = tempfile::tempdir().expect("create temporary workspace");
     let base = temp.path().to_path_buf();
     WorkDir::new(&base)
@@ -42,7 +40,7 @@ fn workspace() -> (TempDir, PathBuf) {
 }
 
 /// Assert a response carries every header the dashboard always sends.
-fn assert_security_headers(response: &str) {
+pub(super) fn assert_security_headers(response: &str) {
     for header in [
         "Cache-Control: no-store",
         "X-Content-Type-Options: nosniff",
@@ -54,13 +52,13 @@ fn assert_security_headers(response: &str) {
 }
 
 /// Start a dashboard server on an ephemeral loopback port.
-fn start(base: PathBuf) -> (u16, Arc<AtomicBool>) {
+pub(super) fn start(base: PathBuf) -> (u16, Arc<AtomicBool>) {
     let (port, running, _) =
         start_with(base, crate::commands::status::web::ServeOptions::default());
     (port, running)
 }
 
-fn start_with(
+pub(super) fn start_with(
     base: PathBuf,
     options: crate::commands::status::web::ServeOptions,
 ) -> (
@@ -86,12 +84,12 @@ fn start_with(
     (port, running, limits)
 }
 
-fn stop(running: Arc<AtomicBool>) {
+pub(super) fn stop(running: Arc<AtomicBool>) {
     running.store(false, Ordering::SeqCst);
     thread::sleep(Duration::from_millis(100));
 }
 
-fn skip_without_loopback(test_name: &str) -> bool {
+pub(super) fn skip_without_loopback(test_name: &str) -> bool {
     skip_unless(
         loopback_bindable(),
         test_name,
@@ -100,7 +98,7 @@ fn skip_without_loopback(test_name: &str) -> bool {
 }
 
 /// Send one raw request and read the whole response back.
-fn request(port: u16, request: &str) -> String {
+pub(super) fn request(port: u16, request: &str) -> String {
     request_with_timeout(port, request, Duration::from_secs(5))
 }
 
@@ -115,6 +113,6 @@ fn request_with_timeout(port: u16, request: &str, timeout: Duration) -> String {
     response
 }
 
-fn body(response: &str) -> &str {
+pub(super) fn body(response: &str) -> &str {
     response.split_once("\r\n\r\n").map_or("", |(_, body)| body)
 }

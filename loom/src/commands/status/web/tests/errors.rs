@@ -8,13 +8,13 @@
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
-use super::terminal::terminal_options;
 use super::{
     assert_security_headers, body, request, request_with_timeout, skip_without_loopback, start,
     start_with, stop, workspace,
 };
 use crate::commands::status::web::http::MAX_HEAD_BYTES;
 use crate::commands::status::web::limits::{Lane, Limits, Slot, MAX_CONNECTIONS, MAX_WEBSOCKETS};
+use crate::commands::status::web::terminal::tests_upgrade::terminal_options;
 
 /// Read the `Content-Length` a response advertises.
 fn content_length(response: &str) -> usize {
