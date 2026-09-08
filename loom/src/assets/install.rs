@@ -26,6 +26,7 @@ pub struct InstallReport {
     pub agents: usize,
     pub commands: usize,
     pub hooks: usize,
+    pub codex_hooks: usize,
     pub skills_resident: usize,
     pub skills_catalogued: usize,
     pub codex_skills_resident: usize,
@@ -63,6 +64,7 @@ pub fn install_all(
         crate::assets::CLAUDE_COMMANDS,
     )?;
     let hooks = install_loom_hooks_to(&paths.claude_dir.join("hooks/loom"))?;
+    let codex_hooks = crate::fs::permissions::install_codex_hooks_to(&paths.codex_dir)?;
     let (skills_resident, skills_catalogued) =
         claude::install_skills(&paths.claude_dir, crate::assets::SKILLS, layout)?;
     let (codex_skills_resident, codex_skills_catalogued) = codex::install_skills(
@@ -82,6 +84,7 @@ pub fn install_all(
         agents,
         commands,
         hooks,
+        codex_hooks,
         skills_resident,
         skills_catalogued,
         codex_skills_resident,

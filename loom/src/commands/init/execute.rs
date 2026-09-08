@@ -159,8 +159,8 @@ pub fn execute(
 
     ensure_loom_permissions(&repo_root)?;
     println!("  {} Permissions configured", "✓".green().bold());
+    install_codex_hooks_advisory();
 
-    // Check for CLAUDE.md
     if let Some(home) = dirs::home_dir() {
         let claude_md = home.join(".claude/CLAUDE.md");
         if !claude_md.exists() {
@@ -196,6 +196,20 @@ pub fn execute(
     guard.disarm();
 
     Ok(())
+}
+
+fn install_codex_hooks_advisory() {
+    match crate::fs::permissions::install_codex_hooks() {
+        Ok(count) => println!(
+            "  {} Codex hooks configured ({count} assets; review changes with /hooks)",
+            "✓".green().bold()
+        ),
+        Err(error) => eprintln!(
+            "  {} Codex hook setup skipped: {}",
+            "!".yellow().bold(),
+            error
+        ),
+    }
 }
 
 /// Parse and policy-check the plan, when one was given, before `execute`

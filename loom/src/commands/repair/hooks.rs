@@ -10,8 +10,7 @@ use super::{RepairIssue, Severity};
 use crate::fs::permissions::LOOM_PERMISSIONS;
 use crate::git::is_pre_commit_hook_installed;
 
-/// Check 4: git pre-commit hook installed. Check 5: `.claude/settings.json`
-/// has permissions (but NOT hooks/env — those belong in settings.local.json).
+/// Check the git hook, Claude permissions, and Codex-native hook installation.
 pub(super) fn check(repo_root: &Path) -> Vec<RepairIssue> {
     let mut issues = Vec::new();
 
@@ -26,12 +25,18 @@ pub(super) fn check(repo_root: &Path) -> Vec<RepairIssue> {
     if let Some(issue) = settings_permissions_issue(repo_root) {
         issues.push(issue);
     }
+    if crate::fs::permissions::codex_hooks_need_install() {
+        issues.push(RepairIssue {
+            severity: Severity::Info,
+            description: "Codex hook installation incomplete or outdated".to_string(),
+            fix_description: "Install Loom's Codex-native hooks".to_string(),
+        });
+    }
 
     issues
 }
 
-/// Check 5's body: whether `.claude/settings.json` exists and carries every
-/// LOOM_PERMISSIONS entry.
+/// Whether `.claude/settings.json` exists and carries every LOOM_PERMISSIONS entry.
 fn settings_permissions_issue(repo_root: &Path) -> Option<RepairIssue> {
     let settings_path = repo_root.join(".claude/settings.json");
     let parsed = parse_settings_json(&settings_path);
@@ -69,29 +74,33 @@ fn has_all_loom_permissions(val: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
-/// Install Claude Code hooks, configure permissions, and rebuild the skill
-/// keyword index. `verbose = true` (`loom repair --fix`) keeps today's
+/// Install Claude Code and Codex hooks, configure permissions, and rebuild the
+/// skill keyword index. `verbose = true` (`loom repair --fix`) keeps today's
 /// per-step output; `verbose = false` (`loom init`'s unattended repair pass)
 /// does the identical work through the quiet variants and prints nothing.
 pub(super) fn fix_hooks(repo_root: &Path, verbose: bool) -> Result<()> {
-    use crate::fs::permissions::{
-        ensure_loom_permissions, ensure_loom_permissions_quiet, install_loom_hooks,
-    };
+    use crate::fs::permissions::{ensure_loom_permissions, ensure_loom_permissions_quiet};
     if verbose {
         fix_hooks_with(
             repo_root,
-            || install_loom_hooks().map(|_| ()),
+            install_hook_assets,
             ensure_loom_permissions,
             rebuild_skill_index,
         )?;
     } else {
         fix_hooks_with(
             repo_root,
-            || install_loom_hooks().map(|_| ()),
+            install_hook_assets,
             ensure_loom_permissions_quiet,
             rebuild_skill_index_quiet,
         )?;
     }
+    Ok(())
+}
+
+pub(super) fn install_hook_assets() -> Result<()> {
+    crate::fs::permissions::install_loom_hooks()?;
+    crate::fs::permissions::install_codex_hooks()?;
     Ok(())
 }
 

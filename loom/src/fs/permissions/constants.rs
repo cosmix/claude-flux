@@ -127,8 +127,13 @@ pub const HOOK_USER_PROMPT_CONTEXT: &str = include_str!("../../../../hooks/user-
 /// this runs in every repository and every session.
 pub const HOOK_KNOWLEDGE_ORIENT: &str = include_str!("../../../../hooks/knowledge-orient.sh");
 
-/// All loom hook scripts with their filenames (installed to ~/.claude/hooks/loom/)
-/// All hooks are installed to the loom/ subdirectory to keep them separate from user hooks.
+/// Codex apply_patch adapter - validates every patch target through the
+/// canonical file guards and records successful edits for source retrieval.
+pub const HOOK_CODEX_APPLY_PATCH: &str = include_str!("../../../../hooks/codex-apply-patch.sh");
+
+/// All Loom hook scripts with their filenames. The complete asset set is
+/// installed below both ~/.claude/hooks/loom and ~/.codex/hooks/loom; each
+/// harness registers only the scripts compatible with its event payloads.
 pub const LOOM_HOOKS: &[(&str, &str)] = &[
     // Common utilities (sourced by other hooks)
     ("_common.sh", HOOK_COMMON),
@@ -167,6 +172,8 @@ pub const LOOM_HOOKS: &[(&str, &str)] = &[
     ("user-prompt-context.sh", HOOK_USER_PROMPT_CONTEXT),
     // Orientation hooks (SessionStart)
     ("knowledge-orient.sh", HOOK_KNOWLEDGE_ORIENT),
+    // Codex compatibility hooks
+    ("codex-apply-patch.sh", HOOK_CODEX_APPLY_PATCH),
 ];
 
 /// Loom permissions for the MAIN REPO context

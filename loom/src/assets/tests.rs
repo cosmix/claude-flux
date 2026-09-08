@@ -182,6 +182,14 @@ fn hooks_and_managed_documents_have_expected_form() {
         0o755
     );
     assert!(paths
+        .codex_dir
+        .join("hooks/loom/codex-apply-patch.sh")
+        .is_file());
+    let codex_hooks: serde_json::Value =
+        serde_json::from_slice(&fs::read(paths.codex_dir.join("hooks.json")).unwrap()).unwrap();
+    assert!(codex_hooks["hooks"]["PreToolUse"].is_array());
+    assert!(codex_hooks["hooks"]["PostToolUse"].is_array());
+    assert!(paths
         .claude_dir
         .join("agents/loom-software-engineer.md")
         .is_file());

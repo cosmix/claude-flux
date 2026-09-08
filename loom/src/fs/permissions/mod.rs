@@ -1,9 +1,10 @@
-//! Claude Code permissions management for loom
+//! Claude Code and Codex permissions and hook management for Loom.
 //!
 //! Manages two settings files:
 //! - `.claude/settings.json` - team-shared permissions (committed to git)
 //! - `.claude/settings.local.json` - user-local hooks and env vars (gitignored)
 
+mod codex_hooks;
 mod codex_sandbox;
 pub mod constants;
 mod drift;
@@ -18,6 +19,10 @@ pub(crate) mod write_rules;
 mod tests;
 
 // Re-export public API
+pub use codex_hooks::{
+    codex_hooks_need_install, codex_hooks_need_install_in, install_codex_hooks,
+    install_codex_hooks_to,
+};
 pub use codex_sandbox::settings_local_has_allowances as settings_local_has_codex_sandbox;
 pub use constants::{LOOM_PERMISSIONS, LOOM_PERMISSIONS_WORKTREE};
 pub use drift::{

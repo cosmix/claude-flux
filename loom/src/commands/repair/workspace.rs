@@ -276,7 +276,9 @@ impl WorkspaceFix {
             || description.contains("Hooks found in .claude/settings.json")
         {
             Some(Self::HooksAndSettings)
-        } else if description.contains("Loom hook scripts") {
+        } else if description.contains("Loom hook scripts")
+            || description.contains("Codex hook installation")
+        {
             Some(Self::HookScripts)
         } else {
             None
@@ -301,7 +303,7 @@ impl WorkspaceFix {
             Self::GitignoreWorktrees => fix_gitignore_worktrees(repo_root).map(|()| true),
             Self::PreCommitHook => crate::git::install_pre_commit_hook(repo_root).map(|_| true),
             Self::HooksAndSettings => super::hooks::fix_hooks(repo_root, verbose).map(|()| true),
-            Self::HookScripts => crate::fs::permissions::install_loom_hooks().map(|_| true),
+            Self::HookScripts => super::hooks::install_hook_assets().map(|()| true),
         }
     }
 }

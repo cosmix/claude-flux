@@ -46,6 +46,7 @@ run_test "codex-forward-guard: blocks Edit by a forwarder" "$SCRIPT_DIR/codex-fo
 run_test "codex-forward-guard: companion Bash allowed, other Bash blocked" "$SCRIPT_DIR/codex-forward-guard-bash-companion-only.sh"
 run_test "codex-forward-guard: plain subagents, main sessions, no-path all untouched" "$SCRIPT_DIR/codex-forward-guard-ignores-others.sh"
 run_test "codex-forward: wrapper preserves task argv" "$SCRIPT_DIR/codex-forward-wrapper.sh"
+run_test "codex apply_patch: file guards and source-graph edit recording" "$SCRIPT_DIR/codex-apply-patch.sh"
 run_test "codex-forward-guard: quoted and escaped prompts round-trip" "$SCRIPT_DIR/codex-forward-guard-quoting.sh"
 run_test "git-add-guard: quoted prose allowed, real args blocked" "$SCRIPT_DIR/git-add-guard-quoting.sh"
 run_test "_common: token helpers scan argv values, not quoted prose" "$SCRIPT_DIR/common-token-helpers.sh"

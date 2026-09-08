@@ -61,7 +61,12 @@ fn print_summary(report: &InstallReport) {
     };
     println!("  {} agents: {}", "✓".green(), report.agents);
     println!("  {} commands: {}", "✓".green(), report.commands);
-    println!("  {} hooks updated: {}", "✓".green(), report.hooks);
+    println!("  {} Claude hooks updated: {}", "✓".green(), report.hooks);
+    println!(
+        "  {} Codex hooks updated: {} (review changes with /hooks)",
+        "✓".green(),
+        report.codex_hooks
+    );
     println!(
         "  {} Claude skills: {} resident, {} catalogued ({layout})",
         "✓".green(),
