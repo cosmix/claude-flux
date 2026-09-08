@@ -306,18 +306,13 @@ Transitions FROM `NeedsAdjudication` (`transitions.rs`) — note it can loop to 
 
 `CompletedWithFailures` also transitions into `NeedsAdjudication` (dispute filed after a failed completion) and into `NeedsHumanReview` (budget escalation).
 
-## Dispute Directory Structure (Shipped)
+## Adjudication Persistence and Stage Resumption [DETAILED]
 
-`.work/disputes/<stage_id>/<n>/` — per-dispute directory (numbered from 1):
+Adjudication is a durable artifact chain under `.loom/work/disputes/`, followed by a materialization
+step into stage state, optional feedback, and a fresh successor signal. The successor does not
+inherit the judge session or read the verdict record directly.
 
-| File             | Authority                            | Contents                                                                                                    |
-| ---------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `request.md`     | Agent-writable (via daemon RPC)      | id, stage_id, criterion_index, reason, evidence_commit, failure_output, fix_attempts_at_dispute, created_at |
-| `verdict.md`     | Daemon-only (worker thread writes)   | verdict, citations, reasoning, plan_patch, adjudicator_attempt_count, model                                 |
-| `applied.marker` | Daemon-only (zero-byte, idempotency) | —                                                                                                           |
-| `attempts`       | Daemon-only (respawn budget)         | count spent when an adjudication job is handed out; cap 3. Replaced the `.inflight` staleness marker, which is gone with the worker thread |
-
-Request.md is written by the daemon handler on behalf of the agent's RPC call. Trust boundary: same pattern as `loom memory note`.
+→ [Adjudication Persistence and Stage Resumption](architecture/adjudication-lifecycle.md)
 
 ## Plan Versioning / Runtime Amendment (Shipped — `plan/amendment.rs`)
 

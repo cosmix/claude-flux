@@ -8,7 +8,7 @@
 
 | File | Description | Lines |
 | --- | --- | --- |
-| [architecture.md](architecture.md) | High-level component relationships, data flow, module dependencies | 548 |
+| [architecture.md](architecture.md) | High-level component relationships, data flow, module dependencies | 543 |
 | [entry-points.md](entry-points.md) | Key files agents should read first | 576 |
 | [patterns.md](patterns.md) | Architectural patterns discovered in the codebase | 799 |
 | [conventions.md](conventions.md) | Coding conventions discovered in the codebase | 697 |
@@ -22,6 +22,7 @@
 
 | Topic | Blurb | Lines |
 | --- | --- | --- |
+| [adjudication-lifecycle](architecture/adjudication-lifecycle.md) | How a dispute becomes a durable verdict, how each verdict changes stage state, and exactly what a… | 59 |
 | [codex-concurrency](architecture/codex-concurrency.md) | Codex fan-out concurrency limits, what is measured, and what degrades under load (the shared… | 102 |
 | [codex-plugin](architecture/codex-plugin.md) | Codex plugin install and identity, the codex-rescue subagent, and the loom-codex-forwarder lane. | 400 |
 | [context-ceiling](architecture/context-ceiling.md) | The absolute resident-token ceiling: resolution order, and the three independent thresholds (hook… | 71 |
