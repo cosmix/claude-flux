@@ -14,7 +14,7 @@ model=$4
 effort=$6
 
 case "$model" in
-gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna) ;;
+gpt-6-astra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna) ;;
 *)
 	printf 'Unsupported forwarding model: %s\n' "$model" >&2
 	exit 2

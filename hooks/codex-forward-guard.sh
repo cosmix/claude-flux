@@ -113,7 +113,7 @@ is_exact_forward_command() {
 	fi
 	[[ "${PARSED_WORDS[1]}" == task && -n "${PARSED_WORDS[2]}" ]] || return 1
 	[[ "${PARSED_WORDS[3]}" == --model ]] || return 1
-	case "${PARSED_WORDS[4]}" in gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna) ;; *) return 1 ;; esac
+	case "${PARSED_WORDS[4]}" in gpt-6-astra | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna) ;; *) return 1 ;; esac
 	[[ "${PARSED_WORDS[5]}" == --effort ]] || return 1
 	case "${PARSED_WORDS[6]}" in low | medium | high | xhigh | max | ultra) ;; *) return 1 ;; esac
 	[[ "${PARSED_WORDS[7]}" == --write ]]
