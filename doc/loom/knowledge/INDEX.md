@@ -40,7 +40,7 @@
 | [source-graph](architecture/source-graph.md) | What the source graph is and is not, its honesty contract, extractor trait, node/edge and cache… | 244 |
 | [status-data-model](architecture/status-data-model.md) | Where each field shown by `loom status` (static, compact, and `--live`) comes from, and what the… | 176 |
 | [terminal-backends](architecture/terminal-backends.md) | The native and tmux session backends behind one dispatcher, lane resolution, and session-recorded… | 251 |
-| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — a read-only HTTP/WebSocket server (port 7373 default, `127.0.0.1… | 31 |
+| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — a read-only HTTP/WebSocket server (port 7373 default, `127.0.0.1… | 33 |
 
 ### entry-points
 
