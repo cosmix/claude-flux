@@ -77,9 +77,14 @@ pub fn complete_shell_types(prefix: &str) -> Result<Vec<String>> {
     Ok(filter_prefix(&["bash", "fish", "zsh"], prefix))
 }
 
-/// Complete model names for --model flag.
+/// Complete Claude model names for --model/--claude-model/--address-model flags.
 pub fn complete_model_names(prefix: &str) -> Result<Vec<String>> {
-    Ok(filter_prefix(&["haiku", "opus", "sonnet"], prefix))
+    Ok(filter_prefix(crate::claude::CLAUDE_MODELS, prefix))
+}
+
+/// Complete Codex model names for the --codex-model flag.
+pub fn complete_codex_model_names(prefix: &str) -> Result<Vec<String>> {
+    Ok(filter_prefix(crate::codex::CODEX_MODELS, prefix))
 }
 
 /// Complete handoff trigger types for --trigger flag.

@@ -1,9 +1,12 @@
 use super::*;
 use keys::{spec, ValueKind};
 
-// Every test here builds a `UserConfig` from a TOML string, or exercises
-// `set_in` against a temp file path — never the real `$HOME` — so the suite
-// stays deterministic under parallel execution.
+// Every test here parses a `UserConfig` from an in-memory TOML string and
+// checks the registry (spec lookup, typing, defaults, origin tracking) —
+// never touching disk. File-backed behavior (`set_in`/`unset_in`/`load`)
+// lives in `tests/persistence.rs`.
+
+mod persistence;
 
 #[test]
 fn each_key_parses_a_valid_value() {
@@ -100,18 +103,24 @@ fn defaults_when_the_file_is_absent() {
     );
     assert_eq!(config.terminal_backend_set(), None);
     assert_eq!(config.context_ceiling_tokens_set(), None);
+    assert_eq!(config.pressure_claude_model(), "opus");
+    assert_eq!(config.pressure_codex_model(), "gpt-5.6-sol");
+    assert_eq!(config.pressure_address_model(), "opus");
 }
 
 #[test]
 fn parses_every_key_out_of_a_document() {
     let config = parse_document(
-        "[update]\ncheck = false\ncheck_interval_hours = 6\n\n[terminal]\nbackend = \"tmux\"\n\n[context]\nceiling_tokens = 111111\n",
+        "[update]\ncheck = false\ncheck_interval_hours = 6\n\n[terminal]\nbackend = \"tmux\"\n\n[context]\nceiling_tokens = 111111\n\n[pressure]\nclaude_model = \"fable\"\ncodex_model = \"gpt-6-astra\"\naddress_model = \"sonnet\"\n",
     )
     .unwrap();
     assert!(!config.update_check());
     assert_eq!(config.update_check_interval_hours(), 6);
     assert_eq!(config.terminal_backend(), SessionBackendKind::Tmux);
     assert_eq!(config.context_ceiling_tokens(), 111111);
+    assert_eq!(config.pressure_claude_model(), "fable");
+    assert_eq!(config.pressure_codex_model(), "gpt-6-astra");
+    assert_eq!(config.pressure_address_model(), "sonnet");
 }
 
 #[test]
@@ -119,6 +128,21 @@ fn a_type_mismatched_field_in_the_document_is_an_error() {
     assert!(parse_document("[update]\ncheck = \"nope\"\n").is_err());
     assert!(parse_document("[context]\nceiling_tokens = \"nope\"\n").is_err());
     assert!(parse_document("[terminal]\nbackend = \"carrier-pigeon\"\n").is_err());
+}
+
+#[test]
+fn pressure_keys_reject_an_unknown_model_variant() {
+    let err = parse_document("[pressure]\nclaude_model = \"gpt-5.6-sol\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("pressure.claude_model"), "{err}");
+    assert!(err.contains("gpt-5.6-sol"), "{err}");
+
+    let err = parse_document("[pressure]\ncodex_model = \"opus\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("pressure.codex_model"), "{err}");
+    assert!(err.contains("opus"), "{err}");
 }
 
 #[test]
@@ -137,46 +161,40 @@ fn origin_is_set_only_for_keys_the_document_wrote() {
 }
 
 #[test]
+fn origin_of_pressure_keys_reflects_set_versus_unset() {
+    let config = parse_document("[pressure]\nclaude_model = \"fable\"\n").unwrap();
+
+    let (value, origin) = config.value_of(spec("pressure.claude_model").unwrap());
+    assert_eq!(value, "fable");
+    assert_eq!(origin, Origin::Set);
+
+    let (value, origin) = config.value_of(spec("pressure.codex_model").unwrap());
+    assert_eq!(value, "gpt-5.6-sol");
+    assert_eq!(origin, Origin::Default);
+}
+
+#[test]
 fn to_toml_string_renders_every_key_resolved() {
     let config = parse_document("[context]\nceiling_tokens = 55555\n").unwrap();
     let rendered = config.to_toml_string();
 
-    // Section order: context, terminal, update.
+    // Section order: context, pressure, terminal, update.
     let context_at = rendered.find("[context]").unwrap();
+    let pressure_at = rendered.find("[pressure]").unwrap();
     let terminal_at = rendered.find("[terminal]").unwrap();
     let update_at = rendered.find("[update]").unwrap();
     assert!(
-        context_at < terminal_at && terminal_at < update_at,
+        context_at < pressure_at && pressure_at < terminal_at && terminal_at < update_at,
         "{rendered}"
     );
 
     assert!(rendered.contains("ceiling_tokens = 55555"));
+    assert!(rendered.contains("claude_model = \"opus\""));
+    assert!(rendered.contains("codex_model = \"gpt-5.6-sol\""));
+    assert!(rendered.contains("address_model = \"opus\""));
     assert!(rendered.contains("backend = \"native\""));
     assert!(rendered.contains("check = true"));
     assert!(rendered.contains("check_interval_hours = 24"));
-}
-
-#[test]
-fn set_in_preserves_comments_and_unknown_keys() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.toml");
-    std::fs::write(
-        &path,
-        "# a comment worth keeping\n[terminal]\nbackend = \"native\"\nsome_future_key = \"kept\"\n",
-    )
-    .unwrap();
-
-    set_in(
-        &path,
-        spec("terminal.backend").unwrap(),
-        toml_edit::Value::from("tmux"),
-    )
-    .unwrap();
-
-    let after = std::fs::read_to_string(&path).unwrap();
-    assert!(after.contains("# a comment worth keeping"), "{after}");
-    assert!(after.contains("some_future_key = \"kept\""), "{after}");
-    assert!(after.contains("backend = \"tmux\""), "{after}");
 }
 
 #[test]
@@ -197,72 +215,10 @@ fn value_of_has_an_arm_for_every_registered_key() {
             "context.ceiling_tokens" => {
                 assert_eq!(value, DEFAULT_CONTEXT_CEILING_TOKENS.to_string())
             }
+            "pressure.claude_model" => assert_eq!(value, "opus"),
+            "pressure.codex_model" => assert_eq!(value, "gpt-5.6-sol"),
+            "pressure.address_model" => assert_eq!(value, "opus"),
             other => panic!("no expected default wired up for key {other}"),
         }
     }
-}
-
-#[test]
-fn load_over_a_malformed_file_yields_all_defaults_without_panicking() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.toml");
-    std::fs::write(&path, "[update]\ncheck = \"nope\"\n").unwrap();
-    let _guard = redirect_user_config(path);
-
-    // Must not panic, and must resolve every key to its built-in default —
-    // a broken user config must never take down `loom run`.
-    assert_eq!(UserConfig::load(), UserConfig::default());
-}
-
-#[test]
-fn load_strict_over_a_type_mismatched_file_names_the_config_path() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.toml");
-    std::fs::write(&path, "[update]\ncheck = \"nope\"\n").unwrap();
-    let _guard = redirect_user_config(path.clone());
-
-    let err = UserConfig::load_strict().unwrap_err();
-    let rendered = format!("{err:?}");
-    assert!(
-        rendered.contains(&path.display().to_string()),
-        "error should name the config file path: {rendered}"
-    );
-}
-
-#[test]
-fn load_strict_over_syntactically_invalid_toml_retains_the_parse_position() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.toml");
-    // A missing closing bracket is a genuine TOML syntax error, not merely a
-    // type mismatch, so toml_edit's own parser reports a line/column.
-    std::fs::write(&path, "[update\ncheck = true\n").unwrap();
-    let _guard = redirect_user_config(path.clone());
-
-    let err = UserConfig::load_strict().unwrap_err();
-    let rendered = format!("{err:?}");
-    assert!(
-        rendered.contains(&path.display().to_string()),
-        "error should name the config file path: {rendered}"
-    );
-    assert!(
-        rendered.to_lowercase().contains("line"),
-        "error should retain toml_edit's parse position: {rendered}"
-    );
-}
-
-#[test]
-fn set_in_creates_an_absent_section() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.toml");
-    // File does not exist yet - `set_in` creates it and the section.
-
-    set_in(
-        &path,
-        spec("context.ceiling_tokens").unwrap(),
-        toml_edit::Value::from(70000_i64),
-    )
-    .unwrap();
-
-    let config = parse_document(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(config.context_ceiling_tokens(), 70000);
 }

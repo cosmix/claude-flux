@@ -12,6 +12,18 @@ pub const CODEX_IMPLEMENTER_MODEL_LUNA: &str = "gpt-5.6-luna";
 /// Reasoning effort used for Codex implementation runs.
 pub const CODEX_IMPLEMENTER_EFFORT: &str = "xhigh";
 
+/// Codex models `loom pressure` accepts. Kept in step with the forwarding
+/// hooks' allowlist (hooks/codex-forward.sh).
+pub const CODEX_MODELS: &[&str] = &[
+    "gpt-6-astra",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+];
+
+/// Codex model the pressure run defaults to.
+pub const DEFAULT_PRESSURE_CODEX_MODEL: &str = "gpt-5.6-sol";
+
 /// Paths the codex lane must be able to WRITE from inside the Bash sandbox.
 ///
 /// Codex is a subprocess, not a Claude tool, and it keeps its state outside the

@@ -48,6 +48,37 @@ pub(super) fn get_u32(doc: &DocumentMut, section: &str, field: &str) -> Result<O
     }
 }
 
+/// Extract and validate an enum-typed field against `allowed`, the same
+/// shape as [`get_backend`] but for a registry key whose variants come from a
+/// `&'static [&'static str]` (see [`super::keys::ValueKind::Enum`]) rather
+/// than a fixed Rust enum.
+pub(super) fn get_enum(
+    doc: &DocumentMut,
+    section: &str,
+    field: &str,
+    allowed: &[&str],
+) -> Result<Option<String>> {
+    match section_item(doc, section, field) {
+        None => Ok(None),
+        Some(item) => {
+            let raw = item.as_str().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{section}.{field}: expected a string, found {}",
+                    item.type_name()
+                )
+            })?;
+            if allowed.contains(&raw) {
+                Ok(Some(raw.to_string()))
+            } else {
+                Err(anyhow::anyhow!(
+                    "{section}.{field}: {raw:?} is not one of the expected values: {}",
+                    allowed.join(", ")
+                ))
+            }
+        }
+    }
+}
+
 pub(super) fn get_backend(doc: &DocumentMut) -> Result<Option<SessionBackendKind>> {
     match section_item(doc, "terminal", "backend") {
         None => Ok(None),

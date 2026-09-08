@@ -19,8 +19,8 @@ use clap::{Arg, Command, CommandFactory};
 use std::path::Path;
 
 pub use commands::{
-    complete_commands, complete_flags, complete_model_names, complete_shell_types,
-    complete_subcommands, complete_trigger_types,
+    complete_codex_model_names, complete_commands, complete_flags, complete_model_names,
+    complete_shell_types, complete_subcommands, complete_trigger_types,
 };
 pub use knowledge::{complete_knowledge_files, complete_knowledge_scopes};
 pub use memory::complete_memory_entry_types;
@@ -203,8 +203,12 @@ fn complete_flag_value(
             let results = complete_memory_entry_types(prefix)?;
             Ok(Some(results))
         }
-        "--model" => {
+        "--model" | "--claude-model" | "--address-model" => {
             let results = complete_model_names(prefix)?;
+            Ok(Some(results))
+        }
+        "--codex-model" => {
+            let results = complete_codex_model_names(prefix)?;
             Ok(Some(results))
         }
         "--trigger" => {

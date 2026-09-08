@@ -179,11 +179,35 @@ fn test_complete_shell_types_prefix() {
 
 #[test]
 fn test_complete_model_names_all() {
+    // Pin to the wiring (completer tracks `CLAUDE_MODELS`), not a frozen copy
+    // of the list, so a vocabulary change can't silently desync the two.
     let results = complete_model_names("").unwrap();
-    assert_eq!(results.len(), 3);
-    assert!(results.contains(&"sonnet".to_string()));
-    assert!(results.contains(&"opus".to_string()));
-    assert!(results.contains(&"haiku".to_string()));
+    let expected: Vec<String> = crate::claude::CLAUDE_MODELS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(results, expected);
+    assert!(results.contains(&"fable".to_string()));
+}
+
+#[test]
+fn test_complete_codex_model_names_all() {
+    let results = complete_codex_model_names("").unwrap();
+    let expected: Vec<String> = crate::codex::CODEX_MODELS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(results, expected);
+    assert!(results.contains(&"gpt-6-astra".to_string()));
+}
+
+#[test]
+fn test_complete_codex_model_names_prefix() {
+    let results = complete_codex_model_names("gpt-5.6-").unwrap();
+    assert!(results.contains(&"gpt-5.6-sol".to_string()));
+    assert!(results.contains(&"gpt-5.6-terra".to_string()));
+    assert!(results.contains(&"gpt-5.6-luna".to_string()));
+    assert!(!results.contains(&"gpt-6-astra".to_string()));
 }
 
 #[test]

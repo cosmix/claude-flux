@@ -3,6 +3,13 @@
 use anyhow::{bail, Result};
 use std::path::PathBuf;
 
+/// Claude model aliases `loom pressure` accepts for its foreground steps,
+/// cheapest tier first (mirrors hooks/spawn-guard.sh's tier ranking).
+pub const CLAUDE_MODELS: &[&str] = &["haiku", "sonnet", "opus", "fable"];
+
+/// Claude model both pressure-run steps default to.
+pub const DEFAULT_PRESSURE_CLAUDE_MODEL: &str = "opus";
+
 /// Find the absolute path to the claude binary
 ///
 /// On macOS, spawned terminals don't inherit the parent's PATH, so we need

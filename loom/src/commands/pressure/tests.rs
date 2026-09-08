@@ -151,6 +151,10 @@ fn test_ensure_marker_dir_creates_parent_and_is_idempotent() {
     assert!(marker.parent().unwrap().is_dir());
 }
 
+fn default_models() -> PressureModels {
+    PressureModels::resolve(None, None, None, &crate::user_config::UserConfig::default())
+}
+
 #[test]
 fn test_render_dry_run_shows_real_argv() {
     let report = PathBuf::from("/repo/doc/plans/codex-PLAN-foo.md");
@@ -164,6 +168,7 @@ fn test_render_dry_run_shows_real_argv() {
         repo,
         &marker,
         &codex_log,
+        &default_models(),
     );
     assert!(out.contains("Dry run: 1 round"));
     // The preview must show the REAL argv so it matches what spawns.
@@ -182,16 +187,52 @@ fn test_render_dry_run_shows_real_argv() {
     assert!(out.contains("[parallel]"));
     assert!(out.contains("loom-pressure-codex-1.log"));
     assert!(out.contains(".loom/work/pressure/claude-1.done"));
+    // The resolved model selection is surfaced in the header.
+    assert!(out.contains("Models:                  claude=opus  codex=gpt-5.6-sol  address=opus"));
+}
+
+#[test]
+fn test_render_dry_run_shows_a_non_default_model_selection_per_step() {
+    // A non-default, all-distinct selection must reach the right step's argv -
+    // this is the whole point of three independently-resolved slots.
+    let report = PathBuf::from("/repo/doc/plans/codex-PLAN-foo.md");
+    let repo = Path::new("/repo");
+    let marker = PathBuf::from("/repo/.loom/work/pressure/claude-1.done");
+    let codex_log = PathBuf::from("/tmp/loom-pressure-codex-1.log");
+    let models = PressureModels {
+        claude: "fable".to_string(),
+        codex: "gpt-6-astra".to_string(),
+        address: "sonnet".to_string(),
+    };
+    let out = render_dry_run(
+        1,
+        "doc/plans/PLAN-foo.md",
+        &report,
+        repo,
+        &marker,
+        &codex_log,
+        &models,
+    );
+    assert!(
+        out.contains("Models:                  claude=fable  codex=gpt-6-astra  address=sonnet")
+    );
+    // /pressure step: claude model = fable, codex model = gpt-6-astra.
+    assert!(out.contains("--permission-mode auto --model fable"));
+    assert!(out.contains("-m gpt-6-astra"));
+    // /address step's model is independent of /pressure's — sonnet, not fable.
+    assert!(out.contains("--model sonnet --append-system-prompt"));
 }
 
 #[test]
 fn test_claude_args_shape() {
     let marker = PathBuf::from("/repo/.loom/work/pressure/claude-1.done");
-    let args = claude_args("/pressure doc/plans/PLAN-foo.md", &marker);
+    let args = claude_args("/pressure doc/plans/PLAN-foo.md", &marker, "opus");
     // Interactive (no -p): keeps subscription billing. Auto permission mode.
     assert!(!args.iter().any(|a| a == "-p" || a == "--print"));
     assert_eq!(args[0], "--permission-mode");
     assert_eq!(args[1], "auto");
+    assert_eq!(args[2], "--model");
+    assert_eq!(args[3], "opus");
     // The slash invocation is the final positional argument.
     assert_eq!(args.last().unwrap(), "/pressure doc/plans/PLAN-foo.md");
     // The appended system prompt names the marker so the driver can auto-close.

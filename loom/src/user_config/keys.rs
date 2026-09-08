@@ -2,10 +2,9 @@
 //!
 //! The single validator for `loom config -k <key> [<value>]`, and the surface
 //! a later TUI's commit path and a later update-check lookup share. Deliberately
-//! small: exactly four keys exist today, and a new one is a new [`KeySpec`] in
-//! [`KEYS`] plus a matching field on [`crate::user_config::UserConfig`] — the
-//! registry names and validates a key, [`crate::user_config::UserConfig`] owns
-//! what it resolves to.
+//! small: a new key is a new [`KeySpec`] in [`KEYS`] plus a matching field on
+//! [`crate::user_config::UserConfig`] — the registry names and validates a
+//! key, [`crate::user_config::UserConfig`] owns what it resolves to.
 
 use anyhow::{bail, Result};
 
@@ -69,6 +68,27 @@ pub const KEYS: &[KeySpec] = &[
         field: "ceiling_tokens",
         kind: ValueKind::U32,
         help: "Default context ceiling, in resident tokens, for a stage's agent session",
+    },
+    KeySpec {
+        name: "pressure.claude_model",
+        section: "pressure",
+        field: "claude_model",
+        kind: ValueKind::Enum(crate::claude::CLAUDE_MODELS),
+        help: "Claude model loom pressure uses for the /pressure step",
+    },
+    KeySpec {
+        name: "pressure.codex_model",
+        section: "pressure",
+        field: "codex_model",
+        kind: ValueKind::Enum(crate::codex::CODEX_MODELS),
+        help: "Codex model loom pressure uses for the $pressure step",
+    },
+    KeySpec {
+        name: "pressure.address_model",
+        section: "pressure",
+        field: "address_model",
+        kind: ValueKind::Enum(crate::claude::CLAUDE_MODELS),
+        help: "Claude model loom pressure uses for the /address reconciliation step",
     },
 ];
 

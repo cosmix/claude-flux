@@ -4,7 +4,8 @@
 //! `<repo>/.loom/work/config.toml` (see [`crate::fs::work_dir::Config`], the
 //! `.loom/work/` type). This file holds settings that make sense per operator
 //! rather than per plan: whether loom checks for updates, which terminal
-//! backend `loom run` defaults to, and the default context ceiling. `loom
+//! backend `loom run` defaults to, the default context ceiling, and the
+//! Claude/Codex models `loom pressure` spawns absent a CLI flag. `loom
 //! config` (`crate::commands::config`) is the only writer; every other
 //! consumer reads through [`UserConfig::load`], which never fails.
 //!
@@ -20,17 +21,19 @@
 //!
 //! # Writes are locked and atomic
 //!
-//! [`set`] goes through [`crate::fs::locking::locked_update`], which holds the
-//! exclusive parent-directory lock across the whole read-modify-write,
-//! presents a missing file as an empty string, creates `~/.loom/` as a side
-//! effect of locking, and finishes with a crash-atomic temp+rename write. This
-//! is the ONLY path that may create `~/.loom/`. loom is invoked concurrently
-//! from shell hooks, so this race is real.
+//! [`set`] and [`unset`] (both in `write.rs`) go through
+//! [`crate::fs::locking::locked_update`], which holds the exclusive
+//! parent-directory lock across the whole read-modify-write, presents a missing
+//! file as an empty string, creates `~/.loom/` as a side effect of locking, and
+//! finishes with a crash-atomic temp+rename write. Those are the ONLY paths
+//! that may create `~/.loom/`. loom is invoked concurrently from shell hooks,
+//! so this race is real.
 //!
 //! # Hermeticity: two different seams, two different scopes
 //!
 //! [`UserConfig::load`]/[`UserConfig::load_strict`] resolve their path
-//! through `read_config_path`, and [`set`] through `write_config_path`.
+//! through `read_config_path`, and [`set`]/[`unset`] through
+//! `write_config_path`.
 //! Those two are private, so these are plain code spans: a bracketed link
 //! would resolve only under `--document-private-items`, which the docs gate
 //! does not pass.
@@ -52,7 +55,7 @@
 //! `LOOM_HOME` instead (see `config_path`'s doc comment and
 //! `loom/tests/e2e/daemon_config/mod.rs::isolate_user_config`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use toml_edit::DocumentMut;
@@ -65,6 +68,14 @@ pub mod keys;
 use keys::KeySpec;
 
 mod parse;
+mod render;
+mod write;
+
+pub use write::{set, unset};
+/// The path-explicit write seams, for tests that must not touch a real
+/// `~/.loom/config.toml`. `set`/`unset` are the production entry points.
+#[cfg(test)]
+pub(crate) use write::{set_in, unset_in};
 
 #[cfg(test)]
 mod redirect;
@@ -115,6 +126,9 @@ pub struct UserConfig {
     update_check_interval_hours: Option<u32>,
     terminal_backend: Option<SessionBackendKind>,
     context_ceiling_tokens: Option<u32>,
+    pressure_claude_model: Option<String>,
+    pressure_codex_model: Option<String>,
+    pressure_address_model: Option<String>,
 }
 
 /// The absolute path to `~/.loom/config.toml`.
@@ -161,8 +175,8 @@ fn read_config_path() -> Result<Option<PathBuf>> {
     Ok(redirect::test_redirect())
 }
 
-/// The file [`set`] writes to. Unlike the read side there is no "absent"
-/// case: a set with nowhere to write is an error. Shares the same
+/// The file [`set`] and [`unset`] write to. Unlike the read side there is no
+/// "absent" case: a write with nowhere to go is an error. Shares the same
 /// thread-local redirect as [`read_config_path`], so a test installing one
 /// redirect can do a real set/read round trip against a single temp path.
 #[cfg(not(test))]
@@ -248,49 +262,29 @@ impl UserConfig {
         self.context_ceiling_tokens
     }
 
-    /// The rendered value and origin for `spec`, for `loom config --list` and
-    /// `loom config -k <key>`.
-    pub fn value_of(&self, spec: &KeySpec) -> (String, Origin) {
-        match spec.name {
-            "update.check" => (
-                self.update_check().to_string(),
-                self.origin_of(self.update_check),
-            ),
-            "update.check_interval_hours" => (
-                self.update_check_interval_hours().to_string(),
-                self.origin_of(self.update_check_interval_hours),
-            ),
-            "terminal.backend" => (
-                self.terminal_backend().to_string(),
-                self.origin_of(self.terminal_backend),
-            ),
-            "context.ceiling_tokens" => (
-                self.context_ceiling_tokens().to_string(),
-                self.origin_of(self.context_ceiling_tokens),
-            ),
-            other => unreachable!("value_of: {other} is not in keys::KEYS"),
-        }
+    /// Claude model `loom pressure` uses for the `/pressure` step, absent a
+    /// `--claude-model` flag. Default: [`crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL`].
+    pub fn pressure_claude_model(&self) -> &str {
+        self.pressure_claude_model
+            .as_deref()
+            .unwrap_or(crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL)
     }
 
-    fn origin_of<T>(&self, set: Option<T>) -> Origin {
-        if set.is_some() {
-            Origin::Set
-        } else {
-            Origin::Default
-        }
+    /// Codex model `loom pressure` uses for the `$pressure` step, absent a
+    /// `--codex-model` flag. Default: [`crate::codex::DEFAULT_PRESSURE_CODEX_MODEL`].
+    pub fn pressure_codex_model(&self) -> &str {
+        self.pressure_codex_model
+            .as_deref()
+            .unwrap_or(crate::codex::DEFAULT_PRESSURE_CODEX_MODEL)
     }
 
-    /// The fully resolved config (every key, its effective value) as TOML,
-    /// sections in `[context]`, `[terminal]`, `[update]` order — the shape
-    /// `loom config --print` renders.
-    pub fn to_toml_string(&self) -> String {
-        format!(
-            "[context]\nceiling_tokens = {}\n\n[terminal]\nbackend = \"{}\"\n\n[update]\ncheck = {}\ncheck_interval_hours = {}\n",
-            self.context_ceiling_tokens(),
-            self.terminal_backend(),
-            self.update_check(),
-            self.update_check_interval_hours(),
-        )
+    /// Claude model `loom pressure` uses for the `/address` reconciliation
+    /// step, absent an `--address-model` flag. Default:
+    /// [`crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL`].
+    pub fn pressure_address_model(&self) -> &str {
+        self.pressure_address_model
+            .as_deref()
+            .unwrap_or(crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL)
     }
 }
 
@@ -305,61 +299,23 @@ pub(crate) fn parse_document(text: &str) -> Result<UserConfig> {
         update_check_interval_hours: parse::get_u32(&doc, "update", "check_interval_hours")?,
         terminal_backend: parse::get_backend(&doc)?,
         context_ceiling_tokens: parse::get_u32(&doc, "context", "ceiling_tokens")?,
+        pressure_claude_model: parse::get_enum(
+            &doc,
+            "pressure",
+            "claude_model",
+            crate::claude::CLAUDE_MODELS,
+        )?,
+        pressure_codex_model: parse::get_enum(
+            &doc,
+            "pressure",
+            "codex_model",
+            crate::codex::CODEX_MODELS,
+        )?,
+        pressure_address_model: parse::get_enum(
+            &doc,
+            "pressure",
+            "address_model",
+            crate::claude::CLAUDE_MODELS,
+        )?,
     })
-}
-
-/// Read-modify-write `spec`'s section/field in `~/.loom/config.toml`,
-/// creating the section if absent. Comments and unrelated keys are preserved
-/// verbatim (`toml_edit::DocumentMut`). This is the only path that may create
-/// `~/.loom/` — see the module docs on why the read path must not.
-///
-/// Returns the rendered value `spec` resolved to just before and just after
-/// the write, both captured inside the same locked read-modify-write. A
-/// caller that instead re-read the config before and after this call
-/// (`commands::config::set_key` used to) could report a value written by a
-/// concurrent `set` that raced it — `loom` is invoked concurrently from shell
-/// hooks, so that race is real.
-pub fn set(spec: &KeySpec, value: toml_edit::Value) -> Result<(String, String)> {
-    set_in(&write_config_path()?, spec, value)
-}
-
-/// [`set`] factored over an explicit path so tests can exercise the
-/// read-modify-write behavior against a temp file instead of the real
-/// `~/.loom/config.toml`.
-pub(crate) fn set_in(
-    path: &Path,
-    spec: &KeySpec,
-    value: toml_edit::Value,
-) -> Result<(String, String)> {
-    let mut old_new: Option<(String, String)> = None;
-    crate::fs::locking::locked_update(path, |existing| {
-        let old = parse_document(&existing)
-            .unwrap_or_default()
-            .value_of(spec)
-            .0;
-
-        let mut doc: DocumentMut = existing.parse().with_context(|| {
-            format!(
-                "refusing to rewrite unparseable user config at {}",
-                path.display()
-            )
-        })?;
-        let table = doc
-            .entry(spec.section)
-            .or_insert(toml_edit::table())
-            .as_table_like_mut()
-            .ok_or_else(|| {
-                anyhow::anyhow!("[{}] in {} is not a table", spec.section, path.display())
-            })?;
-        table.insert(spec.field, toml_edit::Item::Value(value));
-
-        let new = parse_document(&doc.to_string())
-            .unwrap_or_default()
-            .value_of(spec)
-            .0;
-        old_new = Some((old, new));
-        Ok(doc.to_string())
-    })?;
-    old_new
-        .ok_or_else(|| anyhow::anyhow!("set_in: locked_update returned without a captured value"))
 }

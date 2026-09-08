@@ -278,11 +278,7 @@ pub fn dispatch(command: Commands) -> Result<()> {
         Commands::Map { args } => map::execute(args),
         Commands::Subagents { args } => subagents::execute(args),
         Commands::Usage { args } => usage::execute(args),
-        Commands::Pressure {
-            plan,
-            rounds,
-            dry_run,
-        } => pressure::execute(plan, rounds, dry_run),
+        Commands::Pressure(args) => pressure::execute(args),
         Commands::Stop => stop::execute(),
         Commands::Diagnose { stage_id } => diagnose::execute(&stage_id),
         Commands::Plan { command } => dispatch_plan(command),

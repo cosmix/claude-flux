@@ -60,35 +60,34 @@ pub(super) fn completion_instruction(marker: &Path) -> String {
 
 /// argv (after the binary) for a Claude spawn. `slash` is the full positional
 /// slash invocation; `marker` is injected into the appended system prompt so
-/// the agent can signal completion.
-pub(super) fn claude_args(slash: &str, marker: &Path) -> Vec<String> {
+/// the agent can signal completion; `model` is the resolved
+/// [`super::models::PressureModels`] slot for this step.
+pub(super) fn claude_args(slash: &str, marker: &Path, model: &str) -> Vec<String> {
     vec![
         "--permission-mode".to_string(),
         "auto".to_string(),
         "--model".to_string(),
-        "opus".to_string(),
+        model.to_string(),
         "--append-system-prompt".to_string(),
         completion_instruction(marker),
         slash.to_string(),
     ]
 }
 
-/// Model pinned for Codex pressure-test runs, independent of the user's
-/// `~/.codex/config.toml` defaults.
-pub(super) const CODEX_MODEL: &str = "gpt-5.6-sol";
 /// Reasoning effort for Codex pressure-test runs. No dedicated CLI flag
 /// exists, so it is delivered via `-c model_reasoning_effort=<value>`.
 pub(super) const CODEX_REASONING_EFFORT: &str = "xhigh";
 
 /// argv (after the binary) for a Codex spawn. `skill` is the full positional
-/// skill invocation, e.g. `$pressure doc/plans/PLAN-foo.md`.
-pub(super) fn codex_args(repo_root: &Path, skill: &str) -> Vec<String> {
+/// skill invocation, e.g. `$pressure doc/plans/PLAN-foo.md`; `model` is the
+/// resolved [`super::models::PressureModels`] slot for this step.
+pub(super) fn codex_args(repo_root: &Path, skill: &str, model: &str) -> Vec<String> {
     vec![
         "exec".to_string(),
         "--sandbox".to_string(),
         "workspace-write".to_string(),
         "-m".to_string(),
-        CODEX_MODEL.to_string(),
+        model.to_string(),
         "-c".to_string(),
         format!("model_reasoning_effort={CODEX_REASONING_EFFORT}"),
         "-C".to_string(),
@@ -137,6 +136,7 @@ pub(super) fn run_claude_foreground(
     repo_root: &Path,
     slash: &str,
     marker: &Path,
+    model: &str,
 ) -> Result<ClaudeOutcome> {
     // Clear any stale marker from a previous step before spawning. The parent
     // dir (`.loom/work/pressure/`) may not exist yet in a repo without `loom init`;
@@ -145,7 +145,7 @@ pub(super) fn run_claude_foreground(
     delete_file(marker)?;
 
     let mut cmd = Command::new(claude_path);
-    cmd.args(claude_args(slash, marker));
+    cmd.args(claude_args(slash, marker, model));
     cmd.env(AGENT_TEAMS_ENV, "1");
     cmd.current_dir(repo_root);
     cmd.stdin(Stdio::inherit());
@@ -160,20 +160,7 @@ pub(super) fn run_claude_foreground(
         }
         // The agent signalled completion → terminate the idle session.
         if marker.exists() {
-            send_sigterm(child.id());
-            let grace_polls = TERM_GRACE_MS / POLL_INTERVAL_MS;
-            let mut reaped = false;
-            for _ in 0..grace_polls {
-                thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-                if child.try_wait().context("failed to poll claude")?.is_some() {
-                    reaped = true;
-                    break;
-                }
-            }
-            if !reaped {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+            terminate_idle_session(&mut child)?;
             break ClaudeOutcome::Completed;
         }
         thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -181,6 +168,29 @@ pub(super) fn run_claude_foreground(
 
     delete_file(marker)?;
     Ok(outcome)
+}
+
+/// Terminate an idle child: SIGTERM, then poll for up to [`TERM_GRACE_MS`] for
+/// it to exit on its own, falling back to SIGKILL — mirroring how the loom
+/// daemon terminates a session whose stage has completed. Split out of
+/// [`run_claude_foreground`] purely to keep that function under the
+/// maintainability line limit.
+fn terminate_idle_session(child: &mut Child) -> Result<()> {
+    send_sigterm(child.id());
+    let grace_polls = TERM_GRACE_MS / POLL_INTERVAL_MS;
+    let mut reaped = false;
+    for _ in 0..grace_polls {
+        thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+        if child.try_wait().context("failed to poll claude")?.is_some() {
+            reaped = true;
+            break;
+        }
+    }
+    if !reaped {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    Ok(())
 }
 
 /// Spawn `codex exec` in the background with its (noisy) output captured to
@@ -191,6 +201,7 @@ pub(super) fn spawn_codex_background(
     repo_root: &Path,
     skill: &str,
     log_path: &Path,
+    model: &str,
 ) -> Result<Child> {
     let log = std::fs::File::create(log_path)
         .with_context(|| format!("failed to create codex log {}", log_path.display()))?;
@@ -198,7 +209,7 @@ pub(super) fn spawn_codex_background(
         .try_clone()
         .context("failed to clone codex log handle")?;
     let mut cmd = Command::new(codex_path);
-    cmd.args(codex_args(repo_root, skill));
+    cmd.args(codex_args(repo_root, skill, model));
     cmd.current_dir(repo_root);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::from(log));
