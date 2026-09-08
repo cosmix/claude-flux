@@ -39,7 +39,7 @@
 | [skill-catalog](architecture/skill-catalog.md) | The two skill roots, why 53 skills live outside `~/.claude/skills`, and the install/hook-exemption… | 103 |
 | [source-graph](architecture/source-graph.md) | What the source graph is and is not, its honesty contract, extractor trait, node/edge and cache… | 244 |
 | [status-data-model](architecture/status-data-model.md) | Where each field shown by `loom status` (static, compact, and `--live`) comes from, and what the… | 176 |
-| [terminal-backends](architecture/terminal-backends.md) | The native and tmux session backends behind one dispatcher, lane resolution, and session-recorded… | 251 |
+| [terminal-backends](architecture/terminal-backends.md) | The native and tmux session backends behind one dispatcher, lane resolution, and session-recorded… | 262 |
 | [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — an HTTP/WebSocket server on `127.0.0.1` that serves an embedded React… | 47 |
 
 ### entry-points

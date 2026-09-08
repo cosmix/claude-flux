@@ -32,10 +32,21 @@ per 5s monitor tick.
   `TerminalConfig` (`models/session/types.rs:85-89`) holds one `SessionBackendKind`
   (`types.rs:62-70`, `#[serde(rename_all = "lowercase")]`, `#[default] Native`).
   Helpers `read_terminal_config` / `write_terminal_config` (`fs/work_dir.rs:509-516`); a missing
-  section yields the default. Written at init by `commands/init/plan_setup.rs:179-182`.
+  section falls through to `~/.loom/config.toml`'s `terminal.backend`, THEN the built-in default —
+  absence is the inheritance channel, not a synonym for native. Written at init by
+  `commands/init/plan_setup.rs`, and only when someone chose explicitly.
 - **CLI:** `--backend <native|tmux>` on both `loom init` (skips the interactive prompt) and
   `loom run` / `loom run --foreground` (persists to `[terminal]`). `loom run`'s
   `resolve_backend_flag` (`commands/run/mod.rs:118-158`) is shared by both run paths.
+- **`loom init`'s prompt inherits** (`commands/init/backend.rs`): pressing Enter returns `None`, so
+  no `[terminal]` section is written and the repo follows the user config live; typing `native` or
+  `tmux` pins that value into the workspace. Before this, the prompt hardcoded `native` in three
+  places — its label, its empty-input arm and its EOF arm — so an operator with
+  `terminal.backend = "tmux"` in `~/.loom/config.toml` was shown `(native)`, pressed Enter, and got
+  native written into the workspace, shadowing their global preference for the life of the repo. The
+  user-scope key was dead for every interactively-initialised repo. The tmux-missing-from-PATH
+  warning keys off `effective_backend` (explicit choice, else the user config) precisely because an
+  inherited tmux backend now arrives as `None`.
 - **Per-spawn resolution** — `SessionBackend::resolve_lane` (`backend.rs:125-128`) picks `Native` if
   the fallback marker exists, else the configured kind if `which tmux` succeeds, else `Native`.
 

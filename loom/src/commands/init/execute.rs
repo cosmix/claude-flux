@@ -5,12 +5,11 @@ use crate::fs::permissions::{ensure_loom_permissions, migrate_legacy_trust};
 use crate::fs::work_dir::WorkDir;
 use crate::fs::work_integrity::validate_work_dir_state;
 use crate::git::install_pre_commit_hook;
-use crate::models::session::SessionBackendKind;
 use anyhow::{bail, Result};
 use colored::Colorize;
-use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use super::backend::resolve_backend_choice;
 use super::cleanup::{
     cleanup_orphaned_sessions, cleanup_work_directory, cleanup_worktrees_directory,
     prune_stale_worktrees, remove_work_directory_on_failure, SessionReapMode,
@@ -63,8 +62,9 @@ impl Drop for InitGuard {
 /// # Arguments
 /// * `plan_path` - Optional path to a plan file to initialize with
 /// * `clean` - If true, clean up stale resources before initialization
-/// * `backend` - Terminal backend for sessions (native|tmux); `None` prompts
-///   interactively on a TTY, or defaults to native otherwise
+/// * `backend` - Terminal backend for sessions (native|tmux); `None` defers
+///   to `~/.loom/config.toml` (a TTY prompt lets Enter inherit that value or
+///   pin a typed choice)
 /// * `no_repair` - Skip the automatic workspace repair pass
 pub fn execute(
     plan_path: Option<PathBuf>,
@@ -253,61 +253,6 @@ pub(super) fn startup_repair_lines(applied: &[AppliedRepair]) -> Vec<String> {
         .iter()
         .map(|repair| format!("  {} Repaired: {}", "✓".green().bold(), repair.description))
         .collect()
-}
-
-/// Resolve the terminal backend choice for `loom init`.
-///
-/// Precedence: an explicit `--backend` flag always wins (clap's
-/// `value_parser` already constrains it to "native"/"tmux"), yielding
-/// `Some(kind)`. Otherwise, on an interactive terminal, prompt the operator,
-/// also yielding `Some(kind)`. Otherwise (programmatic init, non-TTY) yield
-/// `None`: nobody chose a backend, so `plan_setup` leaves the workspace
-/// `[terminal]` section out of `config.toml` entirely, letting
-/// `~/.loom/config.toml`'s `terminal.backend` — then the built-in default —
-/// decide at read time (see `fs::work_dir::read_terminal_config`).
-fn resolve_backend_choice(flag: Option<String>) -> Result<Option<SessionBackendKind>> {
-    let kind = if let Some(value) = flag {
-        Some(match value.as_str() {
-            "native" => SessionBackendKind::Native,
-            "tmux" => SessionBackendKind::Tmux,
-            other => bail!("Invalid terminal backend: {other}"),
-        })
-    } else if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        Some(prompt_backend_choice()?)
-    } else {
-        None
-    };
-
-    if kind == Some(SessionBackendKind::Tmux) && which::which("tmux").is_err() {
-        eprintln!(
-            "  {} tmux backend selected but tmux was not found on PATH - install tmux \
-             before running `loom run`, or re-run `loom init` with `--backend native`",
-            "!".yellow().bold()
-        );
-    }
-
-    Ok(kind)
-}
-
-/// Interactively prompt for the terminal backend, re-prompting on invalid input.
-fn prompt_backend_choice() -> Result<SessionBackendKind> {
-    loop {
-        print!("Terminal backend for sessions [native/tmux] (native): ");
-        std::io::stdout().flush().ok();
-
-        let mut response = String::new();
-        let bytes_read = std::io::stdin().read_line(&mut response)?;
-        if bytes_read == 0 {
-            // EOF - default to native.
-            return Ok(SessionBackendKind::Native);
-        }
-
-        match response.trim().to_ascii_lowercase().as_str() {
-            "" | "native" => return Ok(SessionBackendKind::Native),
-            "tmux" => return Ok(SessionBackendKind::Tmux),
-            _ => println!("  Please enter 'native' or 'tmux'."),
-        }
-    }
 }
 
 /// Lay out the state directory, either creating it or adopting a stateless
