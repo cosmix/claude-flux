@@ -17,6 +17,7 @@ pub mod sessions;
 pub mod tmux_backend;
 pub mod tmux_reconcile;
 pub mod uncommitted_changes;
+pub mod web_terminal;
 
 pub use fixtures::*;
 pub use helpers::*;

@@ -90,6 +90,8 @@ jobs:
       - name: Run tests
         working-directory: loom
         run: ${{ matrix.test_cmd }}
+        env:
+          LOOM_E2E_REQUIRE_TMUX: ${{ matrix.name == 'linux' && '1' || '' }}
 
   clippy:
     name: Clippy
@@ -315,3 +317,6 @@ jobs:
 
       - name: Run the web dashboard smoke test
         run: ./scripts/smoke-web-dashboard.sh loom/target/debug/loom
+
+      - name: Run the web terminal smoke test
+        run: ./scripts/smoke-web-terminal.sh loom/target/debug/loom
