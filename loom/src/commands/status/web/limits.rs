@@ -21,6 +21,9 @@ pub(super) const MAX_CONNECTIONS: usize = 64;
 /// reserve that non-upgrade requests always draw on.
 pub(super) const MAX_WEBSOCKETS: usize = 48;
 
+/// Browser terminals allowed in flight at once.
+pub(super) const MAX_TERMINALS: usize = 8;
+
 /// The two lanes a connection can occupy a slot in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Lane {
@@ -28,6 +31,8 @@ pub(super) enum Lane {
     Connection,
     /// Held additionally, for the life of the subscription, by `/ws`.
     WebSocket,
+    /// Held additionally by one browser terminal.
+    Terminal,
 }
 
 impl Lane {
@@ -35,6 +40,7 @@ impl Lane {
         match self {
             Self::Connection => MAX_CONNECTIONS,
             Self::WebSocket => MAX_WEBSOCKETS,
+            Self::Terminal => MAX_TERMINALS,
         }
     }
 
@@ -42,6 +48,7 @@ impl Lane {
         match self {
             Self::Connection => &limits.connections,
             Self::WebSocket => &limits.websockets,
+            Self::Terminal => &limits.terminals,
         }
     }
 }
@@ -51,12 +58,27 @@ impl Lane {
 pub(super) struct Limits {
     connections: AtomicUsize,
     websockets: AtomicUsize,
+    terminals: AtomicUsize,
 }
 
 impl Limits {
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
+
+    pub(super) fn connection_count(&self) -> usize {
+        self.connections.load(Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    pub(super) fn terminal_count(&self) -> usize {
+        self.terminals.load(Ordering::SeqCst)
+    }
+}
+
+/// Reserve a terminal lane slot for a browser terminal.
+pub(super) fn acquire_terminal_slot(limits: &Arc<Limits>) -> Option<Slot> {
+    Slot::acquire(limits, Lane::Terminal)
 }
 
 /// A reserved slot in one lane, released when the holder is dropped.

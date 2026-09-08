@@ -33,6 +33,10 @@ they leave. Click a stage to trace its thread, double-click (or press Enter, or
 use the corner button) to open it in a dialog; `?stage=<id>` on any route opens
 the same dialog. `/ledger` is the TUI's table.
 
+The terminal view requires `loom status --web --terminals` and a tmux-backed
+session. It supports read-only viewing and interactive control; its `@xterm/*`
+emulator chunk is lazy-loaded only when a terminal is opened.
+
 ## Styling
 
 The palette is aurora-ui's OKLCH token sheet, vendored under `src/aurora-ui/`

@@ -8,7 +8,11 @@ if (!("ResizeObserver" in window)) {
     unobserve() {}
     disconnect() {}
   }
-  Object.defineProperty(window, "ResizeObserver", { value: ResizeObserverStub });
+  Object.defineProperty(window, "ResizeObserver", {
+    configurable: true,
+    writable: true,
+    value: ResizeObserverStub,
+  });
 }
 if (typeof window.matchMedia !== "function") {
   // The theme atoms read the OS colour scheme at import; motion hooks read

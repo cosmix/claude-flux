@@ -4,11 +4,19 @@ import fixtureJson from "@/api/fixtures/snapshot.json";
 import { snapshotSchema, stageStatusSchema } from "@/api/schema";
 
 describe("snapshot schema", () => {
-  it("parses the shared fixture", () => {
+  it("the fixture parses and terminals is false", () => {
     const snapshot = snapshotSchema.parse(fixtureJson);
 
     expect(snapshot.status.stages).toHaveLength(7);
     expect(stageStatusSchema.options).toHaveLength(13);
+    expect(snapshot.terminals).toBe(false);
+  });
+
+  it("a frame without terminals fails to parse", () => {
+    const withoutTerminals = structuredClone(fixtureJson) as Record<string, unknown>;
+    delete withoutTerminals.terminals;
+
+    expect(snapshotSchema.safeParse(withoutTerminals).success).toBe(false);
   });
 
   it("rejects an unknown stage status", () => {

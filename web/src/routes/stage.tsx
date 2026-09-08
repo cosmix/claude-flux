@@ -42,7 +42,7 @@ function BackLink() {
   );
 }
 
-function NotFound({ id }: { id: string }) {
+export function NotFound({ id }: { id: string }) {
   return (
     <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-4 py-5 sm:px-6">
       <BackLink />

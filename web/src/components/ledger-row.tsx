@@ -5,7 +5,9 @@ import type { StageSummary } from "@/api/schema";
 import { ActivityRoundel } from "@/components/activity-roundel";
 import { ContextMeter } from "@/components/context-meter";
 import { stageHref } from "@/components/stage-href";
+import { useOpenTerminal } from "@/components/stage-modal";
 import { StateBadge, toneClass } from "@/components/state-badge";
+import { TerminalGlyph } from "@/components/terminal/terminal-glyph";
 import { Badge } from "@/components/ui/badge";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -85,6 +87,7 @@ function Models({ model, execution }: { model: string; execution: string[] }) {
 }
 
 function StageName({ stage, level, href }: { stage: StageSummary; level: number; href: string }) {
+  const openTerminal = useOpenTerminal();
   return (
     <div className="flex flex-col gap-0.5" style={{ paddingLeft: `${level * 1.25}rem` }}>
       <span className="flex items-center gap-2">
@@ -100,6 +103,7 @@ function StageName({ stage, level, href }: { stage: StageSummary; level: number;
         >
           {stage.name}
         </Link>
+        <TerminalGlyph stage={stage} onOpen={openTerminal} />
         {stage.held && (
           <Badge variant="outline" className={cn("h-4 px-1.5", toneClass("warning"))}>
             held

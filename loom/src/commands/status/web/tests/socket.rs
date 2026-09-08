@@ -283,7 +283,7 @@ fn broadcaster_publishes_file_snapshot_without_daemon() {
     }
     let (_temp, base) = workspace();
     let running = Arc::new(AtomicBool::new(true));
-    let broadcaster = Broadcaster::spawn(base, running.clone());
+    let broadcaster = Broadcaster::spawn(base, running.clone(), false);
     let frame = broadcaster
         .subscribe()
         .recv_timeout(Duration::from_secs(5))

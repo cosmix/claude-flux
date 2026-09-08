@@ -13,7 +13,9 @@ use super::config_api;
 use super::head::complete as complete_head;
 use super::http::{self, RequestHead};
 use super::limits::{Lane, Limits, Slot};
+use super::terminal;
 use super::ws;
+use super::TerminalLane;
 
 /// How long a single peek may block, bounding how long a connection thread
 /// ignores a shutdown request.
@@ -75,6 +77,7 @@ pub(super) fn handle(
     base: &Path,
     running: &AtomicBool,
     limits: &Arc<Limits>,
+    lane: Option<&TerminalLane>,
     _slot: Slot,
 ) {
     if stream.set_read_timeout(Some(PEEK_TIMEOUT)).is_err()
@@ -91,10 +94,13 @@ pub(super) fn handle(
         fail(&mut stream, 403, "Forbidden", b"host not allowed");
         return;
     }
-    if peeked.path == "/ws" && peeked.upgrade_websocket {
-        handle_websocket_upgrade(stream, &peeked, broadcaster, running, limits);
+    if bootstrap_terminal_token(&mut stream, &peeked, lane) {
         return;
     }
+    let Some(mut stream) = route_upgrade(stream, &peeked, broadcaster, base, running, limits, lane)
+    else {
+        return;
+    };
 
     let Ok((head, body_prefix)) = http::read_head(&mut stream) else {
         fail(&mut stream, 400, "Bad Request", b"bad request");
@@ -111,6 +117,51 @@ pub(super) fn handle(
         }
         _ => fail(&mut stream, 405, "Method Not Allowed", b"GET required"),
     }
+}
+
+/// Route an already-peeked upgrade request to the terminal or dashboard
+/// WebSocket lane. Returns the stream back when `peeked` was not an upgrade
+/// after all, so the caller can fall through to ordinary HTTP routing.
+fn route_upgrade(
+    stream: TcpStream,
+    peeked: &RequestHead,
+    broadcaster: &Broadcaster,
+    base: &Path,
+    running: &AtomicBool,
+    limits: &Arc<Limits>,
+    lane: Option<&TerminalLane>,
+) -> Option<TcpStream> {
+    if peeked.upgrade_websocket && peeked.path.starts_with("/ws/terminal/") {
+        terminal::handle_upgrade(stream, peeked, base, lane, running, limits);
+        return None;
+    }
+    if peeked.path == "/ws" && peeked.upgrade_websocket {
+        handle_websocket_upgrade(stream, peeked, broadcaster, running, limits);
+        return None;
+    }
+    Some(stream)
+}
+
+fn bootstrap_terminal_token(
+    stream: &mut TcpStream,
+    head: &RequestHead,
+    lane: Option<&TerminalLane>,
+) -> bool {
+    if head.path != "/" || !matches!(head.method.as_str(), "GET" | "HEAD") {
+        return false;
+    }
+    let Some(lane) = lane else {
+        return false;
+    };
+    let Some(cookie) = lane.bootstrap_cookie(head.query.as_deref()) else {
+        return false;
+    };
+    let Some(cookie) = cookie else {
+        fail(stream, 403, "Forbidden", b"token not accepted");
+        return true;
+    };
+    let _ = http::write_redirect(stream, "/", Some(&cookie));
+    true
 }
 
 /// Upgrade an accepted `/ws` connection, or reject it if the origin check or
@@ -237,7 +288,7 @@ fn serve_api(stream: &mut TcpStream, head: &RequestHead, broadcaster: &Broadcast
         .latest()
         .map(|frame| (*frame).clone())
         .map(Ok)
-        .unwrap_or_else(|| broadcast::fresh_file_snapshot(base))
+        .unwrap_or_else(|| broadcast::fresh_file_snapshot(base, broadcaster.terminals()))
     {
         Ok(frame) => respond(
             stream,
@@ -321,7 +372,8 @@ pub(super) fn route(path: &str) -> Route {
         Route::Api
     } else if path == "/api/config" {
         Route::Config
-    } else if path.starts_with("/assets/") || path.starts_with("/api/") {
+    } else if path.starts_with("/assets/") || path.starts_with("/api/") || path.starts_with("/ws/")
+    {
         Route::Missing
     } else {
         Route::Spa

@@ -1,7 +1,9 @@
 //! Shared fixtures for the dashboard's connection-handling tests, split into
 //! [`socket`] (tests that open a real loopback connection), [`errors`] (the
-//! self-written HTTP error responses, also over loopback) and [`pure`] (tests
-//! that call the routing, parsing, and classification functions directly).
+//! self-written HTTP error responses, also over loopback), [`terminal`] (the
+//! terminal upgrade's refusal gates and the cookie/token bootstrap flow) and
+//! [`pure`] (tests that call the routing, parsing, and classification
+//! functions directly).
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -25,6 +27,8 @@ mod ports;
 mod pure;
 #[path = "tests/socket.rs"]
 mod socket;
+#[path = "tests/terminal.rs"]
+mod terminal;
 
 /// Build a fresh `.loom/work` directory for a test server.
 fn workspace() -> (TempDir, PathBuf) {
@@ -51,14 +55,35 @@ fn assert_security_headers(response: &str) {
 
 /// Start a dashboard server on an ephemeral loopback port.
 fn start(base: PathBuf) -> (u16, Arc<AtomicBool>) {
+    let (port, running, _) =
+        start_with(base, crate::commands::status::web::ServeOptions::default());
+    (port, running)
+}
+
+fn start_with(
+    base: PathBuf,
+    options: crate::commands::status::web::ServeOptions,
+) -> (
+    u16,
+    Arc<AtomicBool>,
+    Arc<crate::commands::status::web::limits::Limits>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
     let port = listener.local_addr().expect("server address").port();
     let running = Arc::new(AtomicBool::new(true));
     let serve_running = running.clone();
+    let limits = crate::commands::status::web::limits::Limits::new();
+    let serve_limits = limits.clone();
     thread::spawn(move || {
-        let _ = crate::commands::status::web::serve(listener, base, serve_running);
+        let _ = crate::commands::status::web::serve_with(
+            listener,
+            base,
+            serve_running,
+            options,
+            serve_limits,
+        );
     });
-    (port, running)
+    (port, running, limits)
 }
 
 fn stop(running: Arc<AtomicBool>) {

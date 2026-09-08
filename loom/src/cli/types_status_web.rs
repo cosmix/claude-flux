@@ -11,4 +11,7 @@ pub struct StatusWebArgs {
         conflicts_with_all = ["live", "compact", "verbose"]
     )]
     pub web: Option<Option<u16>>,
+    /// Let the dashboard open live stage terminals (tmux backend only). Prints a tokenized URL.
+    #[arg(long, requires = "web")]
+    pub terminals: bool,
 }
