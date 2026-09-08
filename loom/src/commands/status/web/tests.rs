@@ -17,6 +17,8 @@ use tempfile::TempDir;
 
 #[path = "tests/errors.rs"]
 mod errors;
+#[path = "tests/ports.rs"]
+mod ports;
 #[path = "tests/pure.rs"]
 mod pure;
 #[path = "tests/socket.rs"]

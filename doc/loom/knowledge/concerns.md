@@ -854,7 +854,7 @@ wildcard-free prefix lies above the project or above a small home subdirectory.
 
 ## Web Dashboard Latent Issues
 
-Five issues reviewed and deliberately left unchanged in `loom/src/commands/status/web/`: a mutex-poisoning cascade risk, a cosmetic `GET /ws` status-code mismatch, a dead-looking-but-pinned `DEFAULT_PORT` literal, an inherited partial-frame truncation risk shared with the TUI, and a left-in-place bundle-size warning. Detail: [concerns/web-dashboard-latent-issues.md](concerns/web-dashboard-latent-issues.md).
+Four issues reviewed and deliberately left unchanged in `loom/src/commands/status/web/`: a mutex-poisoning cascade risk, a cosmetic `GET /ws` status-code mismatch, an inherited partial-frame truncation risk shared with the TUI, and a left-in-place bundle-size warning. The former unused-`DEFAULT_PORT` concern was resolved when bare `--web` gained automatic port fallback. Detail: [concerns/web-dashboard-latent-issues.md](concerns/web-dashboard-latent-issues.md).
 
 ## Merge Path Follow-Ups After the Silent-Unmerged Fix (2026-09-06)
 

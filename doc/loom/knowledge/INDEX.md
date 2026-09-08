@@ -40,7 +40,7 @@
 | [source-graph](architecture/source-graph.md) | What the source graph is and is not, its honesty contract, extractor trait, node/edge and cache… | 244 |
 | [status-data-model](architecture/status-data-model.md) | Where each field shown by `loom status` (static, compact, and `--live`) comes from, and what the… | 176 |
 | [terminal-backends](architecture/terminal-backends.md) | The native and tmux session backends behind one dispatcher, lane resolution, and session-recorded… | 251 |
-| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — a read-only HTTP/WebSocket server (port 7373 default, `127.0.0.1… | 33 |
+| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — a read-only HTTP/WebSocket server on `127.0.0.1` that serves an… | 35 |
 
 ### entry-points
 
@@ -107,4 +107,4 @@
 | [iterm2-window-teardown](concerns/iterm2-window-teardown.md) | Topic notes for the concerns knowledge area. | 48 |
 | [sandbox-protected-hooks-dir](concerns/sandbox-protected-hooks-dir.md) | Claude Code's sandbox write-protects the project-root `hooks/` directory as part of its… | 43 |
 | [sandbox-write-rules-inert](concerns/sandbox-write-rules-inert.md) | Sandbox Write() rules that are inert in loom's generated stage settings and in the | 62 |
-| [web-dashboard-latent-issues](concerns/web-dashboard-latent-issues.md) | Issues reviewed in `loom/src/commands/status/web/` during integration-verify and | 28 |
+| [web-dashboard-latent-issues](concerns/web-dashboard-latent-issues.md) | Issues reviewed in `loom/src/commands/status/web/` during integration-verify and | 30 |

@@ -227,7 +227,7 @@ loom pressure <plan-path> [--rounds N] [--dry-run]
 
 `loom status --live` renders a live ledger dashboard: one row per stage across eight columns (STATE, STAGE, DEPENDS ON, MODELS, ACTIVITY, CONTEXT, TIME, MERGE). MODELS lists the orchestrator's own model first, then the models any subagents it spawned ran on. Columns drop in priority order as the terminal narrows; below a 64x16 (columns x rows) terminal a notice replaces the dashboard entirely. Press `?` to toggle a legend overlay explaining every state icon.
 
-`loom status --web [PORT]` starts a read-only web dashboard bound to `127.0.0.1` (port 7373 by default) and serves the same live ledger over a WebSocket in the browser. It works without the daemon by polling `.work/` files directly when the daemon socket is unreachable.
+`loom status --web [PORT]` starts a read-only web dashboard bound to `127.0.0.1` and serves the same live ledger over a WebSocket in the browser. Without `PORT`, it starts at port 7373 and automatically tries the next available port when a candidate is occupied. Supplying a nonzero `PORT` requests that exact port; `PORT` 0 asks the OS for any free port. It works without the daemon by polling `.work/` files directly when the daemon socket is unreachable.
 
 ### Plan Commands
 
@@ -712,7 +712,7 @@ Sessions then run in detached tmux servers, and you watch them from a Windows Te
 
 ```bash
 loom status --live       # live ledger dashboard
-loom status --web        # browser dashboard on 127.0.0.1:7373
+loom status --web        # browser dashboard: starts at 7373, then the next free port
 loom attach              # tiled overview of every live session
 loom attach <stage-id>   # attach to one stage
 ```

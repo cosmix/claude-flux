@@ -1,10 +1,12 @@
 # Web Dashboard
 
-> `loom status --web [PORT]` — a read-only HTTP/WebSocket server (port 7373 default, `127.0.0.1` only) that serves an embedded React SPA and streams the same `StatusData` payload the live TUI renders. Module: `loom/src/commands/status/web/`; frontend: `web/`.
+> `loom status --web [PORT]` — a read-only HTTP/WebSocket server on `127.0.0.1` that serves an embedded React SPA and streams the same `StatusData` payload the live TUI renders. Module: `loom/src/commands/status/web/`; frontend: `web/`.
 
 ## Server
 
 Hand-rolled HTTP/1.1 + WebSocket server, no framework: `loom/src/commands/status/web/mod.rs` (entry, `WorkDir::new(".")?.load()?` — needs `.loom/work` in the CWD or it exits before binding), `loom/src/commands/status/web/connection.rs` (routing, Host-header DNS-rebinding gate, CSP/security headers, `WRITE_TIMEOUT=5s` for whole-bundle HTTP writes vs the WebSocket lane's 250ms, `MAX_CONNECTIONS=64`/`MAX_WEBSOCKETS=48` sub-cap with an RAII slot guard and `DRAIN_DEADLINE=300ms` wall-clock bound on `drain_pending` for the accept loop), `loom/src/commands/status/web/broadcast.rs` (daemon-fed publish/subscribe), `loom/src/commands/status/web/ws.rs` (frame send/receive), `loom/src/commands/status/web/model.rs` (wire types, pinned by `loom/src/commands/status/web/model_tests.rs`).
+
+Port selection is atomic at the bind call. Bare `loom status --web` tries `DEFAULT_PORT` (7373) and advances only on `AddrInUse`, so concurrent dashboards in separate repositories settle on different ports. `loom status --web PORT` binds that port exactly and preserves the contextual bind error; explicit `0` asks the OS for an ephemeral port. The printed URL always contains the listener's actual port.
 
 It reuses existing TUI/status code rather than reimplementing it: `render::attention_entries`, `render::failure_label`, `scheduling_report::alerts`, `tick::read`, `data::collect_status_data`, `daemon_client::{connect,subscribe,is_socket_disconnected}`, `DaemonServer::check_status`.
 

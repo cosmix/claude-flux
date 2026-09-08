@@ -23,6 +23,7 @@ pub mod model;
 mod tests;
 mod ws;
 
+use std::io::ErrorKind;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,19 +31,18 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::fs::work_dir::WorkDir;
 
-/// Default port for `loom status --web` without a value.
+/// First port considered by `loom status --web` without a value.
 pub const DEFAULT_PORT: u16 = 7373;
 
 /// Start the dashboard server on loopback until Ctrl-C.
-pub fn execute(port: u16) -> Result<()> {
+pub fn execute(port: Option<u16>) -> Result<()> {
     let work_dir = WorkDir::new(".")?;
     work_dir.load()?;
-    let listener = TcpListener::bind(("127.0.0.1", port))
-        .with_context(|| format!("failed to bind 127.0.0.1:{port}"))?;
+    let listener = bind_listener(port)?;
     let actual_port = listener.local_addr()?.port();
     println!("loom dashboard: http://127.0.0.1:{actual_port}/  (Ctrl-C to stop)");
     if assets::WEB_ASSETS.is_empty() {
@@ -56,6 +56,32 @@ pub fn execute(port: u16) -> Result<()> {
     ctrlc::set_handler(move || on_ctrl_c.store(false, Ordering::SeqCst))
         .context("failed to install Ctrl-C handler")?;
     serve(listener, PathBuf::from("."), running)
+}
+
+/// Bind an explicit port exactly, or select the first available default-range port.
+pub(super) fn bind_listener(port: Option<u16>) -> Result<TcpListener> {
+    match port {
+        Some(port) => bind_loopback(port),
+        None => bind_first_available_loopback_port(DEFAULT_PORT),
+    }
+}
+
+fn bind_loopback(port: u16) -> Result<TcpListener> {
+    TcpListener::bind(("127.0.0.1", port))
+        .with_context(|| format!("failed to bind 127.0.0.1:{port}"))
+}
+
+pub(super) fn bind_first_available_loopback_port(start_port: u16) -> Result<TcpListener> {
+    for port in start_port..=u16::MAX {
+        match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => return Ok(listener),
+            Err(error) if error.kind() == ErrorKind::AddrInUse => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to bind 127.0.0.1:{port}"))
+            }
+        }
+    }
+    bail!("failed to bind a loopback port from {start_port} through 65535")
 }
 
 /// Serve an already-bound listener until `running` becomes false.

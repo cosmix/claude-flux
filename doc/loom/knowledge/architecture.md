@@ -545,4 +545,4 @@ A daemon thread (`loom/src/quota/poller.rs`) polls the Claude OAuth usage endpoi
 
 ## Web Dashboard
 
-`loom status --web [PORT]` serves an embedded React SPA over HTTP/WebSocket (127.0.0.1, port 7373 default), streaming the same `StatusData` the live TUI renders and reusing its collection/derivation code rather than reimplementing it. Server shape, broadcaster fallback, the Rust/TS fixture contract, and the committed-dist/build.rs embedding: [architecture/web-dashboard.md](architecture/web-dashboard.md).
+`loom status --web [PORT]` serves an embedded React SPA over HTTP/WebSocket on `127.0.0.1`, streaming the same `StatusData` the live TUI renders and reusing its collection/derivation code rather than reimplementing it. Without `PORT`, binding starts at 7373 and advances past occupied ports; an explicit port is exact, while `0` delegates selection to the OS. Server shape, broadcaster fallback, the Rust/TS fixture contract, and the committed-dist/build.rs embedding: [architecture/web-dashboard.md](architecture/web-dashboard.md).

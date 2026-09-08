@@ -234,14 +234,36 @@ fn a_stalled_subscriber_is_dropped_once_its_queue_fills() {
 }
 
 #[test]
-fn the_cli_default_port_matches_the_dashboard_constant() {
-    let matches = Cli::command()
-        .try_get_matches_from(["loom", "status", "--web"])
-        .expect("parse `loom status --web`");
-    let status = matches
+fn the_cli_preserves_omitted_and_explicit_dashboard_ports() {
+    let absent = Cli::command()
+        .try_get_matches_from(["loom", "status"])
+        .expect("parse `loom status`");
+    let absent_status = absent
         .subcommand_matches("status")
         .expect("status subcommand");
-    assert_eq!(status.get_one::<u16>("web"), Some(&DEFAULT_PORT));
+    assert!(!absent_status.contains_id("web"));
+
+    let bare = Cli::command()
+        .try_get_matches_from(["loom", "status", "--web"])
+        .expect("parse `loom status --web`");
+    let bare_status = bare
+        .subcommand_matches("status")
+        .expect("status subcommand");
+    assert!(bare_status.contains_id("web"));
+    assert_eq!(bare_status.get_one::<u16>("web"), None);
+
+    for port in [0, DEFAULT_PORT] {
+        let port = port.to_string();
+        let expected = port.parse::<u16>().expect("valid test port");
+        let matches = Cli::command()
+            .try_get_matches_from(["loom", "status", "--web", &port])
+            .expect("parse explicit dashboard port");
+        let status = matches
+            .subcommand_matches("status")
+            .expect("status subcommand");
+        assert!(status.contains_id("web"));
+        assert_eq!(status.get_one::<u16>("web"), Some(&expected));
+    }
 }
 
 #[test]
