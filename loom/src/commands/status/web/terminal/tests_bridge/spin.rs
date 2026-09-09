@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 //! Proves the backpressure gate in `bridge::poll_ready` narrows the mask it
 //! asks `poll` for, not just the read it skips: a gate that stops reading
 //! while still requesting `POLLIN` makes `poll` return immediately forever,
@@ -24,7 +26,6 @@ use super::{gating_flood, join_within, skip_bridge_test, start_bridge, wait_for_
 /// time.
 const SPIN_THRESHOLD: Duration = Duration::from_millis(200);
 
-#[cfg(target_os = "linux")]
 #[test]
 fn bridge_sleeps_while_backpressure_is_engaged() {
     if skip_bridge_test("bridge_sleeps_while_backpressure_is_engaged") {
@@ -74,7 +75,6 @@ fn bridge_sleeps_while_backpressure_is_engaged() {
 /// clock rather than wall time or `RUSAGE_SELF`: both would fold in every
 /// other thread and process on the box, which is exactly the noise
 /// `scripts/flake-check.sh`'s background spinners would add.
-#[cfg(target_os = "linux")]
 fn thread_cpu_time(tid: libc::pthread_t) -> Duration {
     let mut clockid: libc::clockid_t = 0;
     // SAFETY: `tid` names a thread the caller's `JoinHandle` keeps alive for
