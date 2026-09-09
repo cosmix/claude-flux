@@ -42,6 +42,23 @@ pub(super) fn project_with_knowledge() -> TempDir {
     temp
 }
 
+fn project_with_lifecycle_pair() -> TempDir {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    fs::create_dir_all(root.join(".loom").join("work")).unwrap();
+    write_file(
+        root,
+        "doc/loom/knowledge/current.md",
+        "---\nstate: active\n---\n# Current\n\n## Rare topic\n\nquokka-zebra invariant wording\n",
+    );
+    write_file(
+        root,
+        "doc/loom/knowledge/old.md",
+        "---\nstate: superseded\n---\n# Old\n\n## Rare topic\n\nquokka-zebra invariant wording\n",
+    );
+    temp
+}
+
 /// A pack carrying only the two revisions `context_epoch` reads.
 fn pack_with_revisions(structural: &str, semantic: &str) -> ContextPack {
     ContextPack {
@@ -58,6 +75,7 @@ fn pack_with_revisions(structural: &str, semantic: &str) -> ContextPack {
             ..Freshness::default()
         },
         items: Vec::new(),
+        unmet_required: Vec::new(),
         omitted: OmissionSummary::default(),
         dropped_terms: Vec::new(),
         degraded: None,
@@ -156,6 +174,76 @@ fn retrieve_for_stage_refuses_a_required_id_the_catalog_does_not_hold() {
     assert!(
         error.to_string().contains("no-such-chunk"),
         "the error must name the unknown id, got: {error}"
+    );
+}
+
+#[test]
+fn a_superseded_chunk_is_not_retrieved_under_the_current_policy_even_with_identical_rare_wording() {
+    let temp = project_with_lifecycle_pair();
+    let query = StageQuery::new(temp.path(), "quokka zebra invariant wording");
+
+    let pack = retrieve_for_stage(&query, 2_000).unwrap();
+
+    assert!(pack
+        .items
+        .iter()
+        .any(|item| item.state == LifecycleState::Active));
+    assert!(pack
+        .items
+        .iter()
+        .all(|item| item.state != LifecycleState::Superseded));
+}
+
+#[test]
+fn a_superseded_chunk_is_retrieved_under_the_historical_policy() {
+    let temp = project_with_lifecycle_pair();
+    let mut query = StageQuery::new(temp.path(), "quokka zebra invariant wording");
+    query.lifecycle = LifecyclePolicy::Historical;
+
+    let pack = retrieve_for_stage(&query, 2_000).unwrap();
+
+    assert!(pack
+        .items
+        .iter()
+        .any(|item| item.state == LifecycleState::Superseded));
+}
+
+#[test]
+fn a_required_superseded_chunk_is_still_returned() {
+    let temp = project_with_lifecycle_pair();
+    let mut discovery = StageQuery::new(temp.path(), "quokka zebra invariant wording");
+    discovery.lifecycle = LifecyclePolicy::Historical;
+    let historical = retrieve_for_stage(&discovery, 2_000).unwrap();
+    let old_id = historical
+        .items
+        .iter()
+        .find(|item| item.state == LifecycleState::Superseded)
+        .expect("historical retrieval should expose the superseded id")
+        .id
+        .as_str()
+        .to_string();
+    let mut query = StageQuery::new(temp.path(), "unmatched query");
+    query.required_ids = vec![old_id.clone()];
+
+    let pack = retrieve_for_stage(&query, 2_000).unwrap();
+
+    assert!(pack
+        .items
+        .iter()
+        .any(|item| item.id.as_str() == old_id && item.state == LifecycleState::Superseded));
+}
+
+#[test]
+fn retrieve_for_stage_fingerprints_the_knowledge_tree_once() {
+    let temp = project_with_knowledge();
+    take_evaluate_state_call_count();
+
+    retrieve_for_stage(&StageQuery::new(temp.path(), "signal generation"), 500).unwrap();
+
+    assert_eq!(
+        take_evaluate_state_call_count(),
+        0,
+        "successful refresh already evaluated the tree; retrieval must reuse its outcome"
     );
 }
 

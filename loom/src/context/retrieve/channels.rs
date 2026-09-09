@@ -8,11 +8,15 @@
 
 use crate::context::config::RetrievalConfig;
 use crate::context::graph_store::ResolvedGraph;
+use crate::context::lexical::tokenize;
 use crate::context::lexical_index::LexicalCache;
-use crate::context::rank::{rank_channel_cached, RankQuery, RankedCandidate};
+use crate::context::rank::{rank_channel_cached, ChannelRanking, RankQuery, RankedCandidate};
 use crate::context::rank_source::rank_source_channel_cached;
-use crate::context::schema::Channel;
+use crate::context::schema::{
+    Channel, KnowledgeChunk, LifecyclePolicy, LifecycleState, SelectionReason,
+};
 use crate::fs::knowledge::catalog::Catalog;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::StageQuery;
@@ -24,6 +28,8 @@ pub(super) struct RankedChannels {
     pub(super) lists: Vec<Vec<RankedCandidate>>,
     /// Query terms dropped before scoring, for `ContextPack::dropped_terms`.
     pub(super) dropped_terms: Vec<String>,
+    /// Query terms retained by at least one requested channel's corpus.
+    pub(super) surviving_terms: Vec<String>,
 }
 
 /// Rank the catalog once per requested channel, producing one candidate list
@@ -61,7 +67,21 @@ pub(super) fn rank_channels(
     graph: Option<&ResolvedGraph>,
     config: &RetrievalConfig,
 ) -> RankedChannels {
-    rank_channels_cached(channels, rank_query, catalog, graph, config, None)
+    let chunks_by_id = catalog
+        .chunks
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect();
+    rank_channels_cached(
+        channels,
+        rank_query,
+        catalog,
+        &chunks_by_id,
+        graph,
+        LifecyclePolicy::Current,
+        config,
+        None,
+    )
 }
 
 /// Rank the catalog once per requested channel, with the persistent lexical
@@ -82,48 +102,124 @@ pub(super) fn rank_channels(
 /// test gets: the scan is the oracle the index is checked against
 /// (`lexical_index.rs:20-29`), so it has to stay on a live path rather than
 /// becoming code that only runs once a cache file is deleted.
+// Every parameter is a distinct input `rank_channels` above threads through
+// unchanged; a params struct would just wrap that pass-through, not shrink it.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn rank_channels_cached(
     channels: &[Channel],
     rank_query: &RankQuery,
     catalog: &Catalog,
+    chunks_by_id: &BTreeMap<&str, &KnowledgeChunk>,
     graph: Option<&ResolvedGraph>,
+    lifecycle: LifecyclePolicy,
     config: &RetrievalConfig,
     cache_root: Option<&Path>,
 ) -> RankedChannels {
     let mut lists = Vec::with_capacity(channels.len());
     let mut knowledge_dropped = None;
     let mut source_dropped = None;
+    let mut knowledge_surviving = None;
+    let mut source_surviving = None;
     for channel in channels {
-        let ranking = match channel {
-            Channel::Knowledge => {
-                let revision = catalog.revision.as_str();
-                let cache = cache_root.map(|root| LexicalCache::knowledge(root, revision));
-                rank_channel_cached(
-                    rank_query,
-                    &catalog.chunks,
-                    Channel::Knowledge,
-                    config,
-                    cache.as_ref(),
-                )
-            }
-            Channel::Source => graph
-                .map(|graph| {
-                    let cache = cache_root.map(|root| LexicalCache::source(root, graph));
-                    rank_source_channel_cached(rank_query, graph, config, cache.as_ref())
-                })
-                .unwrap_or_default(),
+        let mut ranking =
+            rank_one_channel(*channel, rank_query, catalog, graph, config, cache_root);
+        if *channel == Channel::Knowledge {
+            let eligible = apply_lifecycle_policy(ranking.candidates, chunks_by_id, lifecycle);
+            ranking.candidates = eligible;
+        }
+        let surviving = if channel_has_corpus(*channel, catalog, graph) {
+            surviving_query_terms(&rank_query.text, &ranking.dropped_terms)
+        } else {
+            Vec::new()
         };
-        let dropped = match channel {
-            Channel::Knowledge => &mut knowledge_dropped,
-            Channel::Source => &mut source_dropped,
+        let (dropped_slot, surviving_slot) = match channel {
+            Channel::Knowledge => (&mut knowledge_dropped, &mut knowledge_surviving),
+            Channel::Source => (&mut source_dropped, &mut source_surviving),
         };
-        *dropped = Some(ranking.dropped_terms);
+        *dropped_slot = Some(ranking.dropped_terms);
+        *surviving_slot = Some(surviving);
         lists.push(ranking.candidates);
     }
     RankedChannels {
         lists,
         dropped_terms: union_dropped_terms(knowledge_dropped, source_dropped),
+        surviving_terms: union_terms(knowledge_surviving, source_surviving),
     }
+}
+
+fn rank_one_channel(
+    channel: Channel,
+    rank_query: &RankQuery,
+    catalog: &Catalog,
+    graph: Option<&ResolvedGraph>,
+    config: &RetrievalConfig,
+    cache_root: Option<&Path>,
+) -> ChannelRanking {
+    match channel {
+        Channel::Knowledge => {
+            let cache =
+                cache_root.map(|root| LexicalCache::knowledge(root, catalog.revision.as_str()));
+            rank_channel_cached(
+                rank_query,
+                &catalog.chunks,
+                Channel::Knowledge,
+                config,
+                cache.as_ref(),
+            )
+        }
+        Channel::Source => graph
+            .map(|graph| {
+                let cache = cache_root.map(|root| LexicalCache::source(root, graph));
+                rank_source_channel_cached(rank_query, graph, config, cache.as_ref())
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn channel_has_corpus(channel: Channel, catalog: &Catalog, graph: Option<&ResolvedGraph>) -> bool {
+    match channel {
+        Channel::Knowledge => !catalog.chunks.is_empty(),
+        Channel::Source => graph.is_some_and(|graph| graph.nodes().next().is_some()),
+    }
+}
+
+/// Admit current knowledge unless the caller explicitly asks for history.
+pub(super) fn apply_lifecycle_policy(
+    candidates: Vec<RankedCandidate>,
+    chunks_by_id: &BTreeMap<&str, &KnowledgeChunk>,
+    policy: LifecyclePolicy,
+) -> Vec<RankedCandidate> {
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            candidate.reasons.contains(&SelectionReason::ExplicitId)
+                || policy == LifecyclePolicy::Historical
+                || chunks_by_id.get(candidate.id.as_str()).is_none_or(|chunk| {
+                    matches!(chunk.state, LifecycleState::Active | LifecycleState::Draft)
+                })
+        })
+        .collect()
+}
+
+fn surviving_query_terms(query: &str, dropped: &[String]) -> Vec<String> {
+    tokenize(query)
+        .into_iter()
+        .filter(|term| !dropped.contains(term))
+        .collect()
+}
+
+fn union_terms(first: Option<Vec<String>>, second: Option<Vec<String>>) -> Vec<String> {
+    let mut union = Vec::new();
+    for term in first
+        .into_iter()
+        .flatten()
+        .chain(second.into_iter().flatten())
+    {
+        if !union.contains(&term) {
+            union.push(term);
+        }
+    }
+    union
 }
 
 /// Both channels' dropped-term sets, deduplicated, in first-seen order with
@@ -141,17 +237,7 @@ pub(super) fn rank_channels_cached(
 /// channels - determinism is a hard requirement of this pipeline
 /// (`retrieve.rs:9-11`).
 fn union_dropped_terms(knowledge: Option<Vec<String>>, source: Option<Vec<String>>) -> Vec<String> {
-    let mut union = Vec::new();
-    for term in knowledge
-        .into_iter()
-        .flatten()
-        .chain(source.into_iter().flatten())
-    {
-        if !union.contains(&term) {
-            union.push(term);
-        }
-    }
-    union
+    union_terms(knowledge, source)
 }
 
 /// Build the ranker's view of `query`.

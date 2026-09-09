@@ -196,7 +196,7 @@ fn without_weakest(pack: &ContextPack) -> Option<ContextPack> {
 /// `pack` carrying exactly `items`, with the token estimate that describes them.
 fn carrying(pack: &ContextPack, items: Vec<ContextItem>) -> ContextPack {
     let mut narrowed = pack.clone();
-    narrowed.estimated_tokens = items.iter().map(|item| item.token_count).sum();
     narrowed.items = items;
+    narrowed.recompute_estimate();
     narrowed
 }

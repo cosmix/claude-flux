@@ -7,7 +7,9 @@
 //! types for one small `KnowledgeChunk` builder.
 
 use super::*;
-use crate::context::schema::{KnowledgeChunk, LifecycleState};
+use crate::context::schema::{
+    Channel, ChunkId, KnowledgeChunk, LifecyclePolicy, LifecycleState, SelectionReason,
+};
 use std::path::PathBuf;
 
 /// Build a `KnowledgeChunk` with every field explicit but `body`, mirroring
@@ -81,6 +83,7 @@ fn knowledge_channel_dropped_terms_surface_through_rank_channels() {
     let got = rank_channels(&[Channel::Knowledge], &rank_query, &catalog, None, &config);
 
     assert_eq!(got.dropped_terms, vec!["hi".to_string()]);
+    assert_eq!(got.surviving_terms, vec!["cache".to_string()]);
     assert_eq!(
         got.lists.len(),
         1,
@@ -91,4 +94,23 @@ fn knowledge_channel_dropped_terms_surface_through_rank_channels() {
         1,
         "the chunk matched 'cache' and should be a candidate"
     );
+}
+
+#[test]
+fn apply_lifecycle_policy_keeps_explicitly_required_ineligible_chunks() {
+    let mut superseded = chunk("old", "rare wording");
+    superseded.state = LifecycleState::Superseded;
+    let chunks = BTreeMap::from([("old", &superseded)]);
+    let candidate = RankedCandidate {
+        id: ChunkId::from("old"),
+        channel: Channel::Knowledge,
+        score: 1.0,
+        reasons: vec![SelectionReason::ExplicitId],
+        token_count: 3,
+        matched_term_count: 0,
+        confidence_ceiling: None,
+    };
+
+    let kept = apply_lifecycle_policy(vec![candidate.clone()], &chunks, LifecyclePolicy::Current);
+    assert_eq!(kept, vec![candidate]);
 }

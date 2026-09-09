@@ -13,7 +13,8 @@ use crate::context::pack::twins::tier1_twin;
 use crate::context::pack::{pack, PackRequest};
 use crate::context::rank::RankedCandidate;
 use crate::context::schema::{
-    Channel, ChunkId, Freshness, KnowledgeChunk, LifecycleState, SelectionReason,
+    Channel, ChunkId, Freshness, KnowledgeChunk, LifecycleState, RequiredRepresentation,
+    SelectionReason, BRIEF_FRAME_TOKENS, BYTES_PER_TOKEN_ESTIMATE,
 };
 use std::path::PathBuf;
 
@@ -31,7 +32,7 @@ fn chunk(id: &str, tokens: usize) -> KnowledgeChunk {
         file: PathBuf::from(path),
         anchor: anchor.to_string(),
         heading: anchor.to_string(),
-        body: "body".to_string(),
+        body: "x".repeat(tokens.saturating_mul(BYTES_PER_TOKEN_ESTIMATE)),
         content_hash: String::new(),
         estimated_tokens: tokens,
         aliases: Vec::new(),
@@ -59,10 +60,12 @@ fn request(budget_tokens: usize) -> PackRequest {
     PackRequest {
         query: "query".into(),
         scope: vec![Channel::Knowledge],
-        budget_tokens,
+        budget_tokens: BRIEF_FRAME_TOKENS + 70 + budget_tokens,
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         dropped_terms: Vec::new(),
+        surviving_terms: vec!["query".to_string()],
+        required_representation: RequiredRepresentation::Full,
         degraded: None,
     }
 }
@@ -153,7 +156,8 @@ fn the_summary_is_dropped_when_its_detail_is_packed() {
         "the summary is reported, not lost"
     );
     assert_eq!(
-        packed.estimated_tokens, 4,
+        packed.estimated_tokens,
+        BRIEF_FRAME_TOKENS + packed.items[0].token_count,
         "the summary's tokens are not charged to the budget"
     );
 }
@@ -320,7 +324,7 @@ fn a_summary_the_caller_required_survives_its_detail() {
 
     assert_eq!(
         packed_ids(100, &ranked, &chunks),
-        vec![TIER2.to_string(), TIER1.to_string()]
+        vec![TIER1.to_string(), TIER2.to_string()]
     );
 }
 

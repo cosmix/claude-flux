@@ -45,15 +45,27 @@
 //! values clamp or fall back per field rather than rejecting the file, so one
 //! bad key cannot discard twelve good ones.
 
+use crate::context::schema::BRIEF_FRAME_TOKENS;
 use std::path::{Component, Path};
 use toml::{Table, Value};
 
 /// Path of the config file, relative to the main project root.
 const CONFIG_RELPATH: &str = ".loom/config.toml";
 
-/// Smallest accepted token/byte budget. Below this a budget cannot hold even
-/// one item, so honouring it would silently produce empty output forever.
-const MIN_BUDGET: usize = 100;
+/// Smallest accepted token/byte budget.
+///
+/// Every pack this crate renders is charged [`BRIEF_FRAME_TOKENS`] before a
+/// single item is considered (see `ContextPack::recompute_estimate`), so a
+/// budget at or below that frame cost cannot even pay for the frame, let
+/// alone one item — honouring it would silently produce empty output
+/// forever. Defined off `BRIEF_FRAME_TOKENS` rather than as an independent
+/// round number so the two constants cannot drift apart again.
+pub const MIN_BUDGET_TOKENS: usize = BRIEF_FRAME_TOKENS + 128;
+
+// If `BRIEF_FRAME_TOKENS` ever grows to meet or pass this floor, the floor
+// stops leaving any room for an item and the whole point of deriving it from
+// the frame cost is lost — fail the build rather than reopen that hole.
+const _: () = assert!(MIN_BUDGET_TOKENS > BRIEF_FRAME_TOKENS);
 
 /// Largest accepted token/byte budget.
 const MAX_BUDGET: usize = 100_000;
@@ -261,7 +273,7 @@ fn prior(value: &Value, key: &str, default: f32) -> f32 {
     raw
 }
 
-/// Read a token or byte budget, clamped into `[MIN_BUDGET, MAX_BUDGET]`.
+/// Read a token or byte budget, clamped into `[MIN_BUDGET_TOKENS, MAX_BUDGET]`.
 ///
 /// Clamped in `i64` before the cast: `-1 as usize` is `usize::MAX`, which would
 /// clamp to the *maximum* budget and turn a nonsense value into the most
@@ -270,7 +282,7 @@ fn budget(value: &Value, key: &str, default: usize) -> usize {
     let Some(raw) = integer(value, key) else {
         return default;
     };
-    raw.clamp(MIN_BUDGET as i64, MAX_BUDGET as i64) as usize
+    raw.clamp(MIN_BUDGET_TOKENS as i64, MAX_BUDGET as i64) as usize
 }
 
 /// Read a count, clamped to at least 1. A zero count would make its rule

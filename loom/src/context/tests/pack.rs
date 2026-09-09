@@ -1,55 +1,20 @@
+//! General packing behavior for [`crate::context::pack::pack`]: candidate
+//! lookup, budget fitting, omission accounting, excerpt windowing, and the
+//! budget invariant itself. The `--require-id` reservation contract lives in
+//! `pack_required.rs`; shared fixtures live in `pack_fixtures.rs`.
+
+use super::pack_fixtures::{candidate, chunk, request_with_item_budget, request_with_raw_budget};
 use crate::context::pack::*;
 use crate::context::rank::*;
+use crate::context::render::rendered_item_tokens;
 use crate::context::schema::*;
 use std::path::PathBuf;
-
-fn chunk(id: &str, body: &str, tokens: usize) -> KnowledgeChunk {
-    KnowledgeChunk {
-        id: id.to_string(),
-        file: PathBuf::from(format!("{id}.md")),
-        anchor: format!("{id}-anchor"),
-        heading: format!("{id} heading"),
-        body: body.to_string(),
-        content_hash: String::new(),
-        estimated_tokens: tokens,
-        aliases: Vec::new(),
-        category: None,
-        source_paths: Vec::new(),
-        symbols: Vec::new(),
-        links: Vec::new(),
-        state: LifecycleState::Active,
-    }
-}
-
-fn candidate(id: &str, channel: Channel, score: f32, token_count: usize) -> RankedCandidate {
-    RankedCandidate {
-        id: ChunkId::from(id),
-        channel,
-        score,
-        reasons: vec![SelectionReason::Lexical],
-        token_count,
-        matched_term_count: 1,
-        confidence_ceiling: None,
-    }
-}
-
-fn request(budget_tokens: usize) -> PackRequest {
-    PackRequest {
-        query: "query".into(),
-        scope: vec![Channel::Knowledge],
-        budget_tokens,
-        structural_freshness: Freshness::default(),
-        semantic_freshness: Freshness::default(),
-        dropped_terms: Vec::new(),
-        degraded: None,
-    }
-}
 
 #[test]
 fn rule_25_packer_looks_up_chunks_by_their_string_ids() {
     let chunks = vec![chunk("b", "body", 1), chunk("a", "body", 1)];
     let packed = pack(
-        &request(1),
+        &request_with_item_budget(100),
         &[candidate("a", Channel::Knowledge, 1.0, 1)],
         &chunks,
         None,
@@ -60,7 +25,7 @@ fn rule_25_packer_looks_up_chunks_by_their_string_ids() {
 #[test]
 fn rule_26_missing_candidates_are_skipped_and_omitted() {
     let packed = pack(
-        &request(10),
+        &request_with_item_budget(100),
         &[candidate("missing", Channel::Knowledge, 1.0, 4)],
         &[],
         None,
@@ -71,9 +36,10 @@ fn rule_26_missing_candidates_are_skipped_and_omitted() {
 
 #[test]
 fn rule_27_nonfitting_chunks_are_skipped_while_later_ones_can_fit() {
-    let chunks = vec![chunk("large", "body", 8), chunk("small", "body", 3)];
+    let large = "large body ".repeat(100);
+    let chunks = vec![chunk("large", &large, 300), chunk("small", "body", 3)];
     let packed = pack(
-        &request(5),
+        &request_with_item_budget(40),
         &[
             candidate("large", Channel::Knowledge, 2.0, 8),
             candidate("small", Channel::Knowledge, 1.0, 3),
@@ -85,22 +51,6 @@ fn rule_27_nonfitting_chunks_are_skipped_while_later_ones_can_fit() {
     assert_eq!(packed.omitted.omitted, 1);
 }
 
-#[test]
-fn rule_28_chunk_larger_than_the_total_budget_is_omitted() {
-    let packed = pack(
-        &request(5),
-        &[candidate("large", Channel::Knowledge, 1.0, 6)],
-        &[chunk("large", "body", 6)],
-        None,
-    );
-    assert!(packed.items.is_empty());
-    assert_eq!(packed.omitted.omitted, 1);
-}
-
-/// A `Channel::Knowledge` candidate dispatches to a knowledge chunk item —
-/// `line_start` stays `None` and the pointer carries the chunk's heading
-/// anchor rather than a line range. The `Channel::Source` counterpart lives in
-/// `pack_source.rs`.
 #[test]
 fn rule_29_knowledge_candidates_still_become_knowledge_chunk_items() {
     let mut source = chunk("a", &"é".repeat(121), 4);
@@ -117,7 +67,7 @@ fn rule_29_knowledge_candidates_still_become_knowledge_chunk_items() {
         matched_term_count: 0,
         confidence_ceiling: None,
     };
-    let packed = pack(&request(4), &[ranked], &[source], None);
+    let packed = pack(&request_with_item_budget(200), &[ranked], &[source], None);
     let item = &packed.items[0];
     assert_eq!(item.id.as_str(), "a");
     assert_eq!(item.kind, ItemKind::KnowledgeChunk);
@@ -127,7 +77,7 @@ fn rule_29_knowledge_candidates_still_become_knowledge_chunk_items() {
     assert_eq!(item.pointer.line_end, None);
     assert_eq!(item.summary.chars().count(), 120);
     assert_eq!(item.source, Channel::Knowledge);
-    assert_eq!(item.token_count, 4);
+    assert_eq!(item.token_count, rendered_item_tokens(item));
     assert!((item.score - 2.5).abs() < 1e-4, "got {}", item.score);
     assert_eq!(item.reasons, vec![SelectionReason::ExactPath]);
     assert_eq!(item.confidence, Confidence::High);
@@ -135,31 +85,16 @@ fn rule_29_knowledge_candidates_still_become_knowledge_chunk_items() {
 }
 
 #[test]
-fn rule_30_estimated_tokens_is_the_included_sum_and_within_budget() {
-    let chunks = vec![chunk("a", "body", 3), chunk("b", "body", 4)];
-    let packed = pack(
-        &request(7),
-        &[
-            candidate("a", Channel::Knowledge, 2.0, 3),
-            candidate("b", Channel::Knowledge, 1.0, 4),
-        ],
-        &chunks,
-        None,
-    );
-    assert_eq!(packed.estimated_tokens, 7);
-    assert!(packed.within_budget());
-}
-
-#[test]
 fn rule_31_every_unincluded_ranked_candidate_is_counted() {
+    let large_body = "too large ".repeat(100);
     let packed = pack(
-        &request(1),
+        &request_with_item_budget(40),
         &[
             candidate("missing", Channel::Knowledge, 3.0, 1),
             candidate("large", Channel::Knowledge, 2.0, 2),
             candidate("fits", Channel::Knowledge, 1.0, 1),
         ],
-        &[chunk("large", "body", 2), chunk("fits", "body", 1)],
+        &[chunk("large", &large_body, 250), chunk("fits", "body", 1)],
         None,
     );
     assert_eq!(packed.items.len(), 1);
@@ -169,7 +104,7 @@ fn rule_31_every_unincluded_ranked_candidate_is_counted() {
 #[test]
 fn rule_32_weakest_included_score_is_the_minimum_or_zero() {
     let packed = pack(
-        &request(4),
+        &request_with_item_budget(100),
         &[
             candidate("a", Channel::Knowledge, 0.9, 2),
             candidate("b", Channel::Knowledge, 0.4, 2),
@@ -178,14 +113,15 @@ fn rule_32_weakest_included_score_is_the_minimum_or_zero() {
         None,
     );
     assert!((packed.omitted.weakest_included_score - 0.4).abs() < 1e-4);
-    let empty = pack(&request(0), &[], &[], None);
+    let empty = pack(&request_with_item_budget(0), &[], &[], None);
     assert_eq!(empty.omitted.weakest_included_score, 0.0);
 }
 
 #[test]
 fn rule_33_coverage_reports_all_and_included_candidate_tokens() {
+    let large_body = "too large ".repeat(100);
     let packed = pack(
-        &request(8),
+        &request_with_item_budget(100),
         &[
             candidate("a", Channel::Knowledge, 3.0, 5),
             candidate("b", Channel::Knowledge, 2.0, 7),
@@ -193,7 +129,7 @@ fn rule_33_coverage_reports_all_and_included_candidate_tokens() {
         ],
         &[
             chunk("a", "body", 5),
-            chunk("b", "body", 7),
+            chunk("b", &large_body, 7),
             chunk("c", "body", 3),
         ],
         None,
@@ -201,34 +137,21 @@ fn rule_33_coverage_reports_all_and_included_candidate_tokens() {
     assert_eq!(packed.omitted.coverage.candidates, 3);
     assert_eq!(packed.omitted.coverage.included, 2);
     assert_eq!(packed.omitted.coverage.candidate_tokens, 15);
-    assert_eq!(packed.omitted.coverage.included_tokens, 8);
-}
-
-#[test]
-fn rule_34_zero_budget_returns_an_empty_pack_with_coverage() {
-    let packed = pack(
-        &request(0),
-        &[
-            candidate("free", Channel::Knowledge, 2.0, 0),
-            candidate("costly", Channel::Knowledge, 1.0, 1),
-        ],
-        &[chunk("free", "body", 0), chunk("costly", "body", 1)],
-        None,
+    assert_eq!(
+        packed.omitted.coverage.included_tokens,
+        packed
+            .items
+            .iter()
+            .map(|item| item.token_count)
+            .sum::<usize>()
     );
-    assert!(packed.items.is_empty());
-    assert_eq!(packed.omitted.omitted, 2);
-    assert_eq!(packed.omitted.coverage.candidates, 2);
-    assert_eq!(packed.omitted.coverage.included, 0);
-    assert_eq!(packed.omitted.coverage.candidate_tokens, 1);
-    assert_eq!(packed.omitted.coverage.included_tokens, 0);
 }
 
-/// Pack a single chunk whose body is `body`, returning the item it produced.
 fn item_for_body(body: &str) -> ContextItem {
     let mut source = chunk("a", body, 1);
     source.content_hash = "sha256:deadbeef".to_string();
     let packed = pack(
-        &request(1),
+        &request_with_item_budget(1_000),
         &[candidate("a", Channel::Knowledge, 1.0, 1)],
         &[source],
         None,
@@ -236,8 +159,6 @@ fn item_for_body(body: &str) -> ContextItem {
     packed.items.into_iter().next().expect("chunk should fit")
 }
 
-/// The verbatim text a truncated excerpt quotes, with the marker line removed.
-/// Panics unless the marker really does sit alone on the final line.
 fn quoted_prefix(excerpt: &str) -> &str {
     excerpt
         .strip_suffix(EXCERPT_TRUNCATION_MARKER)
@@ -268,22 +189,17 @@ fn a_body_over_the_excerpt_bound_is_cut_at_a_line_and_marked() {
     assert!(excerpt.len() < body.len());
     let quoted = quoted_prefix(&excerpt);
     assert!(body.starts_with(quoted), "the excerpt must quote verbatim");
-    // Cut back to a line boundary, so no quoted line is half a source line.
     assert!(quoted.ends_with("prose that says something"));
 }
 
 #[test]
 fn an_excerpt_cut_landing_inside_a_multi_byte_character_does_not_panic() {
-    // The byte limit is 1600, which is not a multiple of 3, so the naive cut
-    // lands inside a '→'. Slicing a `&str` there panics; the packer walks back.
     let body = "→".repeat(700);
     let excerpt = item_for_body(&body).excerpt.expect("excerpt");
     let quoted = quoted_prefix(&excerpt);
     assert!(body.starts_with(quoted));
     assert_eq!(quoted.chars().count(), 533, "cut to the last whole '→'");
 
-    // The same trap with a 2-byte character pushed off alignment by a 1-byte
-    // prefix, so the limit lands mid-character from the other parity.
     let body = format!("a{}", "é".repeat(900));
     let excerpt = item_for_body(&body).excerpt.expect("excerpt");
     let quoted = quoted_prefix(&excerpt);
@@ -292,35 +208,122 @@ fn an_excerpt_cut_landing_inside_a_multi_byte_character_does_not_panic() {
 }
 
 #[test]
+fn an_item_is_charged_its_rendered_cost_not_its_body_estimate() {
+    let ranked = [candidate("small", Channel::Knowledge, 1.0, 10_000)];
+    let packed = pack(
+        &request_with_item_budget(100),
+        &ranked,
+        &[chunk("small", "body", 10_000)],
+        None,
+    );
+    let item = &packed.items[0];
+
+    assert_eq!(item.token_count, rendered_item_tokens(item));
+    assert_ne!(item.token_count, ranked[0].token_count);
+}
+
+#[test]
+fn an_excerpt_is_centred_on_the_matching_line_when_it_sits_past_the_window() {
+    let body = format!(
+        "## Heading\n{}needle appears near the end\n{}",
+        "ordinary filler line\n".repeat(600),
+        "tail line\n".repeat(20)
+    );
+    let mut pack_request = request_with_item_budget(1_000);
+    pack_request.surviving_terms = vec!["needle".to_string()];
+    let packed = pack(
+        &pack_request,
+        &[candidate("centred", Channel::Knowledge, 1.0, 3_000)],
+        &[chunk("centred", &body, 3_000)],
+        None,
+    );
+    let excerpt = packed.items[0].excerpt.as_deref().expect("excerpt");
+
+    assert!(excerpt.starts_with("[… earlier lines omitted]"));
+    assert!(excerpt.contains("needle appears near the end"));
+}
+
+#[test]
+fn the_pack_estimate_includes_the_frame() {
+    let packed = pack(&request_with_item_budget(0), &[], &[], None);
+    assert_eq!(packed.estimated_tokens, BRIEF_FRAME_TOKENS);
+    assert!(packed.within_budget());
+}
+
+#[test]
 fn property_pack_never_exceeds_budget() {
+    for iteration in 0..200_u32 {
+        assert_budget_invariant_holds(iteration.wrapping_add(1));
+    }
+}
+
+/// One fuzz iteration of the budget invariant: build a random corpus from
+/// `seed`, pack it, and assert every property that must hold no matter what
+/// the corpus turned out to be.
+fn assert_budget_invariant_holds(mut seed: u32) {
+    let (budget, chunks, ranked) = random_pack_corpus(&mut seed);
+    // Unpadded: `budget` ranges over 0..=1000 and is used exactly as the real
+    // budget, including every value at or below `BRIEF_FRAME_TOKENS` that the
+    // padded helper could never generate.
+    let packed = pack(&request_with_raw_budget(budget), &ranked, &chunks, None);
+
+    assert_eq!(
+        packed.estimated_tokens,
+        BRIEF_FRAME_TOKENS
+            + packed
+                .items
+                .iter()
+                .map(|item| item.token_count)
+                .sum::<usize>()
+    );
+    assert!(packed
+        .items
+        .iter()
+        .all(|item| item.token_count == rendered_item_tokens(item)));
+    assert_eq!(
+        packed.omitted.coverage.included + packed.omitted.omitted,
+        packed.omitted.coverage.candidates
+    );
+
+    if budget >= BRIEF_FRAME_TOKENS {
+        // The frame alone fits, and every item taken was checked against
+        // what remained of the budget, so the pack can never overshoot.
+        assert!(packed.estimated_tokens <= packed.budget_tokens);
+        assert!(packed.within_budget());
+    } else {
+        // Below the frame's own cost, the packer cannot lie its way into
+        // `within_budget()`: it charges the frame regardless, so this pack is
+        // honestly reported as over budget rather than silently treated as
+        // fitting — and with no room left even for the frame, no item can
+        // fit either.
+        assert!(!packed.within_budget());
+        assert!(packed.items.is_empty());
+    }
+}
+
+/// A pseudo-random `(budget, chunks, candidates)` corpus derived from `seed`,
+/// advancing it in place with the same LCG the property test has always used.
+fn random_pack_corpus(seed: &mut u32) -> (usize, Vec<KnowledgeChunk>, Vec<RankedCandidate>) {
     fn next(seed: &mut u32) -> u32 {
         *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         *seed
     }
 
-    for iteration in 0..200_u32 {
-        let mut seed = iteration.wrapping_add(1);
-        let count = (next(&mut seed) % 40) as usize;
-        let budget = (next(&mut seed) % 1_001) as usize;
-        let mut chunks = Vec::new();
-        let mut ranked = Vec::new();
-        for index in 0..count {
-            let tokens = (next(&mut seed) % 501) as usize;
-            let id = format!("chunk-{index}");
-            chunks.push(chunk(&id, "body", tokens));
-            ranked.push(candidate(
-                &id,
-                Channel::Knowledge,
-                next(&mut seed) as f32,
-                tokens,
-            ));
-        }
-        let packed = pack(&request(budget), &ranked, &chunks, None);
-        assert!(packed.estimated_tokens <= packed.budget_tokens);
-        assert!(packed.within_budget());
-        assert_eq!(
-            packed.omitted.coverage.included + packed.omitted.omitted,
-            packed.omitted.coverage.candidates
-        );
+    let count = (next(seed) % 40) as usize;
+    let budget = (next(seed) % 1_001) as usize;
+    let mut chunks = Vec::new();
+    let mut ranked = Vec::new();
+    for index in 0..count {
+        let tokens = (next(seed) % 501) as usize;
+        let id = format!("chunk-{index}");
+        let body = "x".repeat(tokens.saturating_mul(BYTES_PER_TOKEN_ESTIMATE));
+        chunks.push(chunk(&id, &body, tokens));
+        ranked.push(candidate(
+            &id,
+            Channel::Knowledge,
+            next(seed) as f32,
+            tokens,
+        ));
     }
+    (budget, chunks, ranked)
 }

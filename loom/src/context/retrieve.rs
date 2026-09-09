@@ -20,14 +20,16 @@ use crate::context::ingest::ingest;
 use crate::context::local_overlay::OverlayScope;
 use crate::context::pack::{pack, PackRequest};
 use crate::context::refresh::{evaluate, refresh};
-use crate::context::schema::{Channel, ContextPack, Freshness};
+use crate::context::schema::{
+    Channel, ContextPack, Freshness, LifecyclePolicy, RequiredRepresentation,
+};
 use crate::context::store::{ContextStore, StoreState};
 use crate::fs::knowledge::catalog::Catalog;
 use crate::fs::knowledge::KnowledgeDir;
 use crate::fs::work_dir::WorkDir;
 use anyhow::{anyhow, bail, Context, Result};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Everything a stage-scoped retrieval needs to be reproducible.
@@ -39,6 +41,10 @@ pub struct StageQuery {
     pub text: String,
     /// Chunk ids the caller demands verbatim.
     pub required_ids: Vec<String>,
+    /// Lifecycle states this query may retrieve.
+    pub lifecycle: LifecyclePolicy,
+    /// Representation used for required ids.
+    pub required_representation: RequiredRepresentation,
     /// Chunk ids referenced by stages this query's stage depends on.
     pub stage_dependency_ids: Vec<String>,
     /// Project-relative paths owned by the stages this query depends on.
@@ -64,6 +70,8 @@ impl StageQuery {
             work_dir_hint: work_dir_hint.into(),
             text: text.into(),
             required_ids: Vec::new(),
+            lifecycle: LifecyclePolicy::default(),
+            required_representation: RequiredRepresentation::default(),
             stage_dependency_ids: Vec::new(),
             dependency_paths: Vec::new(),
             scope: Channel::all().to_vec(),
@@ -151,28 +159,39 @@ pub(crate) fn resolve_roots(work_dir_hint: &Path) -> Result<(PathBuf, ContextSto
 /// With no knowledge tree there is nothing to ingest, so the catalog is empty
 /// and the knowledge channel contributes no candidates. [`evaluate_state`] is
 /// what keeps that honest.
-fn resolve_catalog(store: &ContextStore, knowledge_root: Option<&Path>) -> Result<Catalog> {
+fn resolve_catalog(
+    store: &ContextStore,
+    knowledge_root: Option<&Path>,
+) -> Result<(Catalog, StoreState)> {
     let Some(knowledge_root) = knowledge_root else {
-        return Ok(Catalog {
+        let catalog = Catalog {
             revision: String::new(),
             chunks: Vec::new(),
             issues: Vec::new(),
-        });
+        };
+        return Ok((catalog, evaluate_state(store, None)?));
     };
 
-    if let Err(error) = refresh(store, knowledge_root, true) {
-        eprintln!(
-            "warning: failed to refresh the context cache ({error}); using an in-memory catalog for this query"
-        );
-        let (catalog, _report) = ingest(knowledge_root)?;
-        return Ok(catalog);
-    }
-
-    match store.load_catalog()? {
-        Some(catalog) => Ok(catalog),
-        None => {
+    match refresh(store, knowledge_root, true) {
+        Ok(outcome) => {
+            let catalog = match store.load_catalog()? {
+                Some(catalog) => catalog,
+                None => ingest(knowledge_root)?.0,
+            };
+            let state = StoreState {
+                structural: outcome.structural,
+                semantic: outcome.semantic.freshness,
+                catalog_revision: catalog.revision.clone(),
+            };
+            Ok((catalog, state))
+        }
+        Err(error) => {
+            eprintln!(
+                "warning: failed to refresh the context cache ({error}); using an in-memory catalog for this query"
+            );
             let (catalog, _report) = ingest(knowledge_root)?;
-            Ok(catalog)
+            let state = evaluate_state(store, Some(knowledge_root))?;
+            Ok((catalog, state))
         }
     }
 }
@@ -185,6 +204,9 @@ fn resolve_catalog(store: &ContextStore, knowledge_root: Option<&Path>) -> Resul
 /// is not derived from the knowledge tree, and its revision is what
 /// [`graph::load_resolved_graph`] reads the base layer by.
 fn evaluate_state(store: &ContextStore, knowledge_root: Option<&Path>) -> Result<StoreState> {
+    #[cfg(test)]
+    EVALUATE_STATE_CALLS.with(|count| count.set(count.get() + 1));
+
     let Some(knowledge_root) = knowledge_root else {
         let stored = store.load_state()?;
         let semantic = if stored.semantic.revision.is_empty() {
@@ -264,19 +286,10 @@ pub fn retrieve_for_stage(query: &StageQuery, budget_tokens: usize) -> Result<Co
     let roots = resolve_roots_optional(&query.work_dir_hint)?;
     let knowledge_root = roots.knowledge_root.as_deref();
 
-    // Loaded once here, not inside each ranker: the two channels must score
-    // against the SAME tunables, and a per-ranker load would let one channel
-    // pick up an edit made between the two reads and silently rank the halves
-    // of one pack by different rules. It is also one file read per retrieval
-    // instead of one per channel, on a path the prompt hook runs constantly.
     let config = RetrievalConfig::load(&roots.main_project_root);
 
-    let catalog = resolve_catalog(&roots.store, knowledge_root)?;
-    let state = evaluate_state(&roots.store, knowledge_root)?;
+    let (catalog, state) = resolve_catalog(&roots.store, knowledge_root)?;
 
-    // The source graph is keyed by the semantic revision, not the structural
-    // one — they are different hash domains over different subjects (see the
-    // comment at `refresh.rs:177-182`), and the graph is semantic-derived data.
     let (graph, degraded) = graph::load_resolved_graph(
         &query.work_dir_hint,
         &roots.store,
@@ -286,20 +299,31 @@ pub fn retrieve_for_stage(query: &StageQuery, budget_tokens: usize) -> Result<Co
 
     check_require_ids(query, &catalog, graph.as_ref())?;
 
-    // The store's root, not the worktree's: it follows a worktree's `.loom/work`
-    // symlink to the main project, so parallel stages share one lexical index
-    // (A.13) instead of each rebuilding its own.
+    let chunks_by_id: BTreeMap<&str, &_> = catalog
+        .chunks
+        .iter()
+        .map(|chunk| (chunk.id.as_str(), chunk))
+        .collect();
     let ranked = channels::rank_channels_cached(
         &query.scope,
         &channels::build_rank_query(query),
         &catalog,
+        &chunks_by_id,
         graph.as_ref(),
+        query.lifecycle,
         &config,
         Some(roots.store.root()),
     );
     let fused = fuse(&ranked.lists);
 
-    let request = build_pack_request(query, budget_tokens, state, ranked.dropped_terms, degraded);
+    let request = build_pack_request(
+        query,
+        budget_tokens,
+        state,
+        ranked.dropped_terms,
+        ranked.surviving_terms,
+        degraded,
+    );
     Ok(pack(&request, &fused, &catalog.chunks, graph.as_ref()))
 }
 
@@ -322,15 +346,12 @@ fn check_require_ids(
     reject_unknown_require_ids(catalog, source_graph, &query.required_ids)
 }
 
-/// Assemble the packer's request from what this retrieval computed.
-///
-/// `degraded` comes straight from [`graph::load_resolved_graph`] — see its
-/// doc comment for what sets it (A.11).
 fn build_pack_request(
     query: &StageQuery,
     budget_tokens: usize,
     state: StoreState,
     dropped_terms: Vec<String>,
+    surviving_terms: Vec<String>,
     degraded: Option<String>,
 ) -> PackRequest {
     PackRequest {
@@ -340,8 +361,20 @@ fn build_pack_request(
         structural_freshness: state.structural,
         semantic_freshness: state.semantic,
         dropped_terms,
+        surviving_terms,
+        required_representation: query.required_representation,
         degraded,
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static EVALUATE_STATE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_evaluate_state_call_count() -> usize {
+    EVALUATE_STATE_CALLS.with(|count| count.replace(0))
 }
 
 /// Identity of the derived-data generation a pack was built from.

@@ -8,7 +8,7 @@ use super::compose::compose;
 use super::*;
 use crate::context::schema::{
     Channel, ChunkId, Confidence, ContextItem, Freshness, ItemKind, LifecycleState,
-    OmissionSummary, SelectionReason, SourcePointer,
+    OmissionSummary, SelectionReason, SourcePointer, BRIEF_FRAME_TOKENS,
 };
 
 /// The untrusted-data sentence the shared renderer must put in front of every
@@ -48,6 +48,7 @@ fn item(id: &str, content_hash: &str, excerpt: Option<&str>) -> ContextItem {
         state: LifecycleState::Active,
         content_hash: content_hash.to_string(),
         excerpt: excerpt.map(str::to_string),
+        truncated: false,
         matched_term_count: default_config().min_knowledge_terms,
     }
 }
@@ -69,6 +70,7 @@ fn pack_of(items: Vec<ContextItem>) -> ContextPack {
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         items,
+        unmet_required: Vec::new(),
         omitted: OmissionSummary::default(),
         dropped_terms: Vec::new(),
         degraded: None,
@@ -236,8 +238,9 @@ fn units_already_delivered_in_this_epoch_are_dropped() {
     assert_eq!(handed_over.items.len(), 1);
     assert_eq!(handed_over.items[0].id.as_str(), "arch#merge#0");
     assert_eq!(
-        handed_over.estimated_tokens, 42,
-        "the estimate must describe what is actually handed over"
+        handed_over.estimated_tokens,
+        BRIEF_FRAME_TOKENS + handed_over.items[0].token_count,
+        "the estimate must describe what is actually handed over, frame included"
     );
 
     let all = delivered(&[("arch#loop#0", "sha256:aa"), ("arch#merge#0", "sha256:bb")]);
@@ -310,8 +313,9 @@ fn an_oversized_pack_sheds_its_weakest_units_until_it_fits() {
         .collect();
     assert_eq!(ids, vec!["arch#strong#0"], "the strongest match survives");
     assert_eq!(
-        handed_over.estimated_tokens, 42,
-        "the estimate must describe what is actually handed over"
+        handed_over.estimated_tokens,
+        BRIEF_FRAME_TOKENS + handed_over.items[0].token_count,
+        "the estimate must describe what is actually handed over, frame included"
     );
     // The delivery record is written from `handed_over`, so it can only ever
     // list what was really emitted.

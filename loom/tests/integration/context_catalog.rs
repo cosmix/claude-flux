@@ -6,7 +6,7 @@ use loom::context::config::RetrievalConfig;
 use loom::context::fuse::fuse;
 use loom::context::pack::{pack, PackRequest};
 use loom::context::rank::{rank, RankQuery};
-use loom::context::schema::{Channel, Freshness};
+use loom::context::schema::{Channel, Freshness, RequiredRepresentation, BRIEF_FRAME_TOKENS};
 use loom::context::store::{canonical_json, ContextStore};
 use loom::fs::knowledge::catalog::{build, CatalogIssue};
 use tempfile::TempDir;
@@ -60,6 +60,8 @@ fn pack_request(query: &str, budget_tokens: usize) -> PackRequest {
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         dropped_terms: Vec::new(),
+        surviving_terms: Vec::new(),
+        required_representation: RequiredRepresentation::default(),
         degraded: None,
     }
 }
@@ -218,8 +220,9 @@ fn every_pack_reports_omissions_and_coverage() -> anyhow::Result<()> {
         );
         assert_eq!(packed.omitted.coverage.included, packed.items.len());
         assert_eq!(
-            packed.omitted.coverage.included_tokens,
-            packed.estimated_tokens
+            packed.omitted.coverage.included_tokens + BRIEF_FRAME_TOKENS,
+            packed.estimated_tokens,
+            "the pack estimate is the brief frame plus the rendered cost of what it carries"
         );
     }
     Ok(())

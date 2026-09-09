@@ -115,9 +115,9 @@ fn a_budget_clamps_into_its_legal_range() {
     let high = load("stage_brief_budget_tokens = 999999");
     let negative = load("max_payload_bytes = -8");
 
-    assert_eq!(low.prompt_budget_tokens, MIN_BUDGET);
+    assert_eq!(low.prompt_budget_tokens, MIN_BUDGET_TOKENS);
     assert_eq!(high.stage_brief_budget_tokens, MAX_BUDGET);
-    assert_eq!(negative.max_payload_bytes, MIN_BUDGET);
+    assert_eq!(negative.max_payload_bytes, MIN_BUDGET_TOKENS);
 }
 
 #[test]
