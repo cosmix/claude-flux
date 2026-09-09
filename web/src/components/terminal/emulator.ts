@@ -46,11 +46,11 @@ export function terminalTheme(): TerminalTheme {
   // ANSI accents mirror dashboard tones: blue=executing, green=completed,
   // red=blocked, yellow=warning, and cyan=queued.
   return {
-    background: "#1c1f27",
-    foreground: "#e3e5ea",
+    background: "#101216",
+    foreground: "#d8dce3",
     cursor: "#8fb4f0",
     selectionBackground: "#8fb4f04d",
-    black: "#1c1f27",
+    black: "#101216",
     red: "#e07a6f",
     green: "#7fc79a",
     yellow: "#d9b96a",
@@ -58,14 +58,14 @@ export function terminalTheme(): TerminalTheme {
     magenta: "#c59bd9",
     cyan: "#7fc3cf",
     white: "#c8cbd3",
-    brightBlack: "#5f6470",
+    brightBlack: "#89919e",
     brightRed: "#ed978e",
     brightGreen: "#9bd8ae",
     brightYellow: "#e6cc88",
     brightBlue: "#acc8f3",
     brightMagenta: "#d8b6e5",
     brightCyan: "#9bd6df",
-    brightWhite: "#f2f3f5",
+    brightWhite: "#eef0f4",
   };
 }
 

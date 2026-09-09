@@ -108,7 +108,6 @@ export function TerminalView({ stage, frame, factory, deps }: TerminalViewProps)
       />
       <div className="terminal-well-wrap">
         <div className="terminal-well" data-mode={mode} data-phase={phase} onKeyDown={onKeyDown}>
-          <div className="terminal-sheen" aria-hidden="true" />
           <div className="terminal-bar" aria-hidden="true" />
           <div ref={hostRef} className="terminal-host" aria-label="Agent terminal" />
           <Notice state={state} alive={stage.session_alive} terminals={terminals} retry={retry} />
@@ -150,13 +149,10 @@ function Head({
           loom/{stage.id} · worktree{base}
         </span>
       </div>
-      <div
-        className={cn("right rise flex flex-col items-end gap-2", frame === "dialog" && "pr-9")}
-        style={rise(2)}
-      >
+      <div className={cn("terminal-controls rise", frame === "dialog" && "pr-9")} style={rise(2)}>
         <ModeSwitch mode={mode} switchable={switchable} onMode={onMode} />
-        <span className="terminal-conn">
-          <span className="terminal-dot dot-live" aria-hidden="true" />
+        <span className="terminal-conn" role="status">
+          <span className="terminal-dot" aria-hidden="true" />
           {connectionWord(mode, phase)}
         </span>
       </div>

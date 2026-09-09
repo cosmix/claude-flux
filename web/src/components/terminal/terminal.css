@@ -1,11 +1,7 @@
 /*
- * The terminal: a pane of glass cut into the card with the agent live behind
- * it. The well is dark in both themes (a lightbox set into paper); the only
- * literal colours on this sheet are that well palette. The glass is the mode:
- * viewing shows a diagonal sheen and a hairline frame, taking control lifts
- * the sheen and lights the frame in the stage's tone. `data-mode` (view |
- * control) and `data-phase` (the six TerminalPhase values) sit on the well
- * and are mirrored on the frame and the dialog content.
+ * A flat charcoal terminal in both dashboard themes. Keep the well palette
+ * aligned with terminalTheme in emulator.ts. Mode and connection state are
+ * mirrored on the well, frame and dialog content.
  */
 @layer components {
   .terminal-frame[data-frame="dialog"] {
@@ -32,18 +28,28 @@
     animation-delay: calc(var(--i, 0) * 40ms);
   }
 
+  .terminal-controls {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
   .terminal-seg {
     display: inline-flex;
     padding: 2px;
     border: 1px solid var(--hairline);
-    border-radius: 999px;
+    border-radius: 8px;
     background: var(--muted);
   }
   .terminal-seg button {
+    min-height: 28px;
     padding: 4px 12px;
-    border-radius: 999px;
+    border-radius: 6px;
     font-size: 12px;
     font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
     color: var(--muted-foreground);
     transition:
       background-color 150ms ease,
@@ -67,13 +73,21 @@
   .terminal-conn {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    font-family: var(--font-mono);
+    justify-content: center;
+    min-height: 24px;
+    gap: 6px;
     font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    text-transform: capitalize;
     color: var(--muted-foreground);
+  }
+  [data-mode="control"][data-phase="live"] .terminal-conn {
+    color: var(--tone-executing);
   }
   .terminal-dot {
     --tone: var(--tone-executing);
+    flex: none;
     width: 6px;
     height: 6px;
     border-radius: 50%;
@@ -92,11 +106,10 @@
     padding: 14px 20px;
   }
   .terminal-well {
-    --well: oklch(0.17 0.012 255);
-    --well-fg: oklch(0.9 0.01 255);
-    --well-dim: oklch(0.62 0.02 255);
+    --well: #101216;
+    --well-fg: #d8dce3;
+    --well-dim: #89919e;
     --well-rule: oklch(1 0 0 / 0.08);
-    --sheen: oklch(1 0 0 / 0.06);
     position: relative;
     height: 100%;
     border-radius: 8px;
@@ -106,10 +119,6 @@
     overflow: hidden;
     animation: terminal-fade 240ms ease-out both;
     transition: box-shadow 300ms ease;
-  }
-  .dark .terminal-well {
-    --well: oklch(0.13 0.012 255);
-    --sheen: oklch(1 0 0 / 0.045);
   }
   .terminal-well:focus-within {
     outline: none;
@@ -131,14 +140,6 @@
     background-color: transparent !important;
   }
 
-  .terminal-sheen {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    background: linear-gradient(115deg, transparent 30%, var(--sheen) 46%, transparent 58%);
-    pointer-events: none;
-    transition: opacity 300ms ease;
-  }
   .terminal-bar {
     position: absolute;
     left: 0;
@@ -151,16 +152,7 @@
     transition: opacity 300ms ease;
   }
 
-  /* View: the agent's own screen, framed by a hairline inside the well. */
-  .terminal-well[data-mode="view"] .terminal-host {
-    border-radius: 4px;
-    box-shadow: 0 0 0 1px var(--well-rule);
-  }
-
-  /* Control: the glass lifts, the frame lights. */
-  .terminal-well[data-mode="control"] .terminal-sheen {
-    opacity: 0;
-  }
+  /* Control: a quiet accent marks the active input surface. */
   .terminal-well[data-mode="control"] .terminal-bar {
     opacity: 1;
   }
@@ -278,8 +270,10 @@
     .terminal-head {
       flex-direction: column;
     }
-    .terminal-head .right {
-      align-items: flex-start;
+    .terminal-controls {
+      flex-direction: row;
+      align-items: center;
+      gap: 12px;
     }
   }
 }
@@ -312,7 +306,6 @@
     animation: none;
   }
   .terminal-well,
-  .terminal-sheen,
   .terminal-bar,
   .terminal-host,
   .terminal-seg button {
