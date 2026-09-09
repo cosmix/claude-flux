@@ -22,6 +22,12 @@ export interface TerminalDeps {
 export const RETRY_WAITING_MS = 2000;
 export const RETRY_DROPPED_MS = 1000;
 
+/**
+ * Below the server's 64 KiB `max_frame_size` (`bridge.rs`), leaving headroom
+ * so a single frame never brushes the cap.
+ */
+const MAX_SEND_CHUNK_BYTES = 32 * 1024;
+
 export class TerminalConnection {
   private attempts = 0;
   private openedOnce = false;
@@ -60,7 +66,16 @@ export class TerminalConnection {
 
   send(data: string): void {
     if (this.mode !== "control" || !this.socketIsOpen()) return;
-    this.socket?.send(new TextEncoder().encode(data));
+    // Encode first, then slice the bytes: slicing the string instead and
+    // encoding each piece separately could split a surrogate pair across two
+    // pieces, corrupting it. The PTY reassembles a byte stream and does not
+    // care where frame boundaries fall, so an oversized paste is chunked into
+    // ordered frames on the same socket rather than sent as one frame that
+    // would exceed the server's cap.
+    const bytes = new TextEncoder().encode(data);
+    for (let offset = 0; offset < bytes.length; offset += MAX_SEND_CHUNK_BYTES) {
+      this.socket?.send(bytes.subarray(offset, offset + MAX_SEND_CHUNK_BYTES));
+    }
   }
 
   resize(size: EmulatorSize): void {
@@ -131,6 +146,10 @@ export class TerminalConnection {
   private handleKnownClose(event: CloseEvent): boolean {
     if (event.code === 1000) this.emit("ended", event.reason);
     else if (event.code === 1001) this.emit("dropped", "server stopping");
+    // 1009 is the server's `CLOSE_TOO_LARGE`: a frame past its 64 KiB cap left
+    // the input stream out of sync. Refused rather than dropped, because
+    // reconnecting sends the same oversized frame again.
+    else if (event.code === 1009) this.emit("refused", "input too large");
     else if (event.code === 4004 || event.code === 4008) this.emit("refused", event.reason);
     else if (event.code === 4009) {
       this.emit("waiting", event.reason);

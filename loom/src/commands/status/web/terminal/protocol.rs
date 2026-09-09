@@ -61,6 +61,10 @@ pub(super) fn clamp(size: WindowSize) -> WindowSize {
 /// The agent's tmux client exited normally.
 pub(super) const CLOSE_ENDED: u16 = 1000;
 pub(super) const CLOSE_SERVER_STOPPING: u16 = 1001;
+/// The browser sent a frame past `max_message_size`, so the input stream is
+/// no longer in sync. Named on the wire because an oversize paste is
+/// otherwise indistinguishable from a dropped connection.
+pub(super) const CLOSE_TOO_LARGE: u16 = 1009;
 /// No stage with this id exists. Permanent; the page never retries.
 pub(super) const CLOSE_UNKNOWN_STAGE: u16 = 4004;
 /// The stage exists but can never be attached in this shape.

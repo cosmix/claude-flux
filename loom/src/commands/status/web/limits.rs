@@ -24,6 +24,17 @@ pub(super) const MAX_WEBSOCKETS: usize = 48;
 /// Browser terminals allowed in flight at once.
 pub(super) const MAX_TERMINALS: usize = 8;
 
+/// Largest inbound message and frame accepted from a browser on either
+/// WebSocket lane.
+///
+/// The dashboard snapshot socket discards every message the client sends, so
+/// nothing there ever needs to buffer one; the terminal socket stages
+/// keystrokes, which stay far under this bound. Both configure it as their
+/// `max_message_size` and `max_frame_size` so tungstenite's 64 MiB / 16 MiB
+/// defaults cannot let a local client make a connection thread hold that
+/// much for nothing.
+pub(super) const MAX_INBOUND_BYTES: usize = 64 * 1024;
+
 /// The two lanes a connection can occupy a slot in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Lane {

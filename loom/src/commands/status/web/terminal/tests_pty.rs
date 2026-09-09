@@ -80,7 +80,10 @@ fn pty_child_shutdown_reaps_the_child() {
     let pid = child.pid();
     let started = Instant::now();
     child.shutdown();
-    assert!(started.elapsed() < Duration::from_secs(3));
+    // A clean hangup finishes in milliseconds; `shutdown`'s kill fallback
+    // takes 2 seconds. This bound must stay below that deadline, or the
+    // assertion passes whether the hangup worked or the child was killed.
+    assert!(started.elapsed() < Duration::from_secs(1));
     assert!(!is_process_alive(pid), "child {pid} remains alive");
 }
 

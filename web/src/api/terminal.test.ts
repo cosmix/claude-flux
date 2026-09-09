@@ -146,6 +146,7 @@ describe("terminal connection", () => {
     const cases = [
       { code: 1000, phase: "ended", reason: "server reason", retry: false },
       { code: 1001, phase: "dropped", reason: "server stopping", retry: false },
+      { code: 1009, phase: "refused", reason: "input too large", retry: false },
       { code: 4004, phase: "refused", reason: "server reason", retry: false },
       { code: 4008, phase: "refused", reason: "server reason", retry: false },
       { code: 4009, phase: "waiting", reason: "server reason", retry: true },
@@ -214,6 +215,38 @@ describe("terminal connection", () => {
     connection.send("ignored");
 
     expect(socket.sent).toHaveLength(0);
+    connection.close();
+  });
+
+  it("chunks a paste over 32 KiB into ordered frames that reassemble exactly", () => {
+    const { connection } = connect();
+    const socket = FakeSocket.instances[0];
+    socket.open();
+
+    // 32767 ASCII bytes, then a surrogate-pair emoji (2 UTF-16 code units, 4
+    // UTF-8 bytes), so a naive implementation slicing the *string* at a
+    // 32768-code-unit boundary would cut the emoji's surrogate pair in half
+    // and corrupt it. Byte-slicing the encoded payload instead never does
+    // that: the PTY reassembles a byte stream regardless of where a
+    // multi-byte character's bytes fall relative to a frame boundary.
+    const payload = "a".repeat(32 * 1024 - 1) + "\u{1F4A9}" + "b".repeat(40 * 1024);
+    const expected = new TextEncoder().encode(payload);
+
+    connection.send(payload);
+
+    const frames = socket.sent as Uint8Array[];
+    expect(frames.length).toBeGreaterThan(1);
+    for (const frame of frames) {
+      expect(frame.byteLength).toBeLessThanOrEqual(32 * 1024);
+    }
+    const reassembled = new Uint8Array(expected.length);
+    let offset = 0;
+    for (const frame of frames) {
+      reassembled.set(frame, offset);
+      offset += frame.byteLength;
+    }
+    expect(offset).toBe(expected.length);
+    expect(Array.from(reassembled)).toEqual(Array.from(expected));
     connection.close();
   });
 

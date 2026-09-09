@@ -9,15 +9,10 @@ use std::time::Duration;
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::{Error, Message};
 
+use super::limits::MAX_INBOUND_BYTES;
+
 /// How long a blocked send or an idle read may hold the connection thread.
 const SOCKET_TIMEOUT: Duration = Duration::from_millis(250);
-
-/// Largest inbound message and frame accepted from a dashboard client.
-///
-/// The pump discards every message the client sends, so nothing here ever
-/// needs to buffer one; tungstenite's 64 MiB / 16 MiB defaults would let a
-/// local client make this thread hold that much for nothing.
-const MAX_INBOUND_BYTES: usize = 64 * 1024;
 
 /// Complete a peek-preserved handshake, then stream snapshot text frames until
 /// the client leaves or `running` clears.

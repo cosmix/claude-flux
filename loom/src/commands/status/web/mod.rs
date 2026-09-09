@@ -49,6 +49,12 @@
 //! the agents. When enabled, this process adopts the live daemon's recorded
 //! tmux socket directory once before serving; without a live daemon it keeps
 //! the ambient `TMUX_TMPDIR`.
+//!
+//! The token cookie is named per port so two dashboards cannot clobber each
+//! other's, but cookies are not port-scoped: any other `http://127.0.0.1:<port>`
+//! page can still overwrite it for the shared `127.0.0.1` host. That cannot
+//! forge a valid token, but it does surface as terminals returning 401
+//! ("Dashboard cookie missing") until the operator re-opens the tokenized URL.
 
 mod assets;
 mod broadcast;
