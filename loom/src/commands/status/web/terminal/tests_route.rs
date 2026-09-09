@@ -4,6 +4,10 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::models::session::{Session, SessionBackendKind, SessionStatus};
 
+use super::protocol::{
+    CLOSE_ENDED, CLOSE_NOT_YET, CLOSE_REFUSED, CLOSE_SERVER_STOPPING, CLOSE_TOO_LARGE,
+    CLOSE_UNKNOWN_STAGE,
+};
 use super::resolve::{attach_args, resolve, Refusal, Target};
 use super::token;
 use super::upgrade::origin_matches_host;
@@ -118,9 +122,37 @@ fn refusal_close_code_table() {
         (Refusal::NotReady, 4009, "still spawning, or just ended"),
     ];
     for (refusal, code, reason) in table {
+        // Exhaustive: a `Refusal` variant (`resolve.rs:27-33`) added without a
+        // matching row above fails to *compile* here, instead of silently
+        // reaching the browser with whatever `close_code()` returns.
+        match refusal {
+            Refusal::UnknownStage
+            | Refusal::NativeBackend
+            | Refusal::Unrenderable
+            | Refusal::NoSession
+            | Refusal::NotReady => {}
+        }
         assert_eq!(refusal.close_code(), code);
         assert_eq!(refusal.reason(), reason);
     }
+}
+
+#[test]
+fn close_codes_match_the_literal_wire_values_the_browser_depends_on() {
+    // `web/src/api/terminal.ts` matches these as literal numbers (1000/1001
+    // for a clean end/stop, 4004/4008/4009 for refusals). Changing any of
+    // them here without updating that file breaks the browser terminal:
+    // eg. a changed `CLOSE_ENDED` would still pass every other Rust test
+    // (they compare against this same constant) while the browser fell
+    // through to its 1006 retry path and showed "connection dropped".
+    assert_eq!(CLOSE_ENDED, 1000);
+    assert_eq!(CLOSE_SERVER_STOPPING, 1001);
+    // 1009 is the RFC 6455 "message too big" code; the browser has no row for
+    // it yet, so today an oversize paste still reads as a generic drop there.
+    assert_eq!(CLOSE_TOO_LARGE, 1009);
+    assert_eq!(CLOSE_UNKNOWN_STAGE, 4004);
+    assert_eq!(CLOSE_REFUSED, 4008);
+    assert_eq!(CLOSE_NOT_YET, 4009);
 }
 
 #[test]
@@ -164,4 +196,55 @@ fn origin_must_match_the_request_host() {
 #[test]
 fn cookie_name_is_scoped_to_the_bound_port() {
     assert_eq!(token::cookie_name(7373), "loom_dashboard_7373");
+}
+
+#[test]
+fn matches_requires_exact_equal_length_strings() {
+    assert!(!token::matches(None, "expected"));
+    assert!(token::matches(Some("expected"), "expected"));
+    // A presented value that is a strict prefix of the expected one must not match.
+    assert!(!token::matches(Some("expect"), "expected"));
+    // Equal length, different content, must not match either.
+    assert!(!token::matches(Some("expecteX"), "expected"));
+}
+
+#[test]
+fn cookie_token_finds_the_named_cookie_among_others() {
+    assert_eq!(
+        token::cookie_token(Some("loom_dashboard_7373=abc"), "loom_dashboard_7373"),
+        Some("abc")
+    );
+    // Regression guard: a leading space after `;` must not defeat the match.
+    assert_eq!(
+        token::cookie_token(
+            Some("other=x; loom_dashboard_7373=abc"),
+            "loom_dashboard_7373"
+        ),
+        Some("abc")
+    );
+    assert_eq!(
+        token::cookie_token(
+            Some("loom_dashboard_7373=abc; other=x"),
+            "loom_dashboard_7373"
+        ),
+        Some("abc")
+    );
+    assert_eq!(
+        token::cookie_token(Some("other=x"), "loom_dashboard_7373"),
+        None
+    );
+    assert_eq!(token::cookie_token(None, "loom_dashboard_7373"), None);
+    // A cookie whose name is a strict prefix of the target must not match.
+    assert_eq!(
+        token::cookie_token(Some("loom_dashboard_73=x"), "loom_dashboard_7373"),
+        None
+    );
+}
+
+#[test]
+fn query_token_reads_the_token_parameter() {
+    assert_eq!(token::query_token(Some("token=abc")), Some("abc"));
+    assert_eq!(token::query_token(Some("a=1&token=abc")), Some("abc"));
+    assert_eq!(token::query_token(Some("tokenish=abc")), None);
+    assert_eq!(token::query_token(None), None);
 }

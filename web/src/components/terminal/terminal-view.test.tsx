@@ -337,7 +337,7 @@ describe("terminal view", () => {
     expect(controlRouter.state.location.search).toBe(`?stage=${stage.id}&view=terminal`);
   });
 
-  it("tab in control mode stays in the well and reaches the binary transport", async () => {
+  it("tab in control mode is stopped before it reaches the dialog's focus trap", async () => {
     const timers = fakeTimers();
     const factory = fakeFactory();
     const stage = terminalStage();
@@ -350,6 +350,15 @@ describe("terminal view", () => {
     await waitFor(() => expect(emulator.calls.opened).toHaveLength(1));
     const socket = FakeSocket.instances[1];
     act(() => socket.open());
+    // Radix's focus-trap/dismissable-layer listeners (like most of its
+    // internals) are plain `document.addEventListener` calls, not React
+    // props, so they sit above wherever React's own delegated listener is
+    // attached. A spy on the dialog *node* would fire on ordinary native
+    // bubbling regardless of `stopPropagation`, since that call only takes
+    // effect once the event reaches React's listener; `document` is the
+    // one place a stopped event provably never reaches.
+    const documentKeyDown = vi.fn();
+    document.addEventListener("keydown", documentKeyDown);
     const input = document.createElement("textarea");
     input.addEventListener("keydown", (event) => {
       if (event.key === "Tab") emulator.emit("\t");
@@ -357,13 +366,37 @@ describe("terminal view", () => {
     emulator.calls.opened[0].append(input);
     input.focus();
     fireEvent.keyDown(input, { key: "Tab" });
+    document.removeEventListener("keydown", documentKeyDown);
 
-    expect(well().contains(document.activeElement)).toBe(true);
+    expect(documentKeyDown).not.toHaveBeenCalled();
     // jsdom's TextEncoder builds its Uint8Array from a realm distinct from the
     // test's global Uint8Array, so `instanceof` never matches; ArrayBuffer.isView
     // is the realm-safe way to confirm this is a binary frame, not a JSON one.
     expect(socket.sent.some((frame) => ArrayBuffer.isView(frame))).toBe(true);
     expect(Array.from(socket.sent.at(-1) as Uint8Array)).toEqual([9]);
+  });
+
+  it("tab in view mode reaches the dialog's focus trap", async () => {
+    const timers = fakeTimers();
+    const factory = fakeFactory();
+    const stage = terminalStage();
+    renderModal(stage, factory.factory, timers.deps, `/?stage=${stage.id}&view=terminal`);
+
+    const emulator = await waitForMount(factory);
+    await waitFor(() => expect(emulator.calls.opened).toHaveLength(1));
+    // The negative half of the assertion above: a handler that stopped
+    // every Tab unconditionally would also pass the control-mode test, so
+    // this pins that view mode (the default here — no "Take control" click)
+    // must let Tab reach the trap.
+    const documentKeyDown = vi.fn();
+    document.addEventListener("keydown", documentKeyDown);
+    const input = document.createElement("textarea");
+    emulator.calls.opened[0].append(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "Tab" });
+    document.removeEventListener("keydown", documentKeyDown);
+
+    expect(documentKeyDown).toHaveBeenCalledTimes(1);
   });
 
   it("unmount before the emulator resolves disposes the late emulator without opening a socket", async () => {
