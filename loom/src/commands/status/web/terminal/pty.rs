@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 use nix::pty::{openpty, Winsize};
 
 use super::protocol::WindowSize;
@@ -22,6 +22,16 @@ impl PtyChild {
     pub(super) fn spawn(command: &mut Command, size: WindowSize) -> std::io::Result<Self> {
         let winsize = winsize(size);
         let pair = openpty(Some(&winsize), None).map_err(io::Error::from)?;
+        // `openpty(3)` opens the master without `O_CLOEXEC`, so left alone
+        // the master fd survives into the child across `spawn`'s fork+exec.
+        // A master fd open in the child means the child's own copy keeps the
+        // slave from ever seeing a hangup, so `shutdown`'s `drop(master)`
+        // stops working and every close pays its two-second kill fallback.
+        // Set on the master only: the slave clones below are already
+        // CLOEXEC (`try_clone` uses `F_DUPFD_CLOEXEC`), and the child's
+        // stdin/stdout/stderr are `dup2`'d from them, which clears CLOEXEC
+        // on those destination fds as intended.
+        fcntl(&pair.master, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC)).map_err(io::Error::from)?;
         let flags = fcntl(&pair.master, FcntlArg::F_GETFL).map_err(io::Error::from)?;
         let flags = OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK;
         fcntl(&pair.master, FcntlArg::F_SETFL(flags)).map_err(io::Error::from)?;
