@@ -17,7 +17,7 @@ use super::resolve::{self, attach_args, Refusal, Target};
 use super::token;
 use super::{Mode, WindowSize};
 use crate::commands::status::web::connection::fail;
-use crate::commands::status::web::http::RequestHead;
+use crate::commands::status::web::http::{host_allowed, RequestHead};
 use crate::commands::status::web::limits::{acquire_terminal_slot, Limits, Slot};
 use crate::commands::status::web::TerminalLane;
 
@@ -86,6 +86,15 @@ fn admit<'a>(
     running: &AtomicBool,
     limits: &Arc<Limits>,
 ) -> Option<(&'a str, bool, Slot)> {
+    // Re-asserted here rather than trusted to the caller: `connection::handle`
+    // checks this ahead of routing today, but `handle_upgrade` is
+    // `pub(crate)` and this lane is a keystroke-injection surface, so the
+    // gate belongs to the lane it guards rather than to whichever caller
+    // happens to sit above it.
+    if !host_allowed(head.host.as_deref()) {
+        fail(stream, 403, "Forbidden", b"host not allowed");
+        return None;
+    }
     let Some(lane) = lane else {
         fail(stream, 404, "Not Found", b"not found");
         return None;
@@ -164,7 +173,7 @@ pub(super) fn origin_matches_host(origin: Option<&str>, host: Option<&str>) -> b
     !authority.is_empty() && authority == host
 }
 
-fn terminal_path(path: &str) -> Option<(&str, bool)> {
+pub(super) fn terminal_path(path: &str) -> Option<(&str, bool)> {
     let mut parts = path.strip_prefix("/ws/terminal/")?.split('/');
     let stage_id = parts.next()?;
     let control = match parts.next()? {
