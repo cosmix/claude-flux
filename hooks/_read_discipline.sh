@@ -1,23 +1,7 @@
 #!/usr/bin/env bash
-# _read_discipline.sh - Shared read-discipline core for read-guard.sh (Task
-# C, the Read tool) and poll-guard.sh (Task D, Bash-side cat/head/tail/sed
-# and the repeated-command counter).
-#
-# This is a SOURCED LIBRARY, not a hook - it is never registered as a
-# PreToolUse entry, exactly like _common.sh. Source _common.sh first (for
-# strip_embedded_content/loom_tokenize_command/loom_tokens_*/loom_debug/
-# is_ancestor/loom_deny_enabled), then this file.
-#
-# What lives here: the 400-line ceiling constant, the binary/image
-# extension skip list, the verification-runner exemption set, the outline
-# fetch, and the warn/deny queuing helpers every rule in both hooks goes
-# through. The actual "is this read too big / a repeat / tier-1 knowledge"
-# decision tree is loom_read_discipline_check(), the ONE place both hooks
-# call so their rules 1-3 can never drift apart. The ledger read/write/cap
-# helpers (_loom_ledger_append, _loom_reads_full_count_and_ts,
-# _loom_reads_range_count, _loom_polls_count) live in the sourced
-# hooks/_read_ledger.sh, split out purely for size - this file sources it
-# below, so read-guard.sh/poll-guard.sh get it transitively.
+# Shared read-discipline core for Read and Bash-side cat/head/tail/sed.
+# Source _common.sh first. This library owns size limits, skip lists,
+# outline fetching and shared decisions; _read_ledger.sh holds ledger helpers.
 #
 # Bash 3.2+ compatible (macOS default), same constraint as _common.sh: no
 # associative arrays, no `${arr[-1]}`, no `${var,,}`. Every `${arr[@]}`
@@ -103,21 +87,24 @@ _loom_is_knowledge_index_path() {
 	return 1
 }
 
-# _loom_is_skill_md_path <path> - Return 0 when <path> is a skill's SKILL.md
-# under either skill root: the catalog (.claude/loom-skill-catalog/<name>/
-# SKILL.md) or the indexed directory (.claude/skills/<name>/SKILL.md).
-# Matched on the path SUFFIX shape rather than an absolute home path, because
-# the hook receives whatever path the calling tool was invoked with -
-# relative, `~`-relative, or absolute under a non-default HOME. A skill is
-# meant to be read whole (skills/loom-skills/SKILL.md says so explicitly),
-# and 22 catalogued skills exceed READ_GUARD_LINE_LIMIT - without this
-# exemption, rule 1 would tell an agent to read a partial skill and rule 2
-# would deny loading the same skill a third time in one session.
+# Skills are intentionally read in full, including catalogued skills over
+# 400 lines. This exempts read-discipline checks, not filesystem containment.
+# Accept both clients' standard roots, native .agents skills, and custom installs.
 _loom_is_skill_md_path() {
-	local path="$1"
+	local path="$1" root
 	case "$path" in
-	*.claude/loom-skill-catalog/*/SKILL.md | *.claude/skills/*/SKILL.md) return 0 ;;
+	*.claude/loom-skill-catalog/*/SKILL.md | *.claude/skills/*/SKILL.md | \
+	*.codex/loom-skill-catalog/*/SKILL.md | *.codex/skills/*/SKILL.md | \
+	*.agents/skills/*/SKILL.md) return 0 ;;
 	esac
+	root="${BASH_SOURCE[0]%/hooks/loom/*}"
+	[[ "$root" == "${BASH_SOURCE[0]}" ]] && root=""
+	for root in "$root" "${CODEX_HOME:-}"; do
+		[[ -n "$root" ]] || continue
+		case "$path" in
+		"${root%/}"/skills/*/SKILL.md | "${root%/}"/loom-skill-catalog/*/SKILL.md) return 0 ;;
+		esac
+	done
 	return 1
 }
 
