@@ -110,11 +110,19 @@ fn shrink_buffers(stream: &TcpStream, bytes: libc::c_int) {
     }
 }
 
-/// Read until `needle` shows up in the bridge's output, or the deadline
-/// passes. Output accumulates across messages because the bridge reads the
-/// PTY in 16 KiB chunks, so any needle can straddle a message boundary.
-fn wait_for_binary(socket: &mut WebSocket<TcpStream>, needle: &[u8], timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
+/// Shared loop behind `wait_for_binary` and `wait_for_binary_progressing`.
+/// Output accumulates across messages because the bridge reads the PTY in
+/// 16 KiB chunks, so any needle can straddle a message boundary. With
+/// `refresh_on_data` set, the deadline is pushed out to `budget` from now
+/// every time a message carries bytes without yet completing the needle,
+/// turning `budget` from a total wall-clock allowance into an idle timeout.
+fn read_until(
+    socket: &mut WebSocket<TcpStream>,
+    needle: &[u8],
+    budget: Duration,
+    refresh_on_data: bool,
+) -> bool {
+    let mut deadline = Instant::now() + budget;
     let mut seen: Vec<u8> = Vec::new();
     while Instant::now() < deadline {
         match socket.read() {
@@ -122,6 +130,9 @@ fn wait_for_binary(socket: &mut WebSocket<TcpStream>, needle: &[u8], timeout: Du
                 seen.extend_from_slice(&bytes);
                 if seen.windows(needle.len()).any(|part| part == needle) {
                     return true;
+                }
+                if refresh_on_data {
+                    deadline = Instant::now() + budget;
                 }
             }
             Ok(Message::Close(_)) => return false,
@@ -135,6 +146,32 @@ fn wait_for_binary(socket: &mut WebSocket<TcpStream>, needle: &[u8], timeout: Du
         }
     }
     false
+}
+
+/// Read until `needle` shows up in the bridge's output, or the deadline
+/// passes. Output accumulates across messages because the bridge reads the
+/// PTY in 16 KiB chunks, so any needle can straddle a message boundary.
+fn wait_for_binary(socket: &mut WebSocket<TcpStream>, needle: &[u8], timeout: Duration) -> bool {
+    read_until(socket, needle, timeout, false)
+}
+
+/// Like `wait_for_binary`, but `idle` is a budget between bytes rather than a
+/// total wall-clock allowance: every message that carries data pushes the
+/// deadline back out. Some waits here watch a bulk transfer of hundreds of
+/// kilobytes through deliberately shrunk kernel socket buffers, and how long
+/// that takes is set by how much CPU the fixture gets rather than by anything
+/// the bridge does - under `scripts/flake-check.sh`'s concurrent load the
+/// transfer can stretch well past what looks like a generous fixed budget
+/// while never once stalling. A fixed `wait_for_binary` budget on such a wait
+/// measures the machine, not the bridge; a deadline that resets on every byte
+/// keeps the real assertion - output must keep arriving - without guessing at
+/// how fast it has to arrive.
+fn wait_for_binary_progressing(
+    socket: &mut WebSocket<TcpStream>,
+    needle: &[u8],
+    idle: Duration,
+) -> bool {
+    read_until(socket, needle, idle, true)
 }
 
 fn wait_for_close(socket: &mut WebSocket<TcpStream>, timeout: Duration) -> Option<u16> {

@@ -15,8 +15,8 @@ use tungstenite::{Message, WebSocket};
 use super::super::bridge::GATE_STALL_TIMEOUT;
 use super::super::protocol::{Mode, CLOSE_REFUSED, CLOSE_SERVER_STOPPING};
 use super::{
-    gating_flood, join_within, skip_bridge_test, start_bridge, start_bridge_with, wait_for_binary,
-    wait_for_close, wait_for_close_frame,
+    gating_flood, join_within, skip_bridge_test, start_bridge, start_bridge_with,
+    wait_for_binary_progressing, wait_for_close, wait_for_close_frame,
 };
 
 /// How long the stalled half of the test below watches for a marker that must
@@ -82,7 +82,7 @@ fn bridge_backpressure_keeps_a_flood_of_input_whole() {
         path.display()
     );
     let mut fixture = start_bridge(script, Mode::Control);
-    assert!(wait_for_binary(
+    assert!(wait_for_binary_progressing(
         &mut fixture.socket,
         b"ready",
         Duration::from_secs(10)
@@ -92,7 +92,7 @@ fn bridge_backpressure_keeps_a_flood_of_input_whole() {
     // Two seconds against the child's three second hold, leaving a second for
     // the lag between it printing `ready` and this thread seeing it.
     flood_within(&mut fixture.socket, &sent, Duration::from_secs(2));
-    assert!(wait_for_binary(
+    assert!(wait_for_binary_progressing(
         &mut fixture.socket,
         b"drained",
         Duration::from_secs(20)
@@ -123,7 +123,7 @@ fn bridge_survives_a_client_that_stops_reading() {
         GATE_STALL_TIMEOUT,
     );
     thread::sleep(Duration::from_millis(750));
-    assert!(wait_for_binary(
+    assert!(wait_for_binary_progressing(
         &mut fixture.socket,
         b"END",
         Duration::from_secs(20)
@@ -223,7 +223,7 @@ fn bridge_leaves_pty_output_upstream_while_the_client_is_stalled() {
     // appears. Without this the assertion above would also pass against a
     // script that could never write the marker at all.
     let mut reading = start_bridge_with(script, Mode::Control, Some(8 * 1024), GATE_STALL_TIMEOUT);
-    assert!(wait_for_binary(
+    assert!(wait_for_binary_progressing(
         &mut reading.socket,
         b"DONE",
         Duration::from_secs(30)
