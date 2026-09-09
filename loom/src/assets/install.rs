@@ -75,7 +75,8 @@ pub fn install_all(
     )?;
     backups.extend(install_doctrine(paths)?);
     claude::write_layout(&paths.claude_dir, layout)?;
-    skill_index::execute_in_claude_dir(&paths.claude_dir, false)?;
+    skill_index::execute_in_agent_dir(&paths.claude_dir, false)?;
+    skill_index::execute_in_agent_dir(&paths.codex_dir, false)?;
     if refresh_completions {
         let home = dirs::home_dir().context("Failed to determine home directory")?;
         completions::install::refresh_existing_in(&home)?;

@@ -42,6 +42,25 @@ fn install_writes_assets_and_codex_native_config() {
 }
 
 #[test]
+fn codex_prompt_registers_skill_detection_with_native_rendering() {
+    let temp = TempDir::new().unwrap();
+    install_codex_hooks_to(temp.path()).unwrap();
+    let config: Value =
+        serde_json::from_slice(&fs::read(temp.path().join("hooks.json")).unwrap()).unwrap();
+    let commands = config["hooks"]["UserPromptSubmit"][0]["hooks"]
+        .as_array()
+        .unwrap();
+    assert!(commands.iter().any(|hook| hook["command"]
+        .as_str()
+        .unwrap()
+        .ends_with("skill-trigger.sh --codex")));
+    assert!(commands.iter().any(|hook| hook["command"]
+        .as_str()
+        .unwrap()
+        .ends_with("user-prompt-context.sh")));
+}
+
+#[test]
 fn reinstall_replaces_loom_rules_and_preserves_user_hooks() {
     let temp = TempDir::new().unwrap();
     let config = json!({

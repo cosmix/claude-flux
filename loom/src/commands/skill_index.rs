@@ -1,8 +1,10 @@
 //! Build skill keyword index for the skill-trigger hook
 //!
-//! Scans ~/.claude/skills/*/SKILL.md files, extracts trigger keywords from
-//! YAML frontmatter, and builds an inverted keyword index at
-//! ~/.claude/hooks/loom/skill-keywords.json.
+//! Extracts triggers from each client's skills and catalog, then writes its
+//! own hooks/loom/skill-keywords.json. Claude and Codex indexes stay separate.
+
+mod install;
+pub use install::{execute, execute_in_agent_dir, execute_quiet};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -37,55 +39,6 @@ const STOPWORDS: &[&str] = &[
     "log", "method", "new", "old", "output", "plan", "project", "script", "setup", "tool", "type",
     "value", "claude", "loom",
 ];
-
-/// Execute the skill-index command
-pub fn execute() -> Result<()> {
-    let home = dirs::home_dir().context("Cannot determine home directory")?;
-    execute_in_claude_dir(&home.join(".claude"), true)
-}
-
-/// Quiet variant for `loom init`'s unattended workspace-repair pass: does the
-/// identical work but prints nothing, so `loom init` can render its own
-/// single "Repaired: ..." line instead of these diagnostics.
-pub fn execute_quiet() -> Result<()> {
-    let home = dirs::home_dir().context("Cannot determine home directory")?;
-    execute_in_claude_dir(&home.join(".claude"), false)
-}
-
-pub fn execute_in_claude_dir(claude_dir: &Path, verbose: bool) -> Result<()> {
-    let skills_dir = claude_dir.join("skills");
-    let catalog_dir = crate::skills::catalog_dir_for(&skills_dir);
-    let output_dir = claude_dir.join("hooks/loom");
-    let output_file = output_dir.join("skill-keywords.json");
-
-    if !skills_dir.is_dir() && !catalog_dir.is_dir() {
-        if verbose {
-            println!(
-                "Skills directory not found: {} or {}",
-                skills_dir.display(),
-                catalog_dir.display()
-            );
-        }
-        return Ok(());
-    }
-
-    let (index, skill_count) = build_index(&[&skills_dir, &catalog_dir])?;
-
-    fs::create_dir_all(&output_dir)
-        .with_context(|| format!("Failed to create {}", output_dir.display()))?;
-    let json = serde_json::to_string_pretty(&index).context("Failed to serialize index to JSON")?;
-    fs::write(&output_file, &json)
-        .with_context(|| format!("Failed to write {}", output_file.display()))?;
-
-    if verbose {
-        println!(
-            "Built skill keyword index: {} keywords from {} skills",
-            index.len(),
-            skill_count
-        );
-    }
-    Ok(())
-}
 
 fn build_index(skills_dirs: &[&Path]) -> Result<(BTreeMap<String, Vec<String>>, usize)> {
     let stopwords: HashSet<&str> = STOPWORDS.iter().copied().collect();

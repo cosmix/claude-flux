@@ -115,7 +115,10 @@ fn desired_hooks(hooks_dir: &Path) -> Map<String, Value> {
             "UserPromptSubmit".to_string(),
             json!([rule(
                 None,
-                vec![handler(hooks_dir, "user-prompt-context.sh", None)]
+                vec![
+                    handler(hooks_dir, "skill-trigger.sh", Some("--codex")),
+                    handler(hooks_dir, "user-prompt-context.sh", None)
+                ]
             )]),
         ),
         (

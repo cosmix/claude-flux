@@ -1,230 +1,84 @@
 #!/usr/bin/env python3
-"""skill-trigger - UserPromptSubmit hook for keyword-based skill suggestions.
+"""Suggest skills from prompt keywords and Loom's shared project discovery.
 
-Reads user prompts via stdin JSON and outputs skill suggestions to stdout.
-Suggestions are injected into Claude's context to encourage skill usage.
-
-Input: JSON from stdin with structure:
-  {"session_id": "...", "prompt": "Help me implement JWT authentication"}
-
-Output: JSON with hookSpecificOutput.additionalContext for context injection.
-  Plain text stdout from UserPromptSubmit hooks is unreliable (see claude-code#13912).
-
-  A skill installed in ~/.claude/skills keeps its slash-command form:
-    - /loom-plan-writer -- <desc> (matched: kw)
-  A catalogued skill has no slash command, so the line names the loader instead:
-    - loom-rust -- <desc> (matched: kw) -- load with Skill(skill="loom-skills", args="loom-rust")
-  When two or more catalogued skills qualify, a final line offers one
-  combined load call instead of one per skill:
-    All catalogued matches at once: Skill(skill="loom-skills", args="loom-rust loom-react")
-
-Dependencies:
-  ~/.claude/hooks/loom/skill-keywords.json (built by `loom skill-index`)
-  ~/.claude/loom-skill-catalog/<name>/SKILL.md for descriptions of catalogued skills
+Claude uses Skill-tool invocations; --codex emits native SKILL.md read paths.
+Project discovery is bounded and delegated to loom hook project-types.
+The hook is advisory: unavailable discovery never blocks a user prompt.
 """
 
 import json
 import os
 import re
+import subprocess
 import sys
 
-INDEX_FILE = os.path.expanduser("~/.claude/hooks/loom/skill-keywords.json")
-SKILLS_DIR = os.path.expanduser("~/.claude/skills")
-CATALOG_DIR = os.path.expanduser("~/.claude/loom-skill-catalog")
-DEBUG_LOG = os.path.expanduser("~/.claude/hooks/loom/skill-trigger.log")
-# Flood ceiling only - every qualifying skill (score >= MIN_SCORE) is listed;
-# this just guards against a pasted document matching dozens of skills at once.
+CODEX = "--codex" in sys.argv[1:]
 MAX_SUGGESTIONS = 8
-MIN_SCORE = 2  # Minimum weighted score to suggest a skill
+MIN_SCORE = 2
 DEBUG = os.environ.get("LOOM_SKILL_DEBUG", "") == "1"
-
-# Words too generic to be meaningful skill triggers on their own.
-# Multi-word keywords containing these are still allowed (e.g. "access control").
 STOPWORDS = frozenset({
-    # Common programming verbs
     "add", "build", "change", "check", "close", "copy", "create", "debug",
     "delete", "deploy", "find", "fix", "get", "help", "install", "list",
     "make", "move", "open", "pull", "push", "read", "remove", "run", "send",
     "set", "show", "start", "stop", "test", "update", "use", "write",
-    # Common nouns
     "app", "bug", "class", "code", "config", "data", "error", "file",
     "function", "issue", "log", "method", "new", "old", "output", "plan",
-    "project", "script", "setup", "tool", "type", "value",
-    # Project-specific words that appear in nearly every prompt
-    "claude", "loom",
+    "project", "script", "setup", "tool", "type", "value", "claude", "loom",
 })
 
 
-def _detect_languages(cwd):
-    """Return a set of language/framework tokens derived from manifest files
-    in `cwd`. Tokens are fed into scoring at weight 1 (no name-match boost)
-    so they reinforce user-typed signals without triggering skills on their
-    own — a Cargo.toml alone won't suggest loom-rust on an unrelated prompt,
-    but "help me with lifetimes" in a Rust repo will.
-    """
-    detected = set()
-
-    def has(*names):
-        return any(os.path.isfile(os.path.join(cwd, n)) for n in names)
-
-    def has_dir(*names):
-        return any(os.path.isdir(os.path.join(cwd, n)) for n in names)
-
-    # Languages (backend)
-    if has("Cargo.toml"):
-        detected.add("rust")
-    if has("go.mod", "go.sum"):
-        detected.add("golang")
-    if has("pyproject.toml", "setup.py", "requirements.txt", "Pipfile",
-           "poetry.lock"):
-        detected.add("python")
-
-    # JS/TS ecosystem
-    if has("tsconfig.json", "deno.json", "bun.lockb", "bun.lock"):
-        detected.add("typescript")
-    # Next.js / Remix config files imply React even without reading deps
-    if has("next.config.js", "next.config.ts", "next.config.mjs",
-           "next.config.cjs", "remix.config.js"):
-        detected.add("react")
-
-    # package.json: cheapest reliable framework signal is dep inspection
-    pkg_path = os.path.join(cwd, "package.json")
-    if os.path.isfile(pkg_path):
-        try:
-            with open(pkg_path) as f:
-                pkg = json.load(f)
-            deps = {}
-            for section in ("dependencies", "devDependencies",
-                            "peerDependencies"):
-                deps.update(pkg.get(section) or {})
-            if any(d in deps for d in
-                   ("react", "react-dom", "next", "remix",
-                    "@remix-run/react", "@remix-run/node")):
-                detected.add("react")
-            if "typescript" in deps:
-                detected.add("typescript")
-        except (IOError, json.JSONDecodeError):
-            pass
-
-    # Containers & build
-    if has("Dockerfile", "docker-compose.yml", "docker-compose.yaml",
-           "compose.yaml", "compose.yml"):
-        detected.add("docker")
-
-    # Kubernetes (Helm / Kustomize / Skaffold)
-    if has("kustomization.yaml", "kustomization.yml"):
-        detected.update(("kustomize", "kubernetes"))
-    if has("Chart.yaml", "helmfile.yaml", "helmfile.yml", "skaffold.yaml"):
-        detected.add("kubernetes")
-
-    # Terraform / IaC
-    if has("main.tf", "terraform.tf", ".terraform.lock.hcl", "versions.tf"):
-        detected.add("terraform")
-
-    # CI/CD pipelines — multi-word token matches loom-ci-cd index entry
-    if has_dir(".github/workflows") or has(
-        ".gitlab-ci.yml", ".circleci/config.yml", "azure-pipelines.yml",
-        "Jenkinsfile",
-    ):
-        detected.add("ci/cd")
-
-    # GitOps tooling
-    if has_dir("argocd", ".argocd"):
-        detected.add("argocd")
-    if has_dir("flux", ".flux") or has("flux-system.yaml"):
-        detected.add("fluxcd")
-
-    # Observability
-    if has("prometheus.yml", "prometheus.yaml"):
-        detected.add("prometheus")
-    if has_dir("grafana") or has("grafana.ini"):
-        detected.add("grafana")
-
-    return detected
+def _agent_root():
+    # Respect explicit installation roots, including --codex-dir installs.
+    hook_dir = os.path.dirname(os.path.abspath(__file__))
+    if os.path.basename(hook_dir) == "loom" and os.path.basename(os.path.dirname(hook_dir)) == "hooks":
+        return os.path.dirname(os.path.dirname(hook_dir))
+    if CODEX:
+        return os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    return os.path.expanduser("~/.claude")
 
 
-def _is_name_match(keyword, skill_name):
-    """True when keyword strongly identifies the skill by name.
-
-    Every shipped skill is named `loom-<topic>`, so we strip the `loom-`
-    prefix before comparing. Exact match ("rust" == "rust") or prefix
-    match with min length 4 ("refactor" -> "refactoring") to avoid
-    short false matches.
-    """
-    effective = skill_name[5:] if skill_name.startswith("loom-") else skill_name
-    if keyword == effective:
-        return True
-    if len(keyword) >= 4 and effective.startswith(keyword):
-        return True
-    return False
+AGENT_ROOT = _agent_root()
+INDEX_FILE = os.path.join(AGENT_ROOT, "hooks/loom/skill-keywords.json")
+SKILLS_DIR = os.path.join(AGENT_ROOT, "skills")
+CATALOG_DIR = os.path.join(AGENT_ROOT, "loom-skill-catalog")
+DEBUG_LOG = os.path.join(AGENT_ROOT, "hooks/loom/skill-trigger.log")
 
 
 def _debug(msg):
-    """Write debug message to log file if LOOM_SKILL_DEBUG=1."""
-    if not DEBUG:
-        return
+    if DEBUG:
+        try:
+            with open(DEBUG_LOG, "a") as log:
+                log.write(msg + "\n")
+        except OSError:
+            pass
+
+
+def _is_name_match(keyword, skill_name):
+    effective = skill_name[5:] if skill_name.startswith("loom-") else skill_name
+    return keyword == effective or (len(keyword) >= 4 and effective.startswith(keyword))
+
+
+def _load_index():
     try:
-        import datetime
+        with open(INDEX_FILE) as source:
+            index = json.load(source)
+        return {key: names for key, names in index.items()
+                if isinstance(key, str) and isinstance(names, list)
+                and all(isinstance(name, str) for name in names)}
+    except (OSError, ValueError, AttributeError):
+        return {}
 
-        ts = datetime.datetime.now().strftime("%H:%M:%S")
-        with open(DEBUG_LOG, "a") as f:
-            f.write(f"[{ts}] {msg}\n")
-    except IOError:
-        pass
 
-
-def main():
-    if sys.stdin.isatty():
-        _debug("SKIP: stdin is tty")
-        return
-
-    try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        _debug("SKIP: invalid JSON on stdin")
-        return
-
-    prompt = data.get("prompt", "")
-    _debug(f"FIRED: prompt={prompt[:80]!r}")
-    if not prompt or not os.path.isfile(INDEX_FILE):
-        _debug(f"SKIP: empty prompt or no index (index exists: {os.path.isfile(INDEX_FILE)})")
-        return
-
-    try:
-        with open(INDEX_FILE) as f:
-            index = json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return
-
-    # Tokenize: lowercase, keep special chars like / - . within words
+def _tokens(prompt, index):
     words = re.findall(r"[a-z0-9]+(?:[/._-][a-z0-9]+)*", prompt.lower())
-    # Filter stopwords from single-word tokens, but allow a stopword through
-    # if the indexer chose to keep it (e.g. "test" is a stopword but names
-    # the loom-testing skill, so the indexer exempts it). This lets primary
-    # skill verbs like "test" and "debug" actually trigger their skills.
-    tokens = set(
-        w for w in words if len(w) > 1 and (w not in STOPWORDS or w in index)
-    )
-
-    # Generate bigrams and trigrams for multi-word keyword matching
-    # e.g. "event sourcing", "api key", "access control"
-    # These are NOT stopword-filtered since multi-word phrases are specific enough
-    for i in range(len(words) - 1):
-        tokens.add(f"{words[i]} {words[i + 1]}")
-    for i in range(len(words) - 2):
-        tokens.add(f"{words[i]} {words[i + 1]} {words[i + 2]}")
-
-    # Fold common English plurals to their singular form when the original
-    # token isn't indexed but the stemmed form is. Safe because we only
-    # produce a stem if it hits the index. Stems must be >= 3 chars to
-    # avoid short false positives like "goes" -> "go" (loom-golang) or
-    # "does" -> "do". Applies to the last word of bigrams/trigrams too so
-    # "feature flags" matches the singular "feature flag" entry.
+    tokens = {w for w in words if len(w) > 1 and (w not in STOPWORDS or w in index)}
+    for size in (2, 3):
+        tokens.update(" ".join(words[i:i + size]) for i in range(len(words) - size + 1))
     stemmed = set()
-    for t in tokens:
-        if t in index:
+    for token in tokens:
+        if token in index:
             continue
-        parts = t.split(" ")
+        parts = token.split(" ")
         last = parts[-1]
         stems = []
         if last.endswith("s") and len(last) > 3:
@@ -232,166 +86,170 @@ def main():
         if last.endswith("es") and len(last) > 4:
             stems.append(last[:-2])
         for stem in stems:
-            cand = " ".join(parts[:-1] + [stem]) if len(parts) > 1 else stem
-            if cand in index:
-                stemmed.add(cand)
+            candidate = " ".join(parts[:-1] + [stem])
+            if candidate in index:
+                stemmed.add(candidate)
                 break
-    tokens.update(stemmed)
+    return tokens | stemmed
 
-    # Score skills by keyword matches
-    # Multi-word matches (containing space) count double since they're more specific
-    # Direct skill-name matches get boosted weight (high-confidence signal)
-    scores = {}
-    matched = {}
+
+def _score_keywords(tokens, index):
+    scores, matched = {}, {}
     for token in tokens:
-        if token in index:
-            base_weight = 2 if " " in token else 1
-            for skill in index[token]:
-                w = base_weight
-                # Boost: keyword directly identifies the skill by name
-                # e.g., "rust" -> "rust", "refactor" -> "refactoring"
-                if base_weight == 1 and _is_name_match(token, skill):
-                    w = 2
-                scores[skill] = scores.get(skill, 0) + w
-                matched.setdefault(skill, []).append(token)
-
-    # Ambient repo context: inject detected languages/frameworks at weight 1
-    # (no name-match boost) so they reinforce rather than solo-trigger. Skip
-    # anything the user already typed to avoid double-counting the same signal.
-    cwd = data.get("cwd") or os.getcwd()
-    for lang in _detect_languages(cwd):
-        if lang in tokens or lang not in index:
-            continue
-        for skill in index[lang]:
-            scores[skill] = scores.get(skill, 0) + 1
-            matched.setdefault(skill, []).append(f"repo:{lang}")
-
-    if not scores:
-        return
-
-    # Filter skills below minimum score threshold
-    qualified = {s: sc for s, sc in scores.items() if sc >= MIN_SCORE}
-    if not qualified:
-        return
-
-    # "loom-skills" is the catalog loader itself; suggesting it is redundant
-    # once any other qualified skill already names the loader in its own
-    # line. Keep it when it's the only qualified skill so a prompt about
-    # "skills" in general still points somewhere.
-    if len(qualified) > 1 and "loom-skills" in qualified:
-        del qualified["loom-skills"]
-
-    # Sort by score desc, then by number of distinct matched keywords desc,
-    # then by name. The name tiebreaker matters because Python's set
-    # iteration order is seeded per process (PYTHONHASHSEED) — without it,
-    # equal-score ties would order differently across runs.
-    top = sorted(
-        qualified.items(),
-        key=lambda kv: (-kv[1], -len(matched[kv[0]]), kv[0]),
-    )[:MAX_SUGGESTIONS]
-
-    context = _render(top, matched)
-    if context:
-        _debug(f"SUGGEST: {context}")
-        # Use JSON additionalContext format — plain text stdout is unreliable
-        # for UserPromptSubmit hooks (see claude-code#13912)
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": context,
-            }
-        }))
-    elif DEBUG:
-        _debug(f"NO MATCH: scores={scores}")
+        for skill in index.get(token, []):
+            weight = 2 if " " in token or _is_name_match(token, skill) else 1
+            scores[skill] = scores.get(skill, 0) + weight
+            matched.setdefault(skill, []).append(token)
+    return scores, matched
 
 
-def _render(top, matched):
-    """Build the additionalContext string for the ranked (skill, score)
-    pairs in `top`. Returns None when there is nothing to render.
-    """
-    lines = []
-    catalogued_names = []
-    for skill, _score in top:
-        # Sorted for deterministic display — `matched[skill]` was built by
-        # iterating a set (tokens), whose order varies with PYTHONHASHSEED.
-        kws = ", ".join(sorted(matched[skill])[:4])
-        path, catalogued = _locate_skill_md(skill)
-        desc = _parse_description(path) if path else ""
-        if catalogued:
-            # Not indexed by Claude Code, so there's no /{skill} slash
-            # command to name — point at the loader invocation instead.
-            catalogued_names.append(skill)
-            loader = f'Skill(skill="loom-skills", args="{skill}")'
-            if desc:
-                lines.append(f"  - {skill} -- {desc} (matched: {kws}) -- load with {loader}")
-            else:
-                lines.append(f"  - {skill} (matched: {kws}) -- load with {loader}")
-        elif desc:
-            lines.append(f"  - /{skill} -- {desc} (matched: {kws})")
-        else:
-            lines.append(f"  - /{skill} (matched: {kws})")
-
-    if not lines:
-        return None
-
-    if len(catalogued_names) >= 2:
-        combined = " ".join(catalogued_names)
-        lines.append(
-            f'  All catalogued matches at once: Skill(skill="loom-skills", args="{combined}")'
+def _project_types(cwd, prompt):
+    try:
+        result = subprocess.run(
+            [os.environ.get("LOOM_BIN") or "loom", "hook", "project-types"],
+            input=json.dumps({"cwd": cwd, "prompt": prompt}),
+            capture_output=True, text=True, timeout=3, check=True,
         )
+        profile = json.loads(result.stdout)
+        types = profile.get("types", [])
+        if isinstance(types, list):
+            return profile, [item for item in types if isinstance(item, dict)
+                             and isinstance(item.get("kind"), str)
+                             and isinstance(item.get("path"), str)]
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError) as error:
+        _debug(f"Project discovery unavailable: {error}")
+    return {}, []
 
-    context = (
-        "SKILL MATCH: These skills are relevant to this task. Load EVERY one "
-        "that applies before implementing, one at a time with the calls below "
-        "or all catalogued ones in a single call:\n"
-    )
-    context += "\n".join(lines)
-    return context
+
+def _skill_roots(cwd, root):
+    roots = []
+    if CODEX:
+        current = os.path.realpath(cwd)
+        boundary = os.path.realpath(root or cwd)
+        while current == boundary or current.startswith(boundary + os.sep):
+            roots.append(os.path.join(current, ".agents/skills"))
+            if current == boundary:
+                break
+            current = os.path.dirname(current)
+        roots.append(os.path.expanduser("~/.agents/skills"))
+    roots.extend((SKILLS_DIR, CATALOG_DIR))
+    return roots
 
 
-def _locate_skill_md(skill_name):
-    """Find a skill's SKILL.md, checking the installed directory before the
-    catalog. Returns (path, catalogued): catalogued is True when the skill
-    was found under CATALOG_DIR rather than SKILLS_DIR. Returns (None,
-    False) when neither directory has it (a stale index entry).
-    """
-    installed = os.path.join(SKILLS_DIR, skill_name, "SKILL.md")
-    if os.path.isfile(installed):
-        return installed, False
-    catalogued = os.path.join(CATALOG_DIR, skill_name, "SKILL.md")
-    if os.path.isfile(catalogued):
-        return catalogued, True
+def _locate_skill_md(skill_name, roots):
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", skill_name):
+        return None, False
+    for root in roots:
+        path = os.path.join(root, skill_name, "SKILL.md")
+        if os.path.isfile(path):
+            return path, root == CATALOG_DIR
     return None, False
 
 
+def _add_project_matches(types, roots, scores, matched):
+    for item in types:
+        kind = item["kind"]
+        # Detection identifies a skill directly. "react" also indexes TypeScript;
+        # expanding detected types through that index caused asymmetric scoring.
+        for skill in ("loom-" + kind, kind):
+            if _locate_skill_md(skill, roots)[0]:
+                scores[skill] = max(scores.get(skill, 0), MIN_SCORE)
+                path = json.dumps(item["path"] or ".")[1:-1]
+                marker = f"repo:{kind} ({path})"
+                if marker not in matched.setdefault(skill, []):
+                    matched[skill].append(marker)
+                break
+
+
+def _rank(scores, matched):
+    qualified = {name: score for name, score in scores.items() if score >= MIN_SCORE}
+    if len(qualified) > 1:
+        qualified.pop("loom-skills", None)
+    return sorted(qualified.items(), key=lambda item: (
+        -item[1], -len(matched[item[0]]), item[0],
+    ))[:MAX_SUGGESTIONS]
+
+
+def _render_one(skill, matched, roots):
+    path, catalogued = _locate_skill_md(skill, roots)
+    if not path:
+        return None, False
+    keywords = ", ".join(sorted(matched[skill])[:4])
+    desc = _parse_description(path)
+    label = f"{skill} -- {desc}" if desc else skill
+    if CODEX:
+        return f"  - {label} (matched: {keywords}) -- read {json.dumps(path)} in full", False
+    if catalogued:
+        loader = f'Skill(skill="loom-skills", args="{skill}")'
+        return f"  - {label} (matched: {keywords}) -- load with {loader}", True
+    return f"  - /{label} (matched: {keywords})", False
+
+
+def _render(top, matched, roots):
+    lines, catalogued = [], []
+    for skill, _score in top:
+        line, is_catalogued = _render_one(skill, matched, roots)
+        if line:
+            lines.append(line)
+        if is_catalogued:
+            catalogued.append(skill)
+    if not lines:
+        return None
+    if len(catalogued) >= 2:
+        combined = " ".join(catalogued)
+        lines.append(f'  All catalogued matches at once: Skill(skill="loom-skills", args="{combined}")')
+    return ("SKILL MATCH: These skills are relevant to this task. Load EVERY one "
+            "that applies before implementing. Detected project types are shown as repo: matches.\n"
+            + "\n".join(lines))
+
+
 def _parse_description(path):
-    """Extract short description from a SKILL.md file's frontmatter."""
     try:
-        with open(path) as f:
-            text = f.read(2000)
-    except IOError:
+        with open(path) as source:
+            text = source.read(2000)
+    except OSError:
         return ""
-    m = re.search(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
-    if not m:
+    frontmatter = re.search(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    if not frontmatter:
         return ""
-    fm = m.group(1)
-    # Multiline description (|)
-    m = re.search(r"^description:\s*\|\s*\n\s+(.+)", fm, re.MULTILINE)
-    if m:
-        d = m.group(1).strip()
-    else:
-        # Inline description
-        m = re.search(r"^description:\s*(.+)", fm, re.MULTILINE)
-        if not m:
-            return ""
-        d = m.group(1).strip()
-    # Truncate at first natural break point
+    match = re.search(r"^description:\s*\|\s*\n\s+(.+)", frontmatter[1], re.MULTILINE)
+    if not match:
+        match = re.search(r"^description:\s*(.+)", frontmatter[1], re.MULTILINE)
+    if not match:
+        return ""
+    description = match[1].strip()
     for marker in [". Trigger", ". Use when", ". Covers", ". Keywords", ". Primary"]:
-        idx = d.find(marker)
-        if 0 < idx < 80:
-            d = d[: idx + 1]
+        index = description.find(marker)
+        if 0 < index < 80:
+            description = description[:index + 1]
             break
-    return d[:80]
+    return description[:80]
+
+
+def main():
+    if sys.stdin.isatty():
+        return
+    try:
+        data = json.loads(sys.stdin.read(1024 * 1024 + 1))
+    except ValueError:
+        return
+    if not isinstance(data, dict) or not isinstance(data.get("prompt"), str) or not data["prompt"]:
+        return
+    prompt = data["prompt"]
+    cwd = data.get("cwd") or os.getcwd()
+    if not isinstance(cwd, str):
+        return
+    index = _load_index()
+    scores, matched = _score_keywords(_tokens(prompt, index), index)
+    profile, types = _project_types(cwd, prompt)
+    roots = _skill_roots(cwd, profile.get("root"))
+    scores = {name: score for name, score in scores.items() if _locate_skill_md(name, roots)[0]}
+    _add_project_matches(types, roots, scores, matched)
+    context = _render(_rank(scores, matched), matched, roots)
+    if context:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit", "additionalContext": context,
+        }}))
 
 
 if __name__ == "__main__":

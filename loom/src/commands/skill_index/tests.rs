@@ -111,7 +111,7 @@ fn execute_propagates_index_write_failure() {
     .unwrap();
     std::fs::create_dir_all(home.path().join(".claude/hooks/loom/skill-keywords.json")).unwrap();
 
-    let error = execute_in_claude_dir(&home.path().join(".claude"), true).unwrap_err();
+    let error = execute_in_agent_dir(&home.path().join(".claude"), true).unwrap_err();
 
     assert!(error.to_string().contains("Failed to write"));
 }
@@ -160,7 +160,7 @@ fn duplicate_skill_names_across_roots_are_not_duplicated() {
 }
 
 #[test]
-fn execute_in_claude_dir_writes_index_under_given_directory() {
+fn execute_in_agent_dir_writes_index_under_given_directory() {
     let claude = tempfile::tempdir().unwrap();
     let skill_dir = claude.path().join("skills/example");
     std::fs::create_dir_all(&skill_dir).unwrap();
@@ -170,7 +170,7 @@ fn execute_in_claude_dir_writes_index_under_given_directory() {
     )
     .unwrap();
 
-    execute_in_claude_dir(claude.path(), false).unwrap();
+    execute_in_agent_dir(claude.path(), false).unwrap();
 
     let index =
         std::fs::read_to_string(claude.path().join("hooks/loom/skill-keywords.json")).unwrap();

@@ -8,9 +8,8 @@
 //! domain skill already qualifies, and a combined `loom-skills` loader call
 //! is appended when two or more catalogued skills qualify.
 //!
-//! Runs the hook script directly with `python3` - no loom invocation. `HOME`
-//! is redirected to a per-test fixture directory so the real `~/.claude` is
-//! never touched.
+//! Runs the Python hook with the freshly built Loom detector. HOME points to
+//! a per-test fixture directory so installed client data is never touched.
 
 use loom::fs::permissions::constants::HOOK_SKILL_TRIGGER;
 use loom::process::sandbox_probe::skip_unless;
@@ -30,8 +29,8 @@ struct HookOutput {
 }
 
 /// A fake `HOME`, populated with a skill-keywords index plus core and
-/// catalogued SKILL.md fixtures, and a separate empty `cwd` so `_detect_languages`
-/// never contributes ambient repo-language signals that would skew scoring.
+/// catalogued SKILL.md fixtures, and a separate empty cwd so project discovery
+/// never contributes ambient signals that would skew keyword-scoring tests.
 struct FakeHome {
     home: TempDir,
     cwd: TempDir,
@@ -150,6 +149,7 @@ fn run_hook(hook: &Path, home: &FakeHome, prompt: &str, hash_seed: Option<&str>)
     let mut cmd = Command::new("python3");
     cmd.arg(hook)
         .env("HOME", home.home_path())
+        .env("LOOM_BIN", env!("CARGO_BIN_EXE_loom"))
         .env_remove("LOOM_SKILL_DEBUG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

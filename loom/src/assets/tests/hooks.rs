@@ -36,3 +36,23 @@ fn every_embedded_hook_is_installed_executable() {
         }
     }
 }
+
+#[test]
+fn both_clients_receive_their_own_skill_keyword_index() {
+    let temp = TempDir::new().unwrap();
+    install(&temp, SkillLayout::Core);
+    let paths = paths(&temp);
+    for root in [paths.claude_dir, paths.codex_dir] {
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("hooks/loom/skill-keywords.json")).unwrap())
+                .unwrap();
+        assert!(index["rust"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("loom-rust")));
+        assert!(index["react"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("loom-react")));
+    }
+}
