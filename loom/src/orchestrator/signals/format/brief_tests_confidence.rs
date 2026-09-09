@@ -15,6 +15,7 @@ use crate::context::schema::{Confidence, ContextItem};
 fn demoted(confidence: Confidence) -> ContextItem {
     ContextItem {
         confidence,
+        truncated: false,
         ..item("chunk-1", None)
     }
 }
@@ -61,6 +62,7 @@ fn a_high_knowledge_item_renders_no_confidence_at_all() {
 fn a_demoted_source_item_carries_its_label_inside_the_reason_parentheses() {
     let demoted = ContextItem {
         confidence: Confidence::Medium,
+        truncated: false,
         ..rank_source_item(Some(23), Some(28))
     };
     let rendered = format_knowledge_brief(&pack(vec![demoted], 0), Some("s"), "q");

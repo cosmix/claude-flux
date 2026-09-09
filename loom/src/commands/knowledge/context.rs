@@ -8,15 +8,15 @@
 
 use crate::context::delivery::dependency_chunk_ids;
 use crate::context::local_overlay::OverlayScope;
+use crate::context::render::render_excerpt_block;
 use crate::context::retrieve::{resolve_roots, retrieve_for_stage, StageQuery};
 use crate::context::store::ContextStore;
 use crate::context::untrusted::inline_safe;
 use crate::context::{
-    Channel, Confidence, ContextItem, ContextPack, Freshness, ItemKind, OmissionSummary,
-    SelectionReason,
+    Channel, Confidence, ContextItem, ContextPack, Freshness, ItemKind, LifecyclePolicy,
+    OmissionSummary, RequiredRepresentation, SelectionReason, UnmetRequirement,
 };
 use crate::fs::work_dir::WorkDir;
-use crate::orchestrator::signals::render_excerpt_block;
 use crate::verify::transitions::load_stage;
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
@@ -68,12 +68,18 @@ fn stage_dependency_ids(stage_id: &str) -> Result<Vec<String>> {
 }
 
 /// Retrieve a token-budgeted context pack for `query`.
+// Each parameter is its own CLI flag on `loom knowledge context`; collapsing
+// them into an args struct would just move the flag-to-field wiring one
+// level down without shrinking it.
+#[allow(clippy::too_many_arguments)]
 pub fn context(
     stage: Option<String>,
     query: String,
     budget_tokens: usize,
     scope: String,
     require_id: Vec<String>,
+    history: bool,
+    require_compact: bool,
     explain: bool,
     json: bool,
 ) -> Result<()> {
@@ -85,19 +91,14 @@ pub fn context(
         None => Vec::new(),
     };
 
-    let stage_query = StageQuery {
-        work_dir_hint: PathBuf::from(WORK_DIR_HINT),
-        text: query,
-        required_ids: require_id,
-        stage_dependency_ids: stage_dependencies,
-        // Dependency affinity is a stage-spawn signal: the CLI answers about
-        // whatever the user typed, with no stage's file ownership behind it.
-        dependency_paths: Vec::new(),
-        scope: channels,
-        // The CLI asks about the tree in front of the user, so it reads that
-        // checkout's working-tree overlay — not the last clean base revision.
-        overlay: OverlayScope::Local,
-    };
+    let stage_query = build_stage_query(
+        query,
+        require_id,
+        stage_dependencies,
+        channels,
+        history,
+        require_compact,
+    );
     let context_pack = retrieve_for_stage(&stage_query, budget_tokens)?;
 
     if json {
@@ -106,7 +107,47 @@ pub fn context(
         print_human(&context_pack, explain);
     }
 
+    if let Some(code) = exit_code_for(&context_pack) {
+        std::process::exit(code);
+    }
     Ok(())
+}
+
+fn build_stage_query(
+    query: String,
+    required_ids: Vec<String>,
+    stage_dependencies: Vec<String>,
+    channels: Vec<Channel>,
+    history: bool,
+    require_compact: bool,
+) -> StageQuery {
+    StageQuery {
+        work_dir_hint: PathBuf::from(WORK_DIR_HINT),
+        text: query,
+        required_ids,
+        lifecycle: if history {
+            LifecyclePolicy::Historical
+        } else {
+            LifecyclePolicy::Current
+        },
+        required_representation: if require_compact {
+            RequiredRepresentation::Compact
+        } else {
+            RequiredRepresentation::Full
+        },
+        stage_dependency_ids: stage_dependencies,
+        // Dependency affinity is a stage-spawn signal: the CLI answers about
+        // whatever the user typed, with no stage's file ownership behind it.
+        dependency_paths: Vec::new(),
+        scope: channels,
+        // The CLI asks about the tree in front of the user, so it reads that
+        // checkout's working-tree overlay — not the last clean base revision.
+        overlay: OverlayScope::Local,
+    }
+}
+
+fn exit_code_for(pack: &ContextPack) -> Option<i32> {
+    (!pack.unmet_required.is_empty()).then_some(3)
 }
 
 fn print_human(pack: &ContextPack, explain: bool) {
@@ -136,9 +177,21 @@ fn print_human(pack: &ContextPack, explain: bool) {
             print_item(item, explain);
         }
     }
+    for requirement in &pack.unmet_required {
+        println!("{}", format_unmet_requirement(requirement));
+    }
 
     println!();
     print_omissions(&pack.omitted);
+}
+
+fn format_unmet_requirement(requirement: &UnmetRequirement) -> String {
+    format!(
+        "! required {} did not fit: needs ~{} tokens, {} were available (raise --budget-tokens or pass --require-compact)",
+        inline_safe(&requirement.id),
+        requirement.needed_tokens,
+        requirement.available_tokens,
+    )
 }
 
 /// The line naming the query terms retrieval dropped before scoring, or `None`
@@ -264,6 +317,9 @@ fn format_item_block(item: &ContextItem, explain: bool) -> String {
             confidence_label(item.confidence),
             item.state
         ));
+        if item.truncated {
+            out.push_str("          truncated: yes\n");
+        }
     }
     if item.kind == ItemKind::KnowledgeChunk {
         if let Some(excerpt) = &item.excerpt {
@@ -282,9 +338,15 @@ fn confidence_label(confidence: Confidence) -> &'static str {
     }
 }
 
+/// `included_tokens` is the packer's rendered, excerpt-capped cost and
+/// `candidate_tokens` is the ranker's whole-body estimate before packing —
+/// see `pack::build_omission_summary`'s doc comment. They are not the same
+/// unit, so printing them as one ratio would read as a fraction that isn't
+/// one: a pack where every candidate fit could show e.g. "312/9000 tokens"
+/// and look heavily incomplete. Each is labelled and printed on its own.
 fn print_omissions(omitted: &OmissionSummary) {
     println!(
-        "{} {} omitted (weakest included score: {:.2}) — {}/{} items, {}/{} tokens",
+        "{} {} omitted (weakest included score: {:.2}) — {}/{} items, packed {} tokens (candidates estimated at {} tokens)",
         "Coverage:".cyan().bold(),
         omitted.omitted,
         omitted.weakest_included_score,

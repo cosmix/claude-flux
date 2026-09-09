@@ -40,6 +40,7 @@ pub(in crate::orchestrator::signals::tests) fn sample_context_pack() -> ContextP
         state: LifecycleState::Active,
         content_hash: "sha256:deadbeef".to_string(),
         excerpt: Some("## Overview\n\nThe system is organized into modules.".to_string()),
+        truncated: false,
         matched_term_count: 0,
     };
     ContextPack {
@@ -50,6 +51,7 @@ pub(in crate::orchestrator::signals::tests) fn sample_context_pack() -> ContextP
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         items: vec![item],
+        unmet_required: Vec::new(),
         omitted: OmissionSummary {
             omitted: 2,
             weakest_included_score: 1.0,

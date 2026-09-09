@@ -1,12 +1,8 @@
 //! Retrieval and delivery glue for a stage's on-spawn knowledge brief.
-//!
-//! Split out of `helpers.rs` (which stayed the pre-existing signal-assembly
-//! toolbox) so both files stay under the maintainability line limit. The
-//! entry points here are re-exported from `helpers` so existing call sites
-//! (`super::helpers::persist_delivery`, etc.) keep working unchanged.
 
 use std::path::Path;
 
+use crate::context::config::RetrievalConfig;
 use crate::context::delivery::plan_key;
 use crate::context::local_overlay::OverlayScope;
 use crate::context::rank_source::normalize_dependency_path;
@@ -28,7 +24,7 @@ use super::types::EmbeddedContext;
 /// re-embed the assignment a second time inside the KV-cached semi-stable
 /// section, and any `## ` heading or code fence inside it would restructure
 /// the signal document. One line, bounded, whatever the stage's size.
-pub(super) const STAGE_QUERY_INPUTS: &str = "this stage's id, type, name, description, working dir, files, artifacts, acceptance criteria, wiring checks and dependencies";
+pub(super) const STAGE_QUERY_INPUTS: &str = "this stage's id, type, name, description, working dir, files, artifacts, wiring descriptions and dependencies";
 
 /// Append a trailing newline to `content` only if it does not already end
 /// with one. Idempotent — safe to call after any number of appended sections.
@@ -37,13 +33,6 @@ pub(super) fn ensure_trailing_newline(content: &mut String) {
         content.push('\n');
     }
 }
-
-/// Token budget for a stage's on-spawn knowledge brief.
-///
-/// An estimate-based ceiling on how much retrieved prose gets quoted inline in
-/// a signal — never a saving: retrieval is free to select less than this, and
-/// this only caps how much of what it selects gets embedded verbatim.
-const STAGE_BRIEF_BUDGET_TOKENS: usize = 3000;
 
 /// Whether the project's `doc/loom/knowledge/` tree holds no real content.
 ///
@@ -67,6 +56,11 @@ pub(super) fn knowledge_tree_is_empty(work_dir: &Path) -> bool {
 /// written is a stalled stage, whereas a signal without a brief is merely a
 /// thinner one.
 pub(super) fn retrieve_stage_pack(work_dir: &Path, stage: &Stage) -> Option<ContextPack> {
+    let main_root = WorkDir::new(work_dir)
+        .ok()
+        .and_then(|resolved| resolved.main_project_root())
+        .unwrap_or_else(|| work_dir.to_path_buf());
+    let config = RetrievalConfig::load(&main_root);
     let mut query = StageQuery::new(work_dir, build_stage_query_text(stage));
     query.overlay = stage_overlay_scope(stage);
     query.stage_dependency_ids = crate::context::delivery::dependency_chunk_ids(
@@ -75,7 +69,7 @@ pub(super) fn retrieve_stage_pack(work_dir: &Path, stage: &Stage) -> Option<Cont
         &stage.dependencies,
     );
     query.dependency_paths = dependency_paths(work_dir, stage);
-    match retrieve_for_stage(&query, STAGE_BRIEF_BUDGET_TOKENS) {
+    match retrieve_for_stage(&query, config.stage_brief_budget_tokens) {
         Ok(pack) if !pack.items.is_empty() => Some(pack),
         Ok(_) => None,
         Err(error) => {
@@ -168,7 +162,7 @@ fn stage_overlay_scope(stage: &Stage) -> OverlayScope {
 
 /// Build the free-text query for a stage's brief from its declared metadata:
 /// id, type, name, description, working directory, files, artifacts,
-/// acceptance commands, wiring checks, and the ids of its dependencies.
+/// wiring descriptions, and the ids of its dependencies.
 fn build_stage_query_text(stage: &Stage) -> String {
     let mut parts = vec![
         stage.id.clone(),
@@ -179,21 +173,15 @@ fn build_stage_query_text(stage: &Stage) -> String {
     parts.extend(stage.working_dir.clone());
     parts.extend(stage.files.iter().cloned());
     parts.extend(stage.artifacts.iter().cloned());
-    parts.extend(
-        stage
-            .acceptance
-            .iter()
-            .map(|criterion| criterion.command().to_string()),
-    );
     parts.extend(stage.wiring.iter().map(describe_wiring_check));
     parts.extend(stage.dependencies.iter().cloned());
     parts.retain(|part| !part.trim().is_empty());
     parts.join("\n")
 }
 
-/// Render one wiring check as a single line of searchable text.
+/// Keep only the human description of a wiring check in searchable text.
 fn describe_wiring_check(check: &WiringCheck) -> String {
-    format!("{} {} {}", check.source, check.pattern, check.description)
+    check.description.clone()
 }
 
 /// Persist a [`crate::context::delivery::DeliveryRecord`] for `session_id`'s
@@ -358,5 +346,51 @@ mod tests {
         // both set here, but artifacts/acceptance/wiring are empty and must not
         // contribute stray blank entries).
         assert!(!text.lines().any(|line| line.trim().is_empty()));
+    }
+
+    #[test]
+    fn acceptance_commands_and_wiring_patterns_are_not_query_text() {
+        let mut stage = Stage::new("Query contract".to_string(), None);
+        stage.acceptance = vec![crate::models::stage::AcceptanceCriterion::Simple(
+            "cargo test --workspace".to_string(),
+        )];
+        stage.wiring = vec![WiringCheck {
+            source: "src/private.rs".to_string(),
+            pattern: "INTERNAL_PATTERN".to_string(),
+            description: "producer reaches consumer".to_string(),
+        }];
+
+        let text = build_stage_query_text(&stage);
+        assert!(!text.contains("cargo test --workspace"), "{text}");
+        assert!(!text.contains("src/private.rs"), "{text}");
+        assert!(!text.contains("INTERNAL_PATTERN"), "{text}");
+        assert!(text.contains("producer reaches consumer"), "{text}");
+    }
+
+    #[test]
+    fn the_stage_brief_budget_comes_from_config() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(".loom/work")).unwrap();
+        std::fs::write(
+            root.join(".loom/config.toml"),
+            "[retrieval]\nstage_brief_budget_tokens = 700\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("doc/loom/knowledge")).unwrap();
+        std::fs::write(
+            root.join("doc/loom/knowledge/retrieval.md"),
+            "# Retrieval\n\n## Budget sentinel\n\nBudget sentinel retrieval.\n",
+        )
+        .unwrap();
+        let mut stage = Stage::new(
+            "Budget sentinel".to_string(),
+            Some("Budget sentinel retrieval".to_string()),
+        );
+        stage.id = "budget-sentinel".to_string();
+
+        let pack = retrieve_stage_pack(&root.join(".loom/work"), &stage)
+            .expect("the matching knowledge fixture should produce a brief");
+        assert_eq!(pack.budget_tokens, 700);
     }
 }
