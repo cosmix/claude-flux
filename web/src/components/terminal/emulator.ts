@@ -76,6 +76,8 @@ function terminalOptions() {
     fontFamily: '"IBM Plex Mono", monospace',
     fontSize: 13,
     lineHeight: 1.4,
+    // Option+B/F and other readline shortcuts must emit Meta sequences on macOS.
+    macOptionIsMeta: true,
     scrollback: 2000,
     theme: terminalTheme(),
   };
