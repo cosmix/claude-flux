@@ -60,6 +60,12 @@
 | [stage-daemon-channels](patterns/stage-daemon-channels.md) | How a stage agent reaches the daemon to change its own stage's state, and why there are three | 81 |
 | [subagent-hierarchy](patterns/subagent-hierarchy.md) | Flat fan-out vs 2-level coordinator hierarchy vs agent teams: when to use each, model mix, file… | 62 |
 
+### conventions
+
+| Topic | Blurb | Lines |
+| --- | --- | --- |
+| [commits](conventions/commits.md) | Logically grouped commits, Conventional Commit messages, and no AI attribution. | 14 |
+
 ### mistakes
 
 | Topic | Blurb | Lines |
