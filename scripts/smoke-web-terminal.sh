@@ -27,49 +27,67 @@ origin="http://127.0.0.1:$port"
 
 headers=$(mktemp "${TMPDIR:-/tmp}/loom-web-terminal-headers.XXXXXX")
 trap 'kill "$pid" 2>/dev/null || true; rm -f "$out" "$headers"; rm -rf "$work"' EXIT
-code=$(curl -s -D "$headers" -o /dev/null -w '%{http_code}' "$base/?token=$token")
+# The tokenized URL carries a live dashboard token, so it goes to curl via a
+# `-K -` config on stdin rather than as a command-line argument: argv is
+# visible to any local user through /proc/<pid>/cmdline for the life of the
+# request, stdin is not.
+code=$(curl -s -D "$headers" -o /dev/null -w '%{http_code}' -K - <<<"url = \"$base/?token=$token\"")
 [ "$code" = "302" ] || { echo "expected token bootstrap 302, got $code"; exit 1; }
 rg -qi "^set-cookie: loom_dashboard_${port}=" "$headers"
 code=$(curl -s -o /dev/null -w '%{http_code}' "$base/?token=wrong")
 [ "$code" = "403" ] || { echo "expected wrong token 403, got $code"; exit 1; }
 
+# Renders a `header = "Cookie: ..."` config line for `curl -K`, or nothing for
+# an empty cookie. Keeping the cookie (a live dashboard token) off argv and
+# out of `websocket_code`'s callers is the point: it goes to curl on stdin.
+cookie_header_line() {
+  if [ -n "$1" ]; then
+    printf 'header = "Cookie: %s"\n' "$1"
+  fi
+}
+
 websocket_code() {
+  local cookie=$1
+  shift
   curl -s -o /dev/null -w '%{http_code}' --max-time 2 \
     -H 'Upgrade: websocket' \
     -H 'Connection: Upgrade' \
     -H 'Sec-WebSocket-Version: 13' \
     -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-    "$@"
+    -K - "$@" <<<"$(cookie_header_line "$cookie")"
 }
 
-code=$(websocket_code -H "Origin: $origin" "$base/ws/terminal/x/view")
+code=$(websocket_code "" -H "Origin: $origin" "$base/ws/terminal/x/view")
 [ "$code" = "401" ] || { echo "expected missing cookie 401, got $code"; exit 1; }
-code=$(websocket_code -H "Cookie: $cookie" -H 'Origin: http://evil.example' "$base/ws/terminal/x/view")
+code=$(websocket_code "$cookie" -H 'Origin: http://evil.example' "$base/ws/terminal/x/view")
 [ "$code" = "403" ] || { echo "expected foreign origin 403, got $code"; exit 1; }
-code=$(websocket_code -H "Cookie: $cookie" -H "Origin: http://127.0.0.1:$((port + 1))" "$base/ws/terminal/x/view")
+code=$(websocket_code "$cookie" -H "Origin: http://127.0.0.1:$((port + 1))" "$base/ws/terminal/x/view")
 [ "$code" = "403" ] || { echo "expected wrong loopback port 403, got $code"; exit 1; }
 
-code=$(websocket_code -H "Cookie: $cookie" -H "Origin: $origin" "$base/ws/terminal/x/view" || true)
+code=$(websocket_code "$cookie" -H "Origin: $origin" "$base/ws/terminal/x/view" || true)
 if [ "$code" = "000" ]; then
-  { curl -si --max-time 2 \
+  response=$(curl -si --max-time 2 \
       -H 'Upgrade: websocket' \
       -H 'Connection: Upgrade' \
       -H 'Sec-WebSocket-Version: 13' \
       -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-      -H "Cookie: $cookie" \
       -H "Origin: $origin" \
-      "$base/ws/terminal/x/view" || true; } \
-    | rg -q '^HTTP/1.1 101' || { echo "valid upgrade did not return 101"; exit 1; }
+      -K - "$base/ws/terminal/x/view" <<<"$(cookie_header_line "$cookie")" || true)
+  printf '%s' "$response" | rg -q '^HTTP/1.1 101' || { echo "valid upgrade did not return 101"; exit 1; }
 elif [ "$code" != "101" ]; then
   echo "expected valid upgrade 101, got $code"
   exit 1
 fi
 
-python3 - "$port" "$cookie" "$origin" <<'PY'
+# The cookie carries a live dashboard token, so it is not put on argv (the
+# python script itself still arrives via stdin normally, so it is read here
+# through process substitution instead, freeing actual stdin for the cookie).
+python3 <(cat <<'PY'
 import socket
 import sys
 
-port, cookie, origin = sys.argv[1:]
+port, origin = sys.argv[1:]
+cookie = sys.stdin.readline().rstrip("\n")
 request = (
     "GET /ws/terminal/definitely-not-a-stage/view HTTP/1.1\r\n"
     f"Host: 127.0.0.1:{port}\r\n"
@@ -103,6 +121,7 @@ while len(frame) < offset + length:
 assert int.from_bytes(frame[offset:offset + 2], "big") == 4004, frame
 sock.close()
 PY
+) "$port" "$origin" <<<"$cookie"
 
 curl -fsS "$base/api/status" | jq -e '.terminals == true' >/dev/null
 page=$(curl -fsS "$base/")
