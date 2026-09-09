@@ -18,10 +18,10 @@ use super::token;
 use super::{Mode, WindowSize};
 use crate::commands::status::web::connection::fail;
 use crate::commands::status::web::http::{host_allowed, RequestHead};
-use crate::commands::status::web::limits::{acquire_terminal_slot, Limits, Slot};
+use crate::commands::status::web::limits::{
+    acquire_terminal_slot, Limits, Slot, MAX_INBOUND_BYTES,
+};
 use crate::commands::status::web::TerminalLane;
-
-const MAX_INBOUND_BYTES: usize = 64 * 1024;
 
 impl TerminalLane {
     pub(in crate::commands::status::web) fn mint(port: u16) -> std::io::Result<Self> {

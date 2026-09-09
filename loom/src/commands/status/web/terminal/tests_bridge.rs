@@ -11,12 +11,13 @@ use tungstenite::{Message, WebSocket};
 
 use crate::process::sandbox_probe::{loopback_bindable, skip_unless};
 
-use super::bridge::{self, MAX_INBOUND_BYTES};
+use super::bridge;
 use super::protocol::{
     parse_client_frame, ClientFrame, Mode, WindowSize, CLOSE_ENDED, CLOSE_SERVER_STOPPING,
     CLOSE_TOO_LARGE,
 };
 use super::pty::PtyChild;
+use crate::commands::status::web::limits::MAX_INBOUND_BYTES;
 mod backpressure;
 mod spin;
 

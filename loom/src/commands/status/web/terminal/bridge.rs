@@ -16,12 +16,11 @@ use super::protocol::{
     CLOSE_SERVER_STOPPING, CLOSE_TOO_LARGE,
 };
 use super::pty::PtyChild;
+use crate::commands::status::web::limits::MAX_INBOUND_BYTES;
 
 const READ_TIMEOUT: Duration = Duration::from_millis(5);
 const WRITE_TIMEOUT: Duration = Duration::from_millis(250);
 const POLL_TIMEOUT_MS: u16 = 50;
-// Twin of the dashboard snapshot socket's cap in `web/ws.rs`.
-pub(super) const MAX_INBOUND_BYTES: usize = 64 * 1024;
 const MAX_PENDING_INPUT: usize = 64 * 1024;
 /// How long the input queue may sit at `MAX_PENDING_INPUT` before the bridge
 /// gives up on the child.
