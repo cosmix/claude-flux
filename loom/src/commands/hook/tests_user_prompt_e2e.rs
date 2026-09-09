@@ -85,8 +85,10 @@ fn write_local_overlay(root: &Path) {
             &stage,
             &GraphLayer {
                 revision: "test-revision".to_string(),
+                generation: String::new(),
                 built_at: None,
                 files,
+                blob_index: BTreeMap::new(),
             },
         )
         .unwrap();

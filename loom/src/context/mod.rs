@@ -71,6 +71,7 @@ pub mod pack;
 pub mod rank;
 pub mod rank_source;
 pub mod refresh;
+pub mod render;
 pub mod resolve;
 pub mod retrieve;
 pub mod schema;
@@ -86,10 +87,10 @@ pub use retrieve::{retrieve_for_stage, StageQuery};
 
 pub use schema::{
     estimate_tokens, Channel, ChunkId, Confidence, ContextItem, ContextPack, Coverage,
-    EdgeProvenance, FileCoverage, Freshness, ItemKind, KnowledgeChunk, LifecycleState,
-    NodeLanguage, OmissionSummary, SelectionReason, SourceEdge, SourceEdgeKind, SourceNode,
-    SourceNodeKind, SourcePointer, Span, BYTES_PER_TOKEN_ESTIMATE, EXCERPT_MAX_TOKENS,
-    EXCERPT_TRUNCATION_MARKER,
+    EdgeProvenance, FileCoverage, Freshness, ItemKind, KnowledgeChunk, LifecyclePolicy,
+    LifecycleState, NodeLanguage, OmissionSummary, RequiredRepresentation, SelectionReason,
+    SourceEdge, SourceEdgeKind, SourceNode, SourceNodeKind, SourcePointer, Span, UnmetRequirement,
+    BRIEF_FRAME_TOKENS, BYTES_PER_TOKEN_ESTIMATE, EXCERPT_MAX_TOKENS, EXCERPT_TRUNCATION_MARKER,
 };
 
 #[cfg(test)]

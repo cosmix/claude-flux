@@ -84,12 +84,20 @@ pub struct GraphLayer {
     /// and the base revision the overlay was cut from for an overlay.
     #[serde(default)]
     pub revision: String,
+    /// Snapshot generation identifier; empty means unknown until
+    /// `source-graph-snapshot` fills it.
+    #[serde(default)]
+    pub generation: String,
     /// When this layer was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub built_at: Option<DateTime<Utc>>,
     /// Extraction results keyed by project-relative, forward-slashed path.
     #[serde(default)]
     pub files: BTreeMap<String, FileEntry>,
+    /// Path to the git blob object id whose bytes produced its
+    /// [`FileEntry::content_hash`].
+    #[serde(default)]
+    pub blob_index: BTreeMap<String, String>,
 }
 
 impl GraphLayer {

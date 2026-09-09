@@ -287,8 +287,10 @@ fn build_layer(
 
     GraphLayer {
         revision,
+        generation: String::new(),
         built_at: Some(Utc::now()),
         files: entries,
+        blob_index: BTreeMap::new(),
     }
 }
 

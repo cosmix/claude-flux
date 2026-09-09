@@ -29,6 +29,7 @@ fn item(id: &str, content_hash: &str) -> ContextItem {
         state: LifecycleState::Active,
         content_hash: content_hash.to_string(),
         excerpt: Some(format!("body of {id}")),
+        truncated: false,
         matched_term_count: 0,
     }
 }
@@ -45,6 +46,7 @@ fn pack_with(items: Vec<ContextItem>, structural_revision: &str) -> ContextPack 
         },
         semantic_freshness: Freshness::default(),
         items,
+        unmet_required: Vec::new(),
         omitted: OmissionSummary::default(),
         dropped_terms: Vec::new(),
         degraded: None,

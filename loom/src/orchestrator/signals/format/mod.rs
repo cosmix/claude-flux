@@ -19,11 +19,7 @@ pub use skills::format_skill_recommendations;
 // The recovery signal is built outside the semi-stable path but still needs the
 // codex lane's rules, the stage's response budget, and the knowledge brief; see
 // recovery_format.rs.
-//
-// `render_excerpt_block` is re-exported alongside it so `commands::knowledge::context`
-// can quote an excerpt through the SAME fence the brief uses, rather than a second
-// copy of the containment rule.
-pub(crate) use brief::{format_knowledge_brief, format_stage_brief, render_excerpt_block};
+pub(crate) use brief::{format_knowledge_brief, format_stage_brief};
 pub(crate) use codex::format_codex_implementers_section;
 pub(crate) use helpers::format_subagent_timeout_section;
 

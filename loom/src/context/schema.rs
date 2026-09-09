@@ -14,30 +14,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-/// Bytes of text approximated by one token.
-///
-/// Deliberately crude: see the module docs. Anything derived from this constant
-/// must be named or documented as an *estimate*.
-pub const BYTES_PER_TOKEN_ESTIMATE: usize = 4;
-
-/// Estimate the token cost of a string.
-///
-/// This is an approximation, not a tokenizer. It is the single definition used
-/// by the chunker, the ranker, and the packer so that a budget check and the
-/// number it is checked against can never disagree.
-pub fn estimate_tokens(text: &str) -> usize {
-    text.len() / BYTES_PER_TOKEN_ESTIMATE
-}
-
-/// Hard ceiling on one item's quoted excerpt, in estimated tokens.
-///
-/// Independent of the retrieval budget: the budget decides *which* units are
-/// worth paying for, this decides how much of one unit is worth quoting inline
-/// rather than pointing at.
-pub const EXCERPT_MAX_TOKENS: usize = 400;
-
-/// Appended on its own line when an excerpt was cut short.
-pub const EXCERPT_TRUNCATION_MARKER: &str = "[… truncated — open the pointer above for the rest]";
+mod estimate;
+mod lifecycle;
+pub use estimate::*;
+pub use lifecycle::*;
 
 /// A retrieval channel a [`ContextItem`] can come from.
 ///
@@ -147,6 +127,8 @@ pub enum SelectionReason {
     LinkedFrom,
     /// Referenced by a stage this query's stage depends on.
     StageDependency,
+    /// A source-graph neighbour of an already-selected item.
+    GraphNeighbor,
     /// BM25 lexical overlap with the query.
     Lexical,
 }
@@ -159,6 +141,7 @@ impl fmt::Display for SelectionReason {
             SelectionReason::ExactSymbol => "exact-symbol",
             SelectionReason::LinkedFrom => "linked-from",
             SelectionReason::StageDependency => "stage-dependency",
+            SelectionReason::GraphNeighbor => "graph-neighbor",
             SelectionReason::Lexical => "lexical",
         };
         f.write_str(name)
@@ -203,33 +186,6 @@ impl Confidence {
     }
 }
 
-/// Curation state of a knowledge chunk, overridable via YAML frontmatter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum LifecycleState {
-    /// Current and trustworthy.
-    #[default]
-    Active,
-    /// Written but not yet reviewed.
-    Draft,
-    /// Known stale; retrievable but demoted.
-    Deprecated,
-    /// Replaced by another chunk.
-    Superseded,
-}
-
-impl fmt::Display for LifecycleState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            LifecycleState::Active => "active",
-            LifecycleState::Draft => "draft",
-            LifecycleState::Deprecated => "deprecated",
-            LifecycleState::Superseded => "superseded",
-        };
-        f.write_str(name)
-    }
-}
-
 // Derived-layer currency is its own small domain and lives in a sibling module;
 // re-exported here so the shared contract still names every retrieval type.
 pub use crate::context::freshness::Freshness;
@@ -248,17 +204,6 @@ pub struct Coverage {
     pub candidate_tokens: usize,
     /// Estimated tokens across included items.
     pub included_tokens: usize,
-}
-
-impl Coverage {
-    /// Fraction of candidate tokens present in the pack, in `0.0..=1.0`.
-    /// An empty candidate set is fully covered.
-    pub fn token_ratio(&self) -> f32 {
-        if self.candidate_tokens == 0 {
-            return 1.0;
-        }
-        self.included_tokens as f32 / self.candidate_tokens as f32
-    }
 }
 
 /// What the packer left out, and how close it came to including it.
@@ -304,6 +249,9 @@ pub struct ContextItem {
     /// [`EXCERPT_TRUNCATION_MARKER`] on its own line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
+    /// Whether the item's selected representation was truncated.
+    #[serde(default)]
+    pub truncated: bool,
     /// How many DISTINCT query terms this item matched lexically.
     ///
     /// The hook's emit floor needs a per-item strength signal that survives the
@@ -313,11 +261,28 @@ pub struct ContextItem {
     pub matched_term_count: usize,
 }
 
+/// A required id the pack could not honor under its budget.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnmetRequirement {
+    pub id: String,
+    /// Estimated tokens the requested representation needs, wrappers included.
+    pub needed_tokens: usize,
+    /// Tokens the pack could still spend when the item was considered.
+    pub available_tokens: usize,
+    pub reason: String,
+}
+
 /// The result of one retrieval: what was selected, what was not, and how stale
 /// the underlying derived data is.
 ///
-/// The packer guarantees `estimated_tokens <= budget_tokens`; see
-/// [`ContextPack::within_budget`].
+/// `estimated_tokens` covers the Knowledge Brief frame
+/// ([`BRIEF_FRAME_TOKENS`]) plus every packed item's rendered cost — see
+/// [`ContextPack::recompute_estimate`]. The packer guarantees
+/// `estimated_tokens <= budget_tokens` (see [`ContextPack::within_budget`])
+/// for any `budget_tokens` at or above [`crate::context::config::MIN_BUDGET_TOKENS`];
+/// callers reject a smaller budget at the boundary (the CLI's
+/// `--budget-tokens` and the `[retrieval]` config both do) rather than
+/// asking the packer to accommodate one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextPack {
     pub query: String,
@@ -325,12 +290,14 @@ pub struct ContextPack {
     #[serde(default)]
     pub scope: Vec<Channel>,
     pub budget_tokens: usize,
-    /// Sum of `token_count` across `items`.
+    /// Estimated tokens charged for the pack's current representation.
     pub estimated_tokens: usize,
     pub structural_freshness: Freshness,
     pub semantic_freshness: Freshness,
     #[serde(default)]
     pub items: Vec<ContextItem>,
+    #[serde(default)]
+    pub unmet_required: Vec<UnmetRequirement>,
     pub omitted: OmissionSummary,
     /// Query terms dropped before scoring as corpus-ubiquitous or too short.
     ///
@@ -351,6 +318,16 @@ impl ContextPack {
     /// The invariant the packer must never violate.
     pub fn within_budget(&self) -> bool {
         self.estimated_tokens <= self.budget_tokens
+    }
+
+    /// Recompute the estimated cost of the exact brief frame and its items.
+    pub fn recompute_estimate(&mut self) {
+        self.estimated_tokens = BRIEF_FRAME_TOKENS
+            + self
+                .items
+                .iter()
+                .map(|item| item.token_count)
+                .sum::<usize>();
     }
 }
 
