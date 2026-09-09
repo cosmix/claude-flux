@@ -28,3 +28,15 @@
 `DEFAULT_PORT` is now the production starting point for bare `loom status --web`. Binding
 advances from 7373 only when a candidate is already in use; explicit ports remain exact and
 explicit `0` delegates selection to the OS.
+
+## Terminal lane
+
+- **A stalled control-mode terminal holds its resources for up to `GATE_STALL_TIMEOUT` + 2s.**
+  `bridge.rs`'s inbound gate cannot distinguish a genuinely half-closed browser from a live one
+  that is merely slow to drain (see mistakes/web-dashboard-server.md) — it bounds the ambiguity
+  with a 30s stall deadline rather than resolving it. Until that deadline, and for up to a
+  further 2s while `PtyChild::shutdown` waits for a clean `try_wait` before `SIGKILL`, the
+  terminal keeps one of `MAX_TERMINALS = 8` slots, its PTY and its tmux child alive. Deliberate
+  trade-off — a platform-portable deadline over a readiness-flag detector that cannot see a
+  half-closed peer while gated — not an oversight; a busy dashboard could in principle have all
+  8 slots pinned by stalled peers for up to ~32s before any reclaim.
