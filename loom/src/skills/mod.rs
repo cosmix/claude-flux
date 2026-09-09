@@ -25,6 +25,8 @@ mod index;
 mod index_catalog;
 mod install_layout;
 mod matcher;
+pub mod project;
+pub mod recommend;
 mod types;
 
 pub use index::SkillIndex;

@@ -105,4 +105,8 @@ pub enum HookCommands {
     /// Not a user-facing command.
     #[command(hide = true)]
     ContextCeilings,
+
+    /// Discover package-scoped project types for skill recommendations.
+    #[command(hide = true)]
+    ProjectTypes,
 }

@@ -39,7 +39,6 @@ file src/orchestrator/core/stage_executor.rs 790
 file src/orchestrator/merge_attribution.rs 543
 file src/orchestrator/signals/cache.rs 594
 file src/orchestrator/signals/format/sections.rs 666
-file src/orchestrator/signals/generate.rs 703
 file src/orchestrator/signals/tests.rs 551
 file src/orchestrator/signals/tests_cache.rs 665
 file src/orchestrator/terminal/emulator.rs 611
@@ -204,10 +203,6 @@ function src/orchestrator/signals/format/sandbox_section.rs format_sandbox_secti
 function src/orchestrator/signals/format/sections.rs format_dynamic_section 280
 function src/orchestrator/signals/format/sections.rs format_recitation_section 70
 function src/orchestrator/signals/format/sections.rs format_semi_stable_section 292
-function src/orchestrator/signals/generate.rs build_cross_stage_summary 71
-function src/orchestrator/signals/generate.rs build_wiring_checklist 58
-function src/orchestrator/signals/generate.rs extract_plan_overview_from 62
-function src/orchestrator/signals/generate.rs generate_signal_with_skills 84
 function src/orchestrator/signals/knowledge.rs format_knowledge_signal_content 77
 function src/orchestrator/signals/merge.rs format_merge_signal_content 122
 function src/orchestrator/signals/merge_conflict.rs format_merge_conflict_signal_content 67

@@ -12,9 +12,11 @@ pub fn format_skill_recommendations(skills: &[SkillMatch]) -> String {
     // - `detected`: language skills inferred from the files this stage edits.
     //   These are a DIRECTIVE — load them before writing code.
     // - `advisory`: skills matched from the task description. Invoke if relevant.
-    let (detected, advisory): (Vec<&SkillMatch>, Vec<&SkillMatch>) = skills
-        .iter()
-        .partition(|s| s.matched_triggers.iter().any(|t| t == "project-language"));
+    let (detected, advisory): (Vec<&SkillMatch>, Vec<&SkillMatch>) = skills.iter().partition(|s| {
+        s.matched_triggers
+            .iter()
+            .any(|t| t == "project-language" || t.starts_with("project-type:"))
+    });
 
     if !detected.is_empty() {
         content.push_str(&format_detected_skills(&detected));
@@ -46,7 +48,7 @@ fn format_detected_skills(detected: &[&SkillMatch]) -> String {
     content.push_str(
         "**Load these now — before editing any files.** Based on the file types this \
          stage will edit, invoke the Skill tool for each so your code follows the \
-         project's language conventions:\n\n",
+         project's language and framework conventions:\n\n",
     );
     // Claude Code indexes only the core skills, so a catalogued one has no
     // `Skill(skill="loom-rust")` of its own. `skill_invocation` renders the
