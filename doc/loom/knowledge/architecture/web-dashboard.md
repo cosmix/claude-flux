@@ -10,6 +10,8 @@ Port selection is atomic at the bind call. Bare `loom status --web` tries `DEFAU
 
 It reuses existing TUI/status code rather than reimplementing it: `render::attention_entries`, `render::failure_label`, `scheduling_report::alerts`, `tick::read`, `data::collect_status_data`, `daemon_client::{connect,subscribe,is_socket_disconnected}`, `DaemonServer::check_status`.
 
+**A second write surface: `--terminals`.** With that flag, `/ws/terminal/<stage>/<view|control>` upgrades to a keystroke channel into a live stage's tmux session, gated by a startup-minted, port-scoped cookie token independent of `/api/config`'s CSRF token. Full detail — admission order, the close-code contract, the poll-based bridge loop, and the frontend emulator — is [architecture/web-terminal.md](web-terminal.md). The dashboard is otherwise still read-only apart from the two opt-in write lanes above; every route neither flag enables stays GET/HEAD only.
+
 ## Broadcaster fallback
 
 Daemon lane first; a `Response::Error` degrades to the file-poll lane with the message carried into `snapshot.notice`. A received frame resets the failure counter so a healthy daemon never falls back. After `FILE_POLL_COUNT` polls the loop retries the daemon (~10s reconnect cycle). Lock order is `last_body -> subscribers -> latest` in `publish`, and `subscribe` takes `subscribers` before reading `latest` (a suffix of that order), so no deadlock; dedup compares the body ignoring only `generated_at`, so a daemon-to-files handover always publishes once.

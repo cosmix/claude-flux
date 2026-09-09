@@ -41,7 +41,8 @@
 | [source-graph](architecture/source-graph.md) | What the source graph is and is not, its honesty contract, extractor trait, node/edge and cache… | 244 |
 | [status-data-model](architecture/status-data-model.md) | Where each field shown by `loom status` (static, compact, and `--live`) comes from, and what the… | 176 |
 | [terminal-backends](architecture/terminal-backends.md) | The native and tmux session backends behind one dispatcher, lane resolution, and session-recorded… | 262 |
-| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — an HTTP/WebSocket server on `127.0.0.1` that serves an embedded React… | 47 |
+| [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — an HTTP/WebSocket server on `127.0.0.1` that serves an embedded React… | 49 |
+| [web-terminal](architecture/web-terminal.md) | `loom status --web --terminals` — a browser terminal (xterm.js) attached to a stage's live tmux… | 163 |
 
 ### entry-points
 
@@ -101,7 +102,7 @@
 | [untrusted-value-boundaries](mistakes/untrusted-value-boundaries.md) | Enumerating every producer of a rendered field, not just the field, and why containment at one… | 141 |
 | [verification-harness](mistakes/verification-harness.md) | When every check fails at once, suspect the harness; the PATH binary is not your build; silent… | 149 |
 | [visibility-and-reachability](mistakes/visibility-and-reachability.md) | pub(crate) is not nameable by itself - visibility is capped by path reachability - plus sibling… | 98 |
-| [web-dashboard-server](mistakes/web-dashboard-server.md) | Concurrency, security and testing lessons from building the hand-rolled HTTP/WebSocket | 162 |
+| [web-dashboard-server](mistakes/web-dashboard-server.md) | Concurrency, security and testing lessons from building the hand-rolled HTTP/WebSocket | 273 |
 | [writer-reader-address](mistakes/writer-reader-address.md) | Topic notes for the mistakes knowledge area. | 71 |
 
 ### concerns
@@ -114,4 +115,4 @@
 | [iterm2-window-teardown](concerns/iterm2-window-teardown.md) | Topic notes for the concerns knowledge area. | 48 |
 | [sandbox-protected-hooks-dir](concerns/sandbox-protected-hooks-dir.md) | Claude Code's sandbox write-protects the project-root `hooks/` directory as part of its… | 43 |
 | [sandbox-write-rules-inert](concerns/sandbox-write-rules-inert.md) | Sandbox Write() rules that are inert in loom's generated stage settings and in the | 62 |
-| [web-dashboard-latent-issues](concerns/web-dashboard-latent-issues.md) | Issues reviewed in `loom/src/commands/status/web/` during integration-verify and | 30 |
+| [web-dashboard-latent-issues](concerns/web-dashboard-latent-issues.md) | Issues reviewed in `loom/src/commands/status/web/` during integration-verify and | 42 |

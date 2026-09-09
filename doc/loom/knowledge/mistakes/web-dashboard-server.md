@@ -157,6 +157,117 @@ same as the stage branch already did.
 
 **Why:** Every liveness field on the wire (`daemon`, `tick_age_secs`, `generated_at`) is a statement about the moment the frame was generated. A frame is evidence of the past; only the socket is evidence of the present. Nothing in the payload can report its own staleness.
 
-**Prevention:** In a push-fed UI, derive "is this current?" from the transport state (`connectionAtom.phase`), never from the frame's contents. Frame AGE is also the wrong signal here — `web/src/commands/status/web/broadcast.rs` suppresses unchanged frames, so a quiet live feed looks old while being perfectly current. Model an outage as one event with one start time held across retries, or every reconnect resets the age the operator is reading.
+**Prevention:** In a push-fed UI, derive "is this current?" from the transport state (`connectionAtom.phase`), never from the frame's contents. Frame AGE is also the wrong signal here — `loom/src/commands/status/web/broadcast.rs` suppresses unchanged frames, so a quiet live feed looks old while being perfectly current. Model an outage as one event with one start time held across retries, or every reconnect resets the age the operator is reading.
 
 **Fix:** `daemonLine` took a third `staleSecs` argument that wins over every daemon state (`web/src/lib/format.ts`); `DaemonLine` computes it from the connection phase — stale for `reconnecting`/`offline`/`error`, not for `connecting` (the initial `/api/status` fetch lands during that phase). `ws.ts` preserves the outage `since` across retries and flips to a new `offline` phase after the fourth consecutive failure. `web/src/routes/shell.test.tsx` pins the wiring at the rendered-page level, which is the layer the unit tests could not reach: `daemonLine` and the socket state machine were both individually correct while the page was wrong.
+
+## PTY Master Fd Leaked Into the Child, Defeating Hangup Detection (2026-09-09)
+
+**What happened:** confirmed by measurement, not inspection — `cargo test --lib
+...tests_pty::pty_child_shutdown_reaps_the_child -- --exact` finished in exactly `2.00s` on
+two consecutive runs, matching `PtyChild::shutdown`'s fallback deadline to the millisecond,
+never the fast path. `nix::pty::openpty` wraps libc `openpty(3)`, which has no flags argument
+and opens the master **without** `O_CLOEXEC`. The `fcntl` at `pty.rs:25-27` set `O_NONBLOCK`
+(a file-status flag) but never touched the descriptor flags, so the master survived into the
+tmux child across `Command::spawn`'s fork+exec. With the child holding its own copy,
+`shutdown`'s `drop(master)` (`pty.rs:107` at the time) was never the last reference, the slave
+never saw a hangup, the child never got `SIGHUP`, and every terminal close burned the full 2s
+deadline before `SIGKILL`. Ironically the surrounding code already carried a comment about
+dropping the three slave clones so the master would see the child's hangup — the master was
+the fd nobody CLOEXEC'd, defeating exactly that mechanism.
+
+**Why:** `openpty` gives `O_CLOEXEC` on neither end, and a timing assertion whose own budget
+(`elapsed < 3s`) exceeds the fallback deadline cannot distinguish the fast path from the slow
+one — it passed either way.
+
+**Prevention:** after any `openpty`/`posix_openpt`-style call, `fcntl(F_SETFD(FD_CLOEXEC))` the
+master explicitly — never assume it. When timing a "did the fast path fire" behaviour, assert
+strictly *below* the fallback deadline, not merely under some larger ceiling.
+
+## A Backpressure Gate Made a Half-Closed Browser Invisible, and Two Fixes for It Failed First (2026-09-09)
+
+**What happened:** the terminal bridge's inbound gate narrows the polled TCP event mask to
+`empty()` once the pending-input queue is full, so it stops asking whether the socket is
+readable. The brief that reached the implementer claimed "POLLHUP/POLLERR/POLLNVAL are
+reported whether or not you ask for them, so masking POLLIN off costs nothing in disconnect
+detection" — true for those three flags, wrong as a conclusion. A TCP peer's `close()` sends a
+FIN, which sets `POLLIN` (read returns EOF) and, on Linux, `POLLRDHUP` — **not** `POLLHUP`,
+which `tcp_poll` only sets after an RST or `sk_shutdown == SHUTDOWN_MASK`. So a gated,
+half-closed browser tab (control terminal, a paste over 64 KiB, a slow-draining tmux child,
+or simply closing the tab while the PTY is quiet) was invisible for the whole gated window,
+holding one of 8 terminal slots, a PTY and a tmux child indefinitely. The claim had been
+copied verbatim from a reviewer into an implementer's brief and propagated unchecked through
+two agents.
+
+The first fix attempted — `recv(MSG_PEEK|MSG_DONTWAIT)` as a portable EOF probe, overriding a
+reviewer's POLLRDHUP suggestion on cross-platform grounds — also failed, for a reason obvious
+only in hindsight: `recv` returns 0 only once the receive queue is **empty** and the FIN has
+been consumed in sequence, but the gate exists precisely because the queue was left unread.
+While gated, the queue is almost always non-empty, so the peek returns `>0` and the probe is
+silent in exactly the state it was built to detect.
+
+**Why:** "reported whether or not you asked for it" is a true statement about `POLLHUP`
+specifically, never a general statement about disconnect detection — the ordinary TCP close
+path is `POLLIN`/`POLLRDHUP`. And any EOF-by-read probe is defeated by design whenever the
+surrounding code deliberately leaves the receive queue unread.
+
+**Fix (the one that shipped):** a portable stall deadline instead of any readiness- or
+read-based detector — `gate_stalled` tracks how long `pending` has sat at its cap and gives up
+after `GATE_STALL_TIMEOUT` (30s), closing with code 4008. It needs no `cfg`, works identically
+on every platform, and also catches the case no readiness flag or FIN can: a peer that is
+alive but has wedged the PTY, so nothing ever signals its side.
+
+**Prevention:** before masking a readiness flag off any socket, name the exact syscall-level
+event that signals peer close on each target platform — do not generalise from "this flag
+fires unconditionally." Before proposing any mechanism that *reads* a socket to detect EOF,
+ask what is already sitting in the queue in the state being detected; a backpressure gate
+guarantees that queue is non-empty, which defeats every read-based EOF probe. A claim
+inherited from a reviewer and pasted into a brief carries no more authority than one invented
+from scratch — verify it before it reaches an implementer.
+
+## Front-Truncating a Bounded Input Queue Executes an Attacker-Controlled Suffix (2026-09-09)
+
+**What happened:** an early version of the terminal bridge's pending-input queue dropped from
+the **front** on overflow — the dangerous direction for a terminal. A typed command is
+submitted by its *last* byte (the newline), so front-truncation keeps that trailing newline
+and discards the beginning: what reaches the agent is a suffix of what was typed, already
+terminated, so the shell executes it. `echo "summarise <70KB of pasted log>"` front-truncated
+becomes `...tail of the log"` + newline — a complete, executable line. Root cause was the
+absence of backpressure: the socket was drained on any `POLLIN` with no reference to the
+queue's length, making it a lossy ring rather than a staging buffer for one partial write.
+
+**Why:** the queue was sized to bound memory, but nothing stopped the socket read that fed it
+once full, so "bounded" meant "silently lossy" rather than "backpressured."
+
+**Fix:** gate the inbound read on `pending.len() < MAX_PENDING_INPUT` and let TCP's own
+receive window stall the browser instead — nothing is lost, ordering is preserved, and
+`pending` now peaks near the WebSocket read-buffer size, so no drop policy is ever reached.
+Coupling to watch: this is only safe while the outbound direction (`pump_pty`) drains the PTY
+unconditionally — "stop reading input because the queue is full" plus "the queue is full
+because the child is blocked writing" is the classic proxy deadlock.
+
+**Prevention:** when a bounded queue sits between a network peer and a PTY, identify which
+*end* of the stream carries the commit token (for line-oriented input, the trailing newline)
+before choosing a drop policy — any policy that discards context while preserving the commit
+token turns a truncated paste into an executed command. Prefer backpressure over any drop
+policy when the upstream transport already has flow control (TCP) to push back with.
+
+## An Integration-Verify Reviewer Cannot See the Plan, So It Confidently Reports Settled Decisions as Defects (2026-09-09)
+
+**What happened:** two of three independent code reviewers flagged the terminal bridge's
+`Resize` handling in view mode ("should not resize the agent's real PTY") as a bug. It was a
+documented, deliberate plan decision — `-f read-only` blocks input only, and `ignore-size` was
+explicitly considered and rejected because it would force the agent's real column count into
+the browser's well. A third reviewer, working from the same tree-only vantage point, correctly
+found a real defect (the front-truncation issue above) that looked structurally identical in
+its report: "this design choice looks wrong, here is why." Nothing in a diff-and-code review
+distinguishes "the reviewer hasn't seen the rationale" from "the rationale doesn't exist."
+
+**Why:** an integration-verify reviewer reasons from the tree alone; it has no channel to the
+plan document that recorded *why* a behaviour is the way it is.
+
+**Prevention:** before briefing a fix for any review finding that would change a deliberate
+behaviour, grep the plan's decisions table for the same words. When two reviewers disagree
+about whether something is a defect, or a finding contradicts an earlier settled decision, halt
+before briefing an implementer — do not let a "fix" get written (or, worse, a test that PINS
+the wrong behaviour as correct) before the contradiction is resolved.

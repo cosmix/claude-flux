@@ -229,7 +229,7 @@ Each of the three steps spawns with an independently selectable model: `--claude
 
 `loom status --live` renders a live ledger dashboard: one row per stage across eight columns (STATE, STAGE, DEPENDS ON, MODELS, ACTIVITY, CONTEXT, TIME, MERGE). MODELS lists the orchestrator's own model first, then the models any subagents it spawned ran on. Columns drop in priority order as the terminal narrows; below a 64x16 (columns x rows) terminal a notice replaces the dashboard entirely. Press `?` to toggle a legend overlay explaining every state icon.
 
-`loom status --web [PORT]` starts a web dashboard bound to `127.0.0.1` and serves the live ledger over a WebSocket in the browser. Without `PORT`, it starts at port 7373 and automatically tries the next available port when a candidate is occupied. Supplying a nonzero `PORT` requests that exact port; `PORT` 0 asks the OS for any free port. It works without the daemon by polling `.work/` files directly when the daemon socket is unreachable. Besides the ledger, it exposes one write surface: a settings dialog for editing loom's configuration (see below).
+`loom status --web [PORT] [--terminals]` starts a web dashboard bound to `127.0.0.1` and serves the live ledger over a WebSocket in the browser. Without `PORT`, it starts at port 7373 and automatically tries the next available port when a candidate is occupied. Supplying a nonzero `PORT` requests that exact port; `PORT` 0 asks the OS for any free port. It works without the daemon by polling `.work/` files directly when the daemon socket is unreachable. Besides the ledger, it exposes a settings dialog for editing loom's configuration (see below) and, with `--terminals`, a way to open a stage's terminal from the browser (see [Web Dashboard Terminals](#web-dashboard-terminals)).
 
 ### Web Dashboard Settings
 
@@ -247,6 +247,10 @@ Only `terminal.backend` and `context.ceiling_tokens` have a project tier; the di
 One caveat worth knowing before you rely on it: a project override replaces its whole `.loom/work/config.toml` section, not just the one key. Clearing the override removes the key and, if that empties the section, the section too — but if a sibling key is still in there (as with `[context]`, since `loom init` writes `ceiling_tokens` alongside `subagent_ceiling_tokens`), the section still wins as a whole and the value resolves to the built-in default rather than falling through to your user setting. The dialog reports that state accurately (still project-sourced); it just may not be the fallback you expected.
 
 The dashboard stays a `127.0.0.1`-only, unauthenticated tool for the person running it — the settings endpoint adds no login. Writes are gated by the same `Host` check as the rest of the dashboard, plus a strict `Origin` check (must be present and loopback) and a per-process CSRF token issued on load.
+
+### Web Dashboard Terminals
+
+`loom status --web --terminals` (tmux backend only) adds a "Take control" view to each stage's detail dialog: an xterm.js terminal opens right in the browser, attached to that stage's live tmux session. It starts in a read-only View mode; switching to Control sends every keystroke to the running agent. Enabling `--terminals` mints a one-time token and prints it in the startup URL — open that exact link once to set an auth cookie for the dashboard; a plain `--web` link never gets the "Take control" option.
 
 ### Plan Commands
 
