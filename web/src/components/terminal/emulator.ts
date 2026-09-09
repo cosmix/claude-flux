@@ -1,3 +1,4 @@
+import { loadTerminalFonts, TERMINAL_FONT_FAMILY } from "./fonts";
 import { handleTerminalKey } from "./keyboard";
 
 export interface EmulatorSize {
@@ -75,7 +76,7 @@ function terminalOptions() {
   return {
     allowProposedApi: true,
     cursorStyle: "bar" as const,
-    fontFamily: '"IBM Plex Mono", monospace',
+    fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 13,
     lineHeight: 1.4,
     // Option+B/F and other readline shortcuts must emit Meta sequences on macOS.
@@ -117,6 +118,7 @@ export const createXtermEmulator: EmulatorFactory = async () => {
     import("@xterm/addon-fit"),
     import("@xterm/addon-webgl"),
     import("@xterm/addon-unicode11"),
+    loadTerminalFonts(),
   ]);
   const terminal = new Terminal(terminalOptions());
   terminal.attachCustomKeyEventHandler((event) => handleTerminalKey(event, terminal));

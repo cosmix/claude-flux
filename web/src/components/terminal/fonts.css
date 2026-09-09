@@ -1,0 +1,31 @@
+@font-face {
+  font-family: "Commit Mono Cosmix";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/commit-mono-cosmix/commit-mono-cosmix-400-regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Commit Mono Cosmix";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/commit-mono-cosmix/commit-mono-cosmix-400-italic.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Commit Mono Cosmix";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/commit-mono-cosmix/commit-mono-cosmix-700-regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Commit Mono Cosmix";
+  font-style: italic;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/commit-mono-cosmix/commit-mono-cosmix-700-italic.woff2") format("woff2");
+}

@@ -4,6 +4,9 @@
  * mirrored on the well, frame and dialog content.
  */
 @layer components {
+  .terminal-frame {
+    --font-terminal: "Commit Mono Cosmix", monospace;
+  }
   .terminal-frame[data-frame="dialog"] {
     display: contents;
   }
@@ -128,7 +131,7 @@
   .terminal-host {
     position: absolute;
     inset: 14px 18px;
-    font-family: var(--font-mono);
+    font-family: var(--font-terminal);
     font-size: 13px;
     line-height: 1.4;
     transition: filter 600ms ease;
@@ -212,7 +215,7 @@
     gap: 10px;
     padding: 24px;
     text-align: center;
-    font-family: var(--font-mono);
+    font-family: var(--font-terminal);
     font-size: 13px;
     color: var(--well-dim);
   }
