@@ -1,3 +1,5 @@
+import { handleTerminalKey } from "./keyboard";
+
 export interface EmulatorSize {
   cols: number;
   rows: number;
@@ -117,6 +119,7 @@ export const createXtermEmulator: EmulatorFactory = async () => {
     import("@xterm/addon-unicode11"),
   ]);
   const terminal = new Terminal(terminalOptions());
+  terminal.attachCustomKeyEventHandler((event) => handleTerminalKey(event, terminal));
   const fitAddon = new FitAddon();
   const unicodeAddon = new Unicode11Addon();
   terminal.loadAddon(unicodeAddon);
