@@ -29,6 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::context::source_graph::{FileCoverage, SourceEdge, SourceNode};
 use crate::context::store::canonical_json;
@@ -70,6 +71,18 @@ impl Default for FileEntry {
             coverage: FileCoverage::LexicalOnly {
                 detail: "not extracted".to_string(),
             },
+        }
+    }
+}
+
+impl FileEntry {
+    /// A deletion marker carried only by an overlay.
+    pub fn tombstone() -> Self {
+        Self {
+            content_hash: String::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            coverage: FileCoverage::Deleted,
         }
     }
 }
@@ -199,6 +212,45 @@ impl GraphStore {
         read_layer(&self.base_path(revision))
     }
 
+    /// Read the most recently written base layer, if any.
+    pub(crate) fn load_newest_base(&self) -> Result<Option<GraphLayer>> {
+        let dir = self.base_dir();
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to list base graphs: {}", dir.display()));
+            }
+        };
+        let mut newest: Option<(PathBuf, SystemTime)> = None;
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("Failed to read entry in {}", dir.display()))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            let replace = match &newest {
+                None => true,
+                Some((current_path, current)) => {
+                    modified > *current || (modified == *current && path > *current_path)
+                }
+            };
+            if replace {
+                newest = Some((path, modified));
+            }
+        }
+        match newest {
+            Some((path, _)) => read_layer(&path),
+            None => Ok(None),
+        }
+    }
+
     /// Publish a base layer for `revision`.
     ///
     /// A published base layer is immutable: if one already exists for this
@@ -233,7 +285,15 @@ impl GraphStore {
     /// Overlays are mutable — a stage rewrites its own as it edits — but they
     /// are private to that stage, so no other reader can observe a torn write.
     pub fn save_overlay(&self, plan: &str, stage: &str, layer: &GraphLayer) -> Result<()> {
-        write_layer(&self.overlay_path(plan, stage), layer)
+        let mut persisted = layer.clone();
+        let base = self.load_base(&layer.revision)?;
+        persisted.files.retain(|path, entry| {
+            entry.coverage != FileCoverage::Deleted
+                || base
+                    .as_ref()
+                    .is_some_and(|base| base.files.contains_key(path))
+        });
+        write_layer(&self.overlay_path(plan, stage), &persisted)
     }
 
     /// Delete a stage's overlay layer file. Idempotent.
@@ -278,8 +338,12 @@ impl GraphStore {
                 for (path, entry) in overlay.files {
                     // Wholesale replacement, never a merge: an overlay entry is
                     // the complete truth for that file in this stage.
-                    resolved.files.insert(path.clone(), entry);
-                    resolved.overlaid.insert(path);
+                    if entry.coverage == FileCoverage::Deleted {
+                        resolved.files.remove(&path);
+                    } else {
+                        resolved.files.insert(path.clone(), entry);
+                        resolved.overlaid.insert(path);
+                    }
                 }
             }
         }

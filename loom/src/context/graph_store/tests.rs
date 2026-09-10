@@ -78,6 +78,58 @@ fn an_overlay_entry_shadows_the_base_entry_for_the_same_path() {
 }
 
 #[test]
+fn a_tombstone_in_the_overlay_hides_the_base_entry() {
+    let temp = TempDir::new().unwrap();
+    let store = store(&temp);
+    let mut base = GraphLayer {
+        revision: "rev1".to_string(),
+        ..Default::default()
+    };
+    base.files.insert("src/lib.rs".to_string(), entry("base"));
+    store.publish_base("rev1", &base).unwrap();
+
+    let mut overlay = GraphLayer {
+        revision: "rev1".to_string(),
+        ..Default::default()
+    };
+    overlay
+        .files
+        .insert("src/lib.rs".to_string(), FileEntry::tombstone());
+    store.save_overlay("plan", "stage", &overlay).unwrap();
+
+    let resolved = store.resolved("rev1", Some(("plan", "stage"))).unwrap();
+    assert!(!resolved.files.contains_key("src/lib.rs"));
+    assert!(!resolved.overlaid.contains("src/lib.rs"));
+}
+
+#[test]
+fn a_tombstone_for_a_path_the_base_lacks_is_dropped_at_persist() {
+    let temp = TempDir::new().unwrap();
+    let store = store(&temp);
+    store
+        .publish_base(
+            "rev1",
+            &GraphLayer {
+                revision: "rev1".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let mut overlay = GraphLayer {
+        revision: "rev1".to_string(),
+        ..Default::default()
+    };
+    overlay
+        .files
+        .insert("never-existed.rs".to_string(), FileEntry::tombstone());
+
+    store.save_overlay("plan", "stage", &overlay).unwrap();
+
+    let persisted = store.load_overlay("plan", "stage").unwrap().unwrap();
+    assert!(!persisted.files.contains_key("never-existed.rs"));
+}
+
+#[test]
 fn reading_without_a_stage_sees_only_the_base() {
     let temp = TempDir::new().unwrap();
     let store = store(&temp);
