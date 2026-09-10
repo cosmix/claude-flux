@@ -14,6 +14,7 @@ use super::session_log::{create_logs_dir, stderr_log_path};
 use crate::fs::permissions::state_root::RIPGREP_CONFIG_FILE;
 use crate::models::session::SessionType;
 use anyhow::{Context, Result};
+use script_text::env_allowlist;
 use shell_escape::escape;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,10 +56,12 @@ const CONTINUATION: &str = "\\\n";
 ///
 /// # Returns
 /// The path to the created wrapper script
-// Each of the eight parameters documents a distinct part of the wrapper's
-// environment/security contract above; collapsing them into a params struct
-// would force editing every call site, including wrapper/tests.rs's
-// byte-exact script assertions, which must stay untouched.
+///
+/// Delegates to `create_session_wrapper_script` with `rustc_wrapper_allowed = false` — no
+/// merged sandbox config to ask here — which keeps `wrapper/tests.rs`'s byte-pinned assertions
+/// independent of the host's own sccache install.
+// Mirrors `create_session_wrapper_script`'s first eight params positionally; a struct would
+// force editing every call site, including `wrapper/tests.rs`'s byte-exact assertions.
 #[allow(clippy::too_many_arguments)]
 pub fn create_wrapper_script(
     work_dir: &Path,
@@ -69,6 +72,36 @@ pub fn create_wrapper_script(
     working_dir: Option<&Path>,
     kind: SessionType,
     context_ceiling_tokens: u32,
+) -> Result<PathBuf> {
+    create_session_wrapper_script(
+        work_dir,
+        pid_key,
+        stage_id,
+        session_id,
+        claude_cmd,
+        working_dir,
+        kind,
+        context_ceiling_tokens,
+        false,
+    )
+}
+
+/// Real body behind [`create_wrapper_script`]; same contract, plus `rustc_wrapper_allowed` —
+/// whether this session's merged sandbox config permits sccache; see `sccache_env`.
+// Flat like `create_wrapper_script`, which this mirrors one-for-one plus the trailing gate;
+// collapsing into a struct would force editing every call site, including
+// `wrapper/tests.rs`'s byte-exact assertions, which must stay untouched.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_session_wrapper_script(
+    work_dir: &Path,
+    pid_key: &str,
+    stage_id: &str,
+    session_id: &str,
+    claude_cmd: &str,
+    working_dir: Option<&Path>,
+    kind: SessionType,
+    context_ceiling_tokens: u32,
+    rustc_wrapper_allowed: bool,
 ) -> Result<PathBuf> {
     create_wrappers_dir(work_dir)?;
     create_logs_dir(work_dir)?;
@@ -84,6 +117,7 @@ pub fn create_wrapper_script(
         working_dir,
         kind,
         context_ceiling_tokens,
+        rustc_wrapper_allowed,
     );
 
     fs::write(&wrapper_path, &script)
@@ -222,45 +256,6 @@ fn work_dir_env(work_dir: &Path) -> String {
     block
 }
 
-/// Rebuilds the child environment from a minimal host allowlist rather than
-/// inheriting it, so ambient credentials and token-shaped variables never
-/// reach a stage session. Fully static — no interpolation.
-///
-/// TERMINFO/TERMINFO_DIRS travel alongside TERM, together with HOME (already
-/// forwarded, which covers `~/.terminfo`) — the standard ncurses resolution
-/// inputs. TERM only names the terminal; these say where its capability
-/// database lives, and forwarding the name without the database forwards
-/// half a contract: any terminal whose terminfo entry is not bundled into
-/// the system database (kitty is the observed instance) leaves the stage
-/// agent's inherited TERM with nowhere to resolve.
-/// RUSTC_WRAPPER/SCCACHE_DIR/SCCACHE_CACHE_SIZE forward an operator's own
-/// sccache configuration (cache location, cache size) so it survives into
-/// the session even when this machine's sccache was found some other way
-/// than [`super::build_cache::find_sccache_path`]. `sccache_env` appends its
-/// own resolved `RUSTC_WRAPPER` after `_loom_env`'s expansion in
-/// `build_wrapper_script`, so a later `env` assignment of the same name
-/// wins and the resolver's value takes precedence when both are present -
-/// `sccache_env` calls
-/// [`super::build_cache::warn_if_operator_rustc_wrapper_overridden`] so that
-/// silent override is logged rather than invisible.
-const ENV_ALLOWLIST: &str = r#"# Reconstruct the stage environment from a minimal host allowlist. In
-# particular, ambient credentials and token-shaped variables are not inherited.
-_loom_env=(
-    "HOME=${HOME:-}"
-    "PATH=${PATH:-/usr/bin:/bin}"
-)
-for _loom_name in LANG LC_ALL LC_CTYPE TERM TERMINFO TERMINFO_DIRS COLORTERM \
-    TERM_PROGRAM SHELL DISPLAY \
-    WAYLAND_DISPLAY XAUTHORITY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR \
-    TMUX_TMPDIR TMUX TMUX_PANE TMPDIR \
-    RUSTC_WRAPPER SCCACHE_DIR SCCACHE_CACHE_SIZE; do
-    _loom_value="${!_loom_name}"
-    if [ -n "$_loom_value" ]; then
-        _loom_env+=("$_loom_name=$_loom_value")
-    fi
-done
-"#;
-
 /// Rendered above the exec line; own constant, like `ENV_ALLOWLIST`, to keep `build_wrapper_script`'s body under its line cap.
 const EXEC_COMMENT: &str = r#"# Loom stages record knowledge through `loom memory` / `loom knowledge`; Claude
 # Code auto-memory writes to a location invisible to orchestration, so disable
@@ -334,19 +329,20 @@ fn stderr_log_escaped(work_dir: &Path, session_id: &str) -> String {
     .into_owned()
 }
 
-/// `RUSTC_WRAPPER=<path>` when sccache is available on this machine,
-/// rendered as one shell-escaped `exec env` assignment; empty when it is not
-/// (dependency crates then compile per-worktree exactly as before). Applied
-/// for EVERY session kind — a judge session runs `cargo test` too, just like
-/// a stage session.
-fn sccache_env() -> String {
-    match super::build_cache::rustc_wrapper_env() {
-        Some(assignment) => {
-            super::build_cache::warn_if_operator_rustc_wrapper_overridden();
-            format!("    {} {CONTINUATION}", escape(assignment.into()))
-        }
-        None => String::new(),
+/// `RUSTC_WRAPPER=<path>` to export, or empty when either `rustc_wrapper_allowed` (the caller's
+/// sandbox verdict; see `build_cache::sccache_usable_in`) is false, or nothing resolves. The
+/// candidate itself — resolved path vs. the operator's own `RUSTC_WRAPPER` — comes from
+/// `build_cache::rustc_wrapper_candidate`; never probed here, since this script itself runs
+/// unsandboxed.
+fn sccache_env(rustc_wrapper_allowed: bool) -> String {
+    if !rustc_wrapper_allowed {
+        return String::new();
     }
+    let Some(candidate) = super::build_cache::rustc_wrapper_candidate() else {
+        return String::new();
+    };
+    let assignment = escape(format!("RUSTC_WRAPPER={candidate}").into());
+    format!("    {assignment} {CONTINUATION}")
 }
 
 /// Render the wrapper script text. Pure: every path is resolved by the caller
@@ -363,6 +359,7 @@ fn build_wrapper_script(
     working_dir: Option<&Path>,
     kind: SessionType,
     context_ceiling_tokens: u32,
+    rustc_wrapper_allowed: bool,
 ) -> String {
     let cd_section = cd_section(working_dir);
     let (merge_session_env, worktree_path_env) = kind_env(kind, working_dir);
@@ -374,14 +371,15 @@ fn build_wrapper_script(
     let pid_capture = pid_capture(&pid_file);
     let stderr_log = stderr_log_escaped(work_dir, session_id);
     let resource_limit_env = resource_limit_env(context_ceiling_tokens);
-    let sccache_env = sccache_env();
+    let sccache_env = sccache_env(rustc_wrapper_allowed);
+    let env_allowlist = env_allowlist();
     format!(
         r#"#!/bin/bash
 # Loom stage wrapper
 # Writes PID to file before exec'ing claude
 
 {cd_section}{pid_capture}
-{ENV_ALLOWLIST}
+{env_allowlist}
 {EXEC_COMMENT}
 exec env -i "${{_loom_env[@]}}" \
     {session_env} \
@@ -395,6 +393,8 @@ exec env -i "${{_loom_env[@]}}" \
 "#
     )
 }
+
+mod script_text;
 
 #[cfg(test)]
 mod tests;

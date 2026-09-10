@@ -90,8 +90,8 @@ pub(crate) fn rustc_wrapper_env() -> Option<String> {
 /// `RUSTC_WRAPPER` into the generated wrapper script first, but
 /// [`rustc_wrapper_env`]'s own `RUSTC_WRAPPER=<resolved>` assignment is
 /// appended after it, so the resolved path silently wins. Called once per
-/// wrapper script, from `wrapper::sccache_env`, only when a resolved path
-/// exists to override.
+/// wrapper script, from [`rustc_wrapper_candidate`], only when a resolved
+/// path exists to override.
 pub(crate) fn warn_if_operator_rustc_wrapper_overridden() {
     let Some(resolved) = find_sccache_path() else {
         return;
@@ -109,6 +109,41 @@ pub(crate) fn warn_if_operator_rustc_wrapper_overridden() {
         operator_value,
         resolved.display(),
     );
+}
+
+/// Resolves the `RUSTC_WRAPPER` value to export for a session that allows sccache (see
+/// [`sccache_usable_in`]): the resolver's own path wins — logging via
+/// [`warn_if_operator_rustc_wrapper_overridden`] when it silently overrides the operator's own
+/// value forwarded through `ENV_ALLOWLIST` — else the operator's own non-empty `RUSTC_WRAPPER`,
+/// exactly as forwarded. Called once per wrapper script, from `wrapper::sccache_env`.
+pub(crate) fn rustc_wrapper_candidate() -> Option<String> {
+    match rustc_wrapper_env() {
+        Some(assignment) => {
+            warn_if_operator_rustc_wrapper_overridden();
+            assignment
+                .strip_prefix("RUSTC_WRAPPER=")
+                .map(str::to_string)
+        }
+        None => std::env::var("RUSTC_WRAPPER")
+            .ok()
+            .filter(|v| !v.is_empty()),
+    }
+}
+
+/// Whether sccache can run inside a session governed by `config`.
+///
+/// Claude Code sandboxes each Bash command with its own network namespace, so
+/// no host sccache server on 127.0.0.1:4226 is reachable, and with a seccomp
+/// filter that denies `AF_UNIX` socket creation. Finding no server to talk to,
+/// sccache spawns one and waits for its startup notice over an `AF_UNIX`
+/// socket, which the filter refuses — only `network.allow_all_unix_sockets`
+/// lifts that filter; a path-scoped `allow_unix_sockets` list cannot. The
+/// wrapper script and the daemon both run outside the sandboxed Bash call, so
+/// neither can probe for this failure; hence a decision from the config
+/// instead of a runtime check. With the sandbox disabled entirely, no seccomp
+/// filter applies and sccache runs unhindered.
+pub(crate) fn sccache_usable_in(config: &crate::sandbox::MergedSandboxConfig) -> bool {
+    !config.enabled || config.network.allow_all_unix_sockets
 }
 
 /// One-line operator-facing status, shared verbatim by `loom doctor` and
@@ -231,5 +266,59 @@ mod tests {
     fn status_line_nudges_installation_when_disabled() {
         let _pin = EnvVarGuard::set(LOOM_SCCACHE_ENV, "0");
         assert!(sccache_status_line().starts_with("sccache: not installed"));
+    }
+
+    /// Builds a `MergedSandboxConfig` with only `enabled` and
+    /// `network.allow_all_unix_sockets`/`allow_unix_sockets` varying; every
+    /// other field is a default, following the pattern in
+    /// `sandbox::config::tests::test_validate_config_rejects_bypass_permissions_unconditionally`.
+    fn config_with(
+        enabled: bool,
+        network: crate::plan::schema::NetworkConfig,
+    ) -> crate::sandbox::MergedSandboxConfig {
+        crate::sandbox::MergedSandboxConfig {
+            enabled,
+            auto_allow: false,
+            allow_unsandboxed_escape: false,
+            excluded_commands: vec![],
+            filesystem: Default::default(),
+            network,
+            linux: Default::default(),
+            permission_mode: crate::models::stage::PermissionMode::Auto,
+            implementers: Default::default(),
+            command_confinement: Default::default(),
+        }
+    }
+
+    #[test]
+    fn sccache_usable_when_sandbox_disabled() {
+        let config = config_with(false, Default::default());
+        assert!(sccache_usable_in(&config));
+    }
+
+    #[test]
+    fn sccache_unusable_when_sandboxed_without_unix_socket_allowance() {
+        let config = config_with(true, Default::default());
+        assert!(!sccache_usable_in(&config));
+    }
+
+    #[test]
+    fn sccache_usable_when_sandboxed_with_all_unix_sockets_allowed() {
+        let network = crate::plan::schema::NetworkConfig {
+            allow_all_unix_sockets: true,
+            ..Default::default()
+        };
+        let config = config_with(true, network);
+        assert!(sccache_usable_in(&config));
+    }
+
+    #[test]
+    fn sccache_unusable_when_sandboxed_with_only_a_path_allowlist() {
+        let network = crate::plan::schema::NetworkConfig {
+            allow_unix_sockets: vec!["/tmp/some.sock".to_string()],
+            ..Default::default()
+        };
+        let config = config_with(true, network);
+        assert!(!sccache_usable_in(&config));
     }
 }
