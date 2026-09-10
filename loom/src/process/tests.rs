@@ -112,6 +112,37 @@ fn test_run_bounded_kills_command_that_outlives_deadline() {
 }
 
 #[test]
+fn run_bounded_collects_output_larger_than_the_pipe_buffer() {
+    // Larger than the ~64KB OS pipe buffer. With the old implementation
+    // (drain only after wait_timeout), the child blocks on write and this
+    // 5s deadline expires before it can exit.
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "head -c 300000 /dev/zero"]);
+
+    let output = run_bounded(&mut cmd, Duration::from_secs(5))
+        .expect("command should spawn")
+        .completed()
+        .expect("output larger than the pipe buffer must not time out");
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout.len(), 300_000);
+}
+
+#[test]
+fn run_bounded_collects_large_stderr_too() {
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "head -c 300000 /dev/zero >&2"]);
+
+    let output = run_bounded(&mut cmd, Duration::from_secs(5))
+        .expect("command should spawn")
+        .completed()
+        .expect("stderr larger than the pipe buffer must not time out");
+
+    assert!(output.status.success());
+    assert_eq!(output.stderr.len(), 300_000);
+}
+
+#[test]
 fn bounded_output_returns_structured_timeout() {
     let mut cmd = Command::new("sleep");
     cmd.arg("60");
@@ -123,6 +154,31 @@ fn bounded_output_returns_structured_timeout() {
         .expect("timeout must be machine-identifiable");
     assert_eq!(timeout.operation(), "git status");
     assert_eq!(timeout.timeout(), Duration::from_millis(100));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_bounded_times_out_when_a_descendant_holds_the_pipe_after_exit() {
+    // The backgrounded `sleep 30` inherits the shell's stdout, so it keeps
+    // the pipe open long after `sh` itself exits. With the old
+    // join-after-wait implementation this hangs for ~30s; the fix must
+    // notice the post-exit collection is itself running past the deadline.
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "sleep 30 & echo done"]);
+
+    let started = std::time::Instant::now();
+    let outcome = run_bounded(&mut cmd, Duration::from_secs(1)).unwrap();
+
+    assert!(
+        matches!(outcome, BoundedOutput::TimedOut),
+        "a descendant holding stdout open past the deadline must report TimedOut, not hang \
+         until it exits on its own"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "run_bounded returned after {:?}; it must not wait for the backgrounded descendant",
+        started.elapsed()
+    );
 }
 
 #[cfg(unix)]
