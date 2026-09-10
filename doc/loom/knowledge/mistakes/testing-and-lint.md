@@ -539,3 +539,17 @@ one colored segment or wholly in plain text, never across the boundary between a
 
 **Fix:** split the assertion into `contains("Cleanup warning: ")` and `contains("failed: worktree
 busy\nretrying next cycle")`.
+
+## A cargo test Filter Written Against the Test File's Own Name Selects Zero Tests, Silently (2026-09-10)
+
+The repo convention `#[path = "tests_<name>.rs"] mod tests;` (`commands/knowledge/{sync,check,eval,context,telemetry}.rs`,
+`commands/hook/target.rs`, `commands/map.rs`) keeps every test compiled under the OWNING
+module's path (e.g. `commands::knowledge::sync::tests::...`), not under a module named after
+the file. A narrow `cargo test` filter written against the filename
+(`commands::knowledge::tests_eval`, `tests_context`, `tests_sync`) matches nothing, selects
+zero tests, and prints `ok` with `0 passed` — indistinguishable at a glance from a real,
+narrow, all-green run. A plan brief that quotes such a filter as a "Proof" check proves
+nothing.
+
+Prevention: before quoting a narrow test filter in a brief or acceptance criterion, run
+`cargo test --lib -- --list | rg <filter>` and confirm a non-zero match count.

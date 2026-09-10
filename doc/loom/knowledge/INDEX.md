@@ -41,7 +41,7 @@
 | [security-and-isolation](architecture/security-and-isolation.md) | 4-layer worktree defense, security model, settings.local.json sites. | 48 |
 | [signal-generation](architecture/signal-generation.md) | Signal assembly: cache, append_* helpers, per-stage prefixes, hung escalation. | 182 |
 | [skill-catalog](architecture/skill-catalog.md) | The two skill roots, why 53 skills live outside `~/.claude/skills`, and the… | 111 |
-| [source-graph](architecture/source-graph.md) | What the source graph is and is not, its honesty contract, extractor trait… | 312 |
+| [source-graph](architecture/source-graph.md) | What the source graph is and is not, its honesty contract, extractor trait… | 329 |
 | [status-data-model](architecture/status-data-model.md) | Where each field shown by `loom status` (static, compact, and `--live`) comes… | 196 |
 | [terminal-backends](architecture/terminal-backends.md) | The native and tmux session backends behind one dispatcher, lane resolution… | 276 |
 | [web-dashboard](architecture/web-dashboard.md) | `loom status --web [PORT]` — an HTTP/WebSocket server on `127.0.0.1` that… | 49 |
@@ -62,13 +62,13 @@
 
 | Topic | Blurb | Lines |
 | --- | --- | --- |
-| [cli-process-and-conventions](patterns/cli-process-and-conventions.md) | CLI registration, TUI, error handling, process mgmt, config, HTTP client. | 221 |
+| [cli-process-and-conventions](patterns/cli-process-and-conventions.md) | CLI registration, TUI, error handling, process mgmt, config, HTTP client. | 246 |
 | [doctrine-cross-surface](patterns/doctrine-cross-surface.md) | Pinning multi-surface guidance with equality tests, ambiguity-equals-fail-safe… | 134 |
 | [hook-content-stripping](patterns/hook-content-stripping.md) | How a hook decides what a Bash command actually invokes: strip embedded… | 151 |
 | [merge-and-recovery](patterns/merge-and-recovery.md) | Progressive merge, conflict recovery, attribution, dispute files. | 96 |
 | [orchestrator-daemon-loop](patterns/orchestrator-daemon-loop.md) | Signal gen, daemon IPC, poll loop, heartbeat, session backend, spool drain. | 105 |
 | [remote-control](patterns/remote-control.md) | The detect-capability, preflight, resolve-invocation shape for external agent… | 50 |
-| [security-sandbox-and-hooks](patterns/security-sandbox-and-hooks.md) | Hooks, input validation, permission sync, sandbox config, untrusted values. | 76 |
+| [security-sandbox-and-hooks](patterns/security-sandbox-and-hooks.md) | Hooks, input validation, permission sync, sandbox config, untrusted values. | 94 |
 | [stage-daemon-channels](patterns/stage-daemon-channels.md) | How a stage agent reaches the daemon to change its own stage's state, and why… | 81 |
 | [stage-lifecycle-and-verification](patterns/stage-lifecycle-and-verification.md) | Stage/session states, locked writes, acceptance & verification layers. | 170 |
 | [subagent-hierarchy](patterns/subagent-hierarchy.md) | Flat fan-out vs 2-level coordinator hierarchy vs agent teams: when to use each… | 82 |
@@ -99,7 +99,7 @@
 | [doctrine-and-acceptance](mistakes/doctrine-and-acceptance.md) | Why a one-phrase grep proves presence but never agreement, and how doctrine… | 239 |
 | [hooks-shell-portability](mistakes/hooks-shell-portability.md) | gawk/bash portability traps and heredoc-scanning gotchas in the repo's hooks. | 75 |
 | [knowledge-base-drift](mistakes/knowledge-base-drift.md) | How the knowledge base itself goes stale: plan-authoring notes frozen as… | 157 |
-| [knowledge-cli-invariants](mistakes/knowledge-cli-invariants.md) | Invariants belong in the fs constructor, not the CLI handler; lock ordering for… | 105 |
+| [knowledge-cli-invariants](mistakes/knowledge-cli-invariants.md) | Invariants belong in the fs constructor, not the CLI handler; lock ordering for… | 130 |
 | [knowledge-write-channel](mistakes/knowledge-write-channel.md) | Why a distillation stage cannot write knowledge directly, the… | 100 |
 | [ledger-tui-rendering](mistakes/ledger-tui-rendering.md) | Wide-glyph padding, fan-out duplication, and latent panics in the ledger TUI. | 63 |
 | [merge-cleanup-boundary](mistakes/merge-cleanup-boundary.md) | A cleanup-boundary bug: what happened, why it survived undetected, and the fix… | 171 |
@@ -115,11 +115,11 @@
 | [status-broadcast-hardening](mistakes/status-broadcast-hardening.md) | Frame-overflow eviction and read-timeout desync from a widened status broadcast. | 74 |
 | [store-without-consumer](mistakes/store-without-consumer.md) | A store that was written but never read - what happened, why it stayed… | 94 |
 | [subagent-orchestration](mistakes/subagent-orchestration.md) | Liveness signals for subagents, when a missing report is not a missing result… | 345 |
-| [testing-and-lint](mistakes/testing-and-lint.md) | Lint and test discipline: --all-targets, --no-fail-fast, headless CI, ambient… | 541 |
+| [testing-and-lint](mistakes/testing-and-lint.md) | Lint and test discipline: --all-targets, --no-fail-fast, headless CI, ambient… | 555 |
 | [tests-that-cannot-fail](mistakes/tests-that-cannot-fail.md) | Tests that pass regardless of whether the bug they exist to catch is present… | 223 |
 | [tmux-backend](mistakes/tmux-backend.md) | tmux spawn-failure exit codes, cleanup-on-every-error-path discipline, and PID… | 120 |
 | [untrusted-value-boundaries](mistakes/untrusted-value-boundaries.md) | Enumerating every producer of a rendered field, not just the field, and why… | 188 |
-| [verification-harness](mistakes/verification-harness.md) | When every check fails at once, suspect the harness; the PATH binary is not… | 243 |
+| [verification-harness](mistakes/verification-harness.md) | When every check fails at once, suspect the harness; the PATH binary is not… | 257 |
 | [visibility-and-reachability](mistakes/visibility-and-reachability.md) | pub(crate) is not nameable by itself - visibility is capped by path… | 115 |
 | [web-dashboard-server](mistakes/web-dashboard-server.md) | Concurrency, security and testing lessons from building the hand-rolled… | 273 |
 | [writer-reader-address](mistakes/writer-reader-address.md) | A layer written under a key its reader ignores looks identical to no-op. | 73 |
