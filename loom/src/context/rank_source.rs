@@ -40,7 +40,7 @@ use crate::context::rank::{
     RungScore, BOOST_EXACT_PATH, BOOST_EXACT_SYMBOL, BOOST_EXPLICIT_ID, BOOST_STAGE_DEPENDENCY,
 };
 use crate::context::schema::{
-    Channel, ChunkId, FileCoverage, SelectionReason, SourceNode, SourceNodeKind,
+    estimate_tokens, Channel, ChunkId, FileCoverage, SelectionReason, SourceNode, SourceNodeKind,
 };
 use candidacy::admits_lexical_evidence;
 use expand::expand_from_seeds;
@@ -137,7 +137,7 @@ pub fn rank_source_channel_cached(
 
     let scored = score_nodes(query, &nodes, &corpus, &gate, config);
     let ranked = sorted_candidates(scored);
-    let ranked = expand_from_seeds(ranked, graph, query, config);
+    let ranked = expand_from_seeds(ranked, graph, config);
     rank_order(ranked, graph, corpus.dropped_terms)
 }
 
@@ -364,15 +364,14 @@ fn node_document(node: &SourceNode) -> Vec<(String, f32)> {
 /// constant covers the pointer: under-estimating here overfills the pack, so
 /// the estimate deliberately rounds up.
 pub(super) fn estimate_node_tokens(node: &SourceNode) -> usize {
-    node.signature.len() / 4 + 16
+    estimate_tokens(&node.signature) + 16
 }
 
 #[cfg(test)]
 pub(super) fn expand_from_seeds_for_test(
     ranked: Vec<RankedCandidate>,
     graph: &ResolvedGraph,
-    query: &RankQuery,
     config: &RetrievalConfig,
 ) -> Vec<RankedCandidate> {
-    expand_from_seeds(ranked, graph, query, config)
+    expand_from_seeds(ranked, graph, config)
 }

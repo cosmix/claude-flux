@@ -1,6 +1,5 @@
 use super::source_fixtures::{full_node, graph, node, source_candidate};
 use crate::context::config::RetrievalConfig;
-use crate::context::fuse::fuse;
 use crate::context::graph_store::ResolvedGraph;
 use crate::context::rank::{RankQuery, RankedCandidate};
 use crate::context::rank_source::{expand_from_seeds_for_test, rank_source};
@@ -33,12 +32,7 @@ fn graph_with_edges(nodes: Vec<SourceNode>, edges: Vec<SourceEdge>) -> ResolvedG
 }
 
 fn expand(ranked: Vec<RankedCandidate>, graph: &ResolvedGraph) -> Vec<RankedCandidate> {
-    expand_from_seeds_for_test(
-        ranked,
-        graph,
-        &RankQuery::default(),
-        &RetrievalConfig::default(),
-    )
+    expand_from_seeds_for_test(ranked, graph, &RetrievalConfig::default())
 }
 
 fn resolved_edge(from: &str, to: &str, kind: SourceEdgeKind, confidence: f32) -> SourceEdge {
@@ -328,29 +322,5 @@ fn a_neighbour_without_full_coverage_never_expands() {
     assert_eq!(expand(ranked.clone(), &fixture), ranked);
 }
 
-#[test]
-fn a_graph_neighbour_fuses_in_tier_two_below_every_exact_rung_candidate() {
-    let low_exact = "src/exact.rs#function:exact";
-    let fixture = graph_with_edges(
-        vec![
-            function(SEED, "src/seed.rs"),
-            function(low_exact, "src/exact.rs"),
-            function(NEIGHBOUR, "src/neighbour.rs"),
-        ],
-        vec![SourceEdge::parser(
-            SEED,
-            NEIGHBOUR,
-            SourceEdgeKind::Calls,
-            "neighbour",
-        )],
-    );
-    let ranked = vec![
-        candidate(SEED, 100.0, SelectionReason::ExactSymbol),
-        candidate(low_exact, 1.0, SelectionReason::ExactPath),
-    ];
-
-    let fused = fuse(&[expand(ranked, &fixture)]);
-    let ids: Vec<&str> = fused.iter().map(|item| item.id.as_str()).collect();
-
-    assert_eq!(ids, vec![SEED, low_exact, NEIGHBOUR]);
-}
+#[path = "rank_source_expand_fusion.rs"]
+mod fusion_tests;

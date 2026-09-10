@@ -3,9 +3,9 @@
 use super::{estimate_node_tokens, paths::apply_test_path_factor};
 use crate::context::config::RetrievalConfig;
 use crate::context::graph_store::ResolvedGraph;
-use crate::context::rank::{RankQuery, RankedCandidate};
+use crate::context::rank::{RankedCandidate, BOOST_EXACT_SYMBOL};
 use crate::context::schema::{
-    Channel, ChunkId, Confidence, FileCoverage, SelectionReason, SourceNodeKind,
+    Channel, ChunkId, Confidence, FileCoverage, SelectionReason, SourceNode, SourceNodeKind,
 };
 use crate::context::source_graph::{SourceEdge, SourceEdgeKind};
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,15 +16,43 @@ pub(super) const MAX_EXPANDED: usize = 12;
 pub(super) const NEIGHBOR_SCORE_FACTOR: f32 = 0.2;
 pub(super) const MIN_NEIGHBOR_EDGE_CONFIDENCE: f32 = 0.5;
 
+/// Neighbours examined per seed before the loop moves on, independent of how
+/// many of them are actually accepted.
+///
+/// `MAX_NEIGHBORS_PER_SEED` bounds acceptances, but a seed's neighbour list can
+/// be mostly rejections — already a candidate, a `File` node, partial coverage
+/// — and none of those rejections used to stop the scan. This bounds the scan
+/// itself, on the sorted-by-confidence list `neighbours_for_seed` already
+/// produces, so truncating it still keeps the strongest neighbours.
+pub(super) const MAX_EXAMINED_NEIGHBORS_PER_SEED: usize = 32;
+
+/// Ceiling on a neighbour's score, strictly below the weakest exact rung
+/// ([`BOOST_EXACT_SYMBOL`]) so a node that merely neighbours a seed can never
+/// outrank a node the query matched directly. Without this, a neighbour of an
+/// `ExplicitId` or `ExactPath` seed (`BOOST_EXPLICIT_ID` = 1000,
+/// `BOOST_EXACT_PATH` = 100) scores `seed_score * NEIGHBOR_SCORE_FACTOR`
+/// uncapped, which clears every exact rung.
+const MAX_NEIGHBOR_SCORE: f32 = BOOST_EXACT_SYMBOL - 1.0;
+
 type Adjacency<'a> = BTreeMap<&'a str, Vec<&'a SourceEdge>>;
+
+/// Mutable state threaded through one expansion pass: the growing candidate
+/// list, the id set it already carries, how many neighbours have been
+/// accepted overall, and an id index over the graph so accepting a neighbour
+/// costs a map probe rather than a scan of every node.
+struct Expansion<'a> {
+    ranked: Vec<RankedCandidate>,
+    existing: BTreeSet<String>,
+    expanded: usize,
+    nodes_by_id: BTreeMap<&'a str, &'a SourceNode>,
+}
 
 /// Add graph neighbours of the strongest exact-rung candidates as tier-2 candidates.
 /// `ranked` is the channel's scored list BEFORE truncation to `MAX_SOURCE_CANDIDATES`,
 /// sorted strongest first. Returns the list with neighbours appended (unsorted).
 pub(super) fn expand_from_seeds(
-    mut ranked: Vec<RankedCandidate>,
+    ranked: Vec<RankedCandidate>,
     graph: &ResolvedGraph,
-    _query: &RankQuery,
     config: &RetrievalConfig,
 ) -> Vec<RankedCandidate> {
     let seeds: Vec<(String, f32)> = ranked
@@ -37,28 +65,30 @@ pub(super) fn expand_from_seeds(
         return ranked;
     }
 
-    let mut existing: BTreeSet<String> = ranked
+    let existing: BTreeSet<String> = ranked
         .iter()
         .map(|candidate| candidate.id.as_str().to_string())
         .collect();
+    let nodes_by_id: BTreeMap<&str, &SourceNode> =
+        graph.nodes().map(|node| (node.id.as_str(), node)).collect();
     let (forward, reverse) = build_adjacencies(graph);
-    let mut expanded = 0;
+    let mut state = Expansion {
+        ranked,
+        existing,
+        expanded: 0,
+        nodes_by_id,
+    };
     for (seed_id, seed_score) in seeds {
-        if expanded == MAX_EXPANDED {
+        if state.expanded == MAX_EXPANDED {
             break;
         }
-        let neighbours = neighbours_for_seed(&seed_id, &forward, &reverse);
-        append_neighbours(
-            neighbours,
-            seed_score,
-            graph,
-            config,
-            &mut ranked,
-            &mut existing,
-            &mut expanded,
-        );
+        let neighbours: Vec<(&str, f32)> = neighbours_for_seed(&seed_id, &forward, &reverse)
+            .into_iter()
+            .take(MAX_EXAMINED_NEIGHBORS_PER_SEED)
+            .collect();
+        append_neighbours(neighbours, seed_score, config, &mut state);
     }
-    ranked
+    state.ranked
 }
 
 fn has_seed_reason(reasons: &[SelectionReason]) -> bool {
@@ -118,41 +148,44 @@ fn eligible_edge(edge: &SourceEdge) -> bool {
         && edge.confidence >= MIN_NEIGHBOR_EDGE_CONFIDENCE
 }
 
-#[allow(clippy::too_many_arguments)]
 fn append_neighbours(
     neighbours: Vec<(&str, f32)>,
     seed_score: f32,
-    graph: &ResolvedGraph,
     config: &RetrievalConfig,
-    ranked: &mut Vec<RankedCandidate>,
-    existing: &mut BTreeSet<String>,
-    expanded: &mut usize,
+    state: &mut Expansion<'_>,
 ) {
     let mut added_for_seed = 0;
     for (id, _) in neighbours {
-        if added_for_seed == MAX_NEIGHBORS_PER_SEED || *expanded == MAX_EXPANDED {
+        if added_for_seed == MAX_NEIGHBORS_PER_SEED || state.expanded == MAX_EXPANDED {
             break;
         }
-        let Some(node) = graph.node(id) else {
+        // Cheapest rejection first: a set probe, before the node lookup.
+        if state.existing.contains(id) {
+            continue;
+        }
+        let Some(node) = state.nodes_by_id.get(id).copied() else {
             continue;
         };
-        if existing.contains(id)
-            || matches!(node.kind, SourceNodeKind::File)
-            || !matches!(node.coverage, FileCoverage::Full)
+        if matches!(node.kind, SourceNodeKind::File) || !matches!(node.coverage, FileCoverage::Full)
         {
             continue;
         }
-        ranked.push(RankedCandidate {
+        let score = apply_test_path_factor(
+            node,
+            (seed_score * NEIGHBOR_SCORE_FACTOR).min(MAX_NEIGHBOR_SCORE),
+            config,
+        );
+        state.ranked.push(RankedCandidate {
             id: ChunkId::from(id),
             channel: Channel::Source,
-            score: apply_test_path_factor(node, seed_score * NEIGHBOR_SCORE_FACTOR, config),
+            score,
             reasons: vec![SelectionReason::GraphNeighbor],
             token_count: estimate_node_tokens(node),
             matched_term_count: 0,
             confidence_ceiling: Some(Confidence::Medium),
         });
-        existing.insert(id.to_string());
+        state.existing.insert(id.to_string());
         added_for_seed += 1;
-        *expanded += 1;
+        state.expanded += 1;
     }
 }
