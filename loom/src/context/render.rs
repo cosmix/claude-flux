@@ -1,6 +1,8 @@
 //! Shared per-item rendering for context consumers.
 
-use crate::context::schema::{estimate_tokens, Confidence, ContextItem, ItemKind};
+use crate::context::schema::{
+    estimate_tokens, Confidence, ContextItem, ItemKind, UnmetRequirement,
+};
 use crate::context::untrusted::inline_safe;
 
 /// One knowledge item's full rendering: its list entry, plus its fenced
@@ -146,11 +148,104 @@ fn parse_source_identity(id: &str) -> Option<(&str, &str)> {
 }
 
 /// Estimated tokens of the exact text this item renders to inside a brief.
-#[allow(dead_code)]
 pub(crate) fn rendered_item_tokens(item: &ContextItem) -> usize {
     let rendered = match item.kind {
         ItemKind::KnowledgeChunk => render_knowledge_item(item),
         ItemKind::SourceNode => render_source_entry(item),
     };
     estimate_tokens(&rendered)
+}
+
+/// The `### Knowledge` section heading, emitted once by
+/// `orchestrator::signals::format::brief::render_knowledge_section` when the
+/// pack carries any [`ItemKind::KnowledgeChunk`] item.
+pub(crate) const KNOWLEDGE_HEADING: &str = "### Knowledge\n\n";
+
+/// The `### Source (signature index)` section heading, emitted once by
+/// `orchestrator::signals::format::brief::render_source_section` when the
+/// pack carries any [`ItemKind::SourceNode`] item.
+pub(crate) const SOURCE_HEADING: &str = "### Source (signature index)\n\n";
+
+/// One path's bullet prefix — `` - `<path>` — `` — shared between the actual
+/// brief renderer
+/// (`orchestrator::signals::format::brief::render_source_group`) and
+/// [`rendered_chrome_tokens`] so the two can never charge different bytes for
+/// the same text.
+pub(crate) fn render_source_group_prefix(path: &std::path::Path) -> String {
+    format!("- `{}` — ", inline_safe(&path.display().to_string()))
+}
+
+/// One `Required but unmet: ...` line, shared between the actual brief
+/// renderer (`orchestrator::signals::format::brief::render_unmet_requirements`)
+/// and [`rendered_chrome_tokens`] for the same reason as
+/// [`render_source_group_prefix`].
+pub(crate) fn render_unmet_line(requirement: &UnmetRequirement) -> String {
+    format!(
+        "Required but unmet: {} (needs ~{} tokens, {} available)\n",
+        inline_safe(&requirement.id),
+        requirement.needed_tokens,
+        requirement.available_tokens,
+    )
+}
+
+/// Estimated tokens of the brief's markdown chrome around `items` and
+/// `unmet`: the section headings, the per-path bullet prefixes and
+/// inter-entry joiners `render_source_group` collapses a run of same-path
+/// source items onto (see its doc comment — this walks the identical
+/// CONSECUTIVE-run rule so it never charges different groups than what
+/// actually renders), and one line per unmet requirement. Every item's own
+/// text is [`rendered_item_tokens`]'s job, not this function's.
+///
+/// Called from both `ContextPack::recompute_estimate` and the packer's
+/// candidate-by-candidate selection loop (`context::pack::select_optional`,
+/// `context::pack::required::reserve`) so a budget decision and the pack's
+/// final published estimate can never disagree about what the chrome costs.
+/// Recomputed from scratch on every call rather than tracked incrementally —
+/// item counts are in the tens, so the repeated O(n) walk costs nothing that
+/// matters, and it is the only way to guarantee this and the real renderer
+/// never drift apart.
+pub(crate) fn rendered_chrome_tokens<'a>(
+    items: impl IntoIterator<Item = &'a ContextItem>,
+    unmet: &[UnmetRequirement],
+) -> usize {
+    let items: Vec<&ContextItem> = items.into_iter().collect();
+    let mut chrome = String::new();
+
+    if items
+        .iter()
+        .any(|item| item.kind == ItemKind::KnowledgeChunk)
+    {
+        chrome.push_str(KNOWLEDGE_HEADING);
+    }
+
+    let source_items: Vec<&ContextItem> = items
+        .iter()
+        .copied()
+        .filter(|item| item.kind == ItemKind::SourceNode)
+        .collect();
+    if !source_items.is_empty() {
+        chrome.push_str(SOURCE_HEADING);
+        let mut start = 0;
+        while start < source_items.len() {
+            let mut end = start + 1;
+            while end < source_items.len()
+                && source_items[end].pointer.path == source_items[start].pointer.path
+            {
+                end += 1;
+            }
+            chrome.push_str(&render_source_group_prefix(
+                &source_items[start].pointer.path,
+            ));
+            chrome.push_str(&" — ".repeat(end - start - 1));
+            chrome.push('\n');
+            start = end;
+        }
+        chrome.push('\n');
+    }
+
+    for requirement in unmet {
+        chrome.push_str(&render_unmet_line(requirement));
+    }
+
+    estimate_tokens(&chrome)
 }

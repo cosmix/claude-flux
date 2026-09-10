@@ -11,13 +11,13 @@ pub(crate) mod twins;
 
 use crate::context::graph_store::ResolvedGraph;
 use crate::context::rank::RankedCandidate;
-use crate::context::render::rendered_item_tokens;
+use crate::context::render::{rendered_chrome_tokens, rendered_item_tokens};
 use crate::context::schema::{
     Channel, ChunkId, ContextItem, ContextPack, Coverage, Freshness, ItemKind, KnowledgeChunk,
     LifecycleState, OmissionSummary, RequiredRepresentation, SourceNode, SourcePointer,
     UnmetRequirement, BRIEF_FRAME_TOKENS,
 };
-pub(crate) use excerpt::bounded_excerpt;
+use excerpt::bounded_excerpt;
 use required::reserve;
 use twins::{details_before_summaries, explicitly_required, knowledge_twin};
 
@@ -118,13 +118,20 @@ fn build_chunk_item(
 /// the delivery-record suppression `ContextItem::content_hash` feeds, since it
 /// changes only when this node's own bytes do.
 ///
-/// `excerpt` goes through [`bounded_excerpt`], never
-/// `crate::utils::truncate_for_display`: `bounded_excerpt` is what enforces the
-/// documented contract on `ContextItem::excerpt` (bounded by
-/// `schema::EXCERPT_MAX_TOKENS`, truncated text ends with the schema truncation
-/// marker on its own line). A signature is short, so
-/// this is nearly always a no-op, but using the other helper would silently
-/// make source items the only ones in the corpus violating that contract.
+/// Under [`RequiredRepresentation::Compact`], `excerpt` goes through
+/// [`bounded_excerpt`], never `crate::utils::truncate_for_display`:
+/// `bounded_excerpt` is what enforces the documented contract on
+/// `ContextItem::excerpt` (bounded by `schema::EXCERPT_MAX_TOKENS`, truncated
+/// text ends with the schema truncation marker on its own line). A signature
+/// is short, so this is nearly always a no-op, but using the other helper
+/// would silently make source items the only ones in the corpus violating
+/// that contract.
+///
+/// Under [`RequiredRepresentation::Full`] — the default, and what every
+/// `--require-id` reservation gets unless the caller asks for `Compact` —
+/// `excerpt` is `node.signature.clone()` verbatim, with no bound at all:
+/// `Full` exists precisely to let a caller demand the whole unit regardless
+/// of `EXCERPT_MAX_TOKENS`, so the bound above does not apply to it.
 ///
 /// No file reads here or anywhere else in the packer: retrieval is a pure
 /// function of bytes already loaded into the `SourceNode`, not of the working
@@ -259,15 +266,7 @@ fn select(
     chunks: &BTreeMap<&str, &KnowledgeChunk>,
     nodes: &BTreeMap<&str, &SourceNode>,
 ) -> Selection {
-    let reservation = reserve(
-        request.budget_tokens,
-        BRIEF_FRAME_TOKENS,
-        ranked,
-        chunks,
-        nodes,
-        &request.surviving_terms,
-        request.required_representation,
-    );
+    let reservation = reserve(request, BRIEF_FRAME_TOKENS, ranked, chunks, nodes);
     let mut selection = Selection {
         items: reservation.items,
         estimated_tokens: reservation.estimated_tokens,
@@ -308,19 +307,42 @@ fn select_optional(
             selection.omitted += 1;
             continue;
         };
-        let remaining = request
-            .budget_tokens
-            .saturating_sub(selection.estimated_tokens);
-        if item.token_count > remaining {
+        let total = tentative_total(&selection.items, &selection.unmet_required, &item);
+        if total > request.budget_tokens {
             selection.omitted += 1;
             continue;
         }
-        selection.estimated_tokens += item.token_count;
+        selection.estimated_tokens = total;
         if let Some(twin) = knowledge_twin(candidate) {
             selection.superseded.insert(twin);
         }
         selection.items.push(item);
     }
+}
+
+/// The frame-plus-items-plus-chrome total if `candidate` were appended to
+/// `items` (already-committed pack order) alongside `unmet`.
+///
+/// Delegates to [`rendered_chrome_tokens`] rather than tracking chrome
+/// incrementally, so this and [`ContextPack::recompute_estimate`] can never
+/// charge different bytes for the same brief — both apply the identical rule
+/// for what counts as chrome to the identical item list. Item counts are in
+/// the tens, so rebuilding the chrome estimate from scratch for every
+/// tentative candidate costs nothing that matters.
+///
+/// Shared with `pack::required::reserve`, which weighs an explicitly required
+/// candidate against the same accumulated `items`/`unmet` before admitting
+/// it — the required and optional passes must never price chrome by two
+/// different rules.
+pub(super) fn tentative_total(
+    items: &[ContextItem],
+    unmet: &[UnmetRequirement],
+    candidate: &ContextItem,
+) -> usize {
+    let item_tokens: usize =
+        items.iter().map(|item| item.token_count).sum::<usize>() + candidate.token_count;
+    let chrome = rendered_chrome_tokens(items.iter().chain(std::iter::once(candidate)), unmet);
+    BRIEF_FRAME_TOKENS + item_tokens + chrome
 }
 
 /// Build a pack from the fused list, within `request.budget_tokens`.

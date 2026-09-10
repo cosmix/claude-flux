@@ -46,7 +46,10 @@
 
 #[cfg(test)]
 use crate::context::render::fence_for;
-use crate::context::render::{render_knowledge_item, render_source_entry};
+use crate::context::render::{
+    render_knowledge_item, render_source_entry, render_source_group_prefix, render_unmet_line,
+    KNOWLEDGE_HEADING, SOURCE_HEADING,
+};
 use crate::context::schema::{ContextItem, ContextPack, Freshness, ItemKind};
 use crate::context::untrusted::inline_safe;
 
@@ -84,17 +87,7 @@ pub(crate) fn format_knowledge_brief(
 }
 
 fn render_unmet_requirements(pack: &ContextPack) -> String {
-    pack.unmet_required
-        .iter()
-        .map(|requirement| {
-            format!(
-                "Required but unmet: {} (needs ~{} tokens, {} available)\n",
-                inline_safe(&requirement.id),
-                requirement.needed_tokens,
-                requirement.available_tokens,
-            )
-        })
-        .collect()
+    pack.unmet_required.iter().map(render_unmet_line).collect()
 }
 
 /// [`format_knowledge_brief`] for a stage-keyed signal path — the shape every
@@ -163,7 +156,7 @@ fn render_knowledge_section(pack: &ContextPack) -> String {
     if items.is_empty() {
         return String::new();
     }
-    let mut out = String::from("### Knowledge\n\n");
+    let mut out = String::from(KNOWLEDGE_HEADING);
     for item in items {
         out.push_str(&render_knowledge_item(item));
     }
@@ -182,7 +175,7 @@ fn render_source_section(pack: &ContextPack) -> String {
     if items.is_empty() {
         return String::new();
     }
-    let mut out = String::from("### Source (signature index)\n\n");
+    let mut out = String::from(SOURCE_HEADING);
     let mut start = 0;
     while start < items.len() {
         let mut end = start + 1;
@@ -201,9 +194,12 @@ fn render_source_section(pack: &ContextPack) -> String {
 /// reorder items, and merges only a CONSECUTIVE run: pack order is the
 /// ranker's answer and this renderer does not get to second-guess it.
 fn render_source_group(group: &[&ContextItem]) -> String {
-    let path = inline_safe(&group[0].pointer.path.display().to_string());
     let entries: Vec<String> = group.iter().map(|item| render_source_entry(item)).collect();
-    format!("- `{path}` — {}\n", entries.join(" — "))
+    format!(
+        "{}{}\n",
+        render_source_group_prefix(&group[0].pointer.path),
+        entries.join(" — ")
+    )
 }
 
 #[cfg(test)]

@@ -219,10 +219,17 @@ fn every_pack_reports_omissions_and_coverage() -> anyhow::Result<()> {
             packed.omitted.coverage.candidates
         );
         assert_eq!(packed.omitted.coverage.included, packed.items.len());
+        assert!(
+            packed.omitted.coverage.included_tokens + BRIEF_FRAME_TOKENS <= packed.estimated_tokens,
+            "the pack estimate must cover at least the brief frame plus the rendered cost of \
+             the items; the remainder is markdown chrome"
+        );
+
+        let mut recomputed = packed.clone();
+        recomputed.recompute_estimate();
         assert_eq!(
-            packed.omitted.coverage.included_tokens + BRIEF_FRAME_TOKENS,
-            packed.estimated_tokens,
-            "the pack estimate is the brief frame plus the rendered cost of what it carries"
+            recomputed.estimated_tokens, packed.estimated_tokens,
+            "the packer's running total must agree with the authoritative recomputation"
         );
     }
     Ok(())

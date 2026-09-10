@@ -193,10 +193,21 @@ fn without_weakest(pack: &ContextPack) -> Option<ContextPack> {
     Some(narrowed)
 }
 
-/// `pack` carrying exactly `items`, with the token estimate that describes them.
+/// `pack` carrying exactly `items`, with the token estimate that describes
+/// them.
+///
+/// `coverage.included`/`coverage.included_tokens` are recomputed from `items`
+/// too, alongside the caller's own `omitted.omitted` bump: `pack.omitted` as
+/// retrieval built it describes the pack this narrowed from, and left alone
+/// it would tell the reader more candidates fit than actually shipped —
+/// breaking the `included + omitted == candidates` invariant the packer's own
+/// property test holds it to (`context::tests::pack::property_pack_never_exceeds_budget`).
 fn carrying(pack: &ContextPack, items: Vec<ContextItem>) -> ContextPack {
     let mut narrowed = pack.clone();
     narrowed.items = items;
     narrowed.recompute_estimate();
+    narrowed.omitted.coverage.included = narrowed.items.len();
+    narrowed.omitted.coverage.included_tokens =
+        narrowed.items.iter().map(|item| item.token_count).sum();
     narrowed
 }

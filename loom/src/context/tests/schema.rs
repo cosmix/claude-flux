@@ -130,9 +130,12 @@ fn recompute_estimate_adds_the_brief_frame_to_item_tokens() {
         degraded: None,
     };
 
+    let chrome =
+        crate::context::render::rendered_chrome_tokens(pack.items.iter(), &pack.unmet_required);
+
     pack.recompute_estimate();
 
-    assert_eq!(pack.estimated_tokens, BRIEF_FRAME_TOKENS + 42);
+    assert_eq!(pack.estimated_tokens, BRIEF_FRAME_TOKENS + 42 + chrome);
 }
 
 /// `content_hash`, `excerpt`, and `truncated` were added to `ContextItem` after

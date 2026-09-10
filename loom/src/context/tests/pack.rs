@@ -6,7 +6,7 @@
 use super::pack_fixtures::{candidate, chunk, request_with_item_budget, request_with_raw_budget};
 use crate::context::pack::*;
 use crate::context::rank::*;
-use crate::context::render::rendered_item_tokens;
+use crate::context::render::{rendered_chrome_tokens, rendered_item_tokens};
 use crate::context::schema::*;
 use std::path::PathBuf;
 
@@ -275,6 +275,7 @@ fn assert_budget_invariant_holds(mut seed: u32) {
                 .iter()
                 .map(|item| item.token_count)
                 .sum::<usize>()
+            + rendered_chrome_tokens(packed.items.iter(), &packed.unmet_required)
     );
     assert!(packed
         .items

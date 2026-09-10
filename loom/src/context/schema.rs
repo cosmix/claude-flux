@@ -242,11 +242,16 @@ pub struct ContextItem {
     /// delivery suppressed, without a second lookup into the catalog.
     #[serde(default)]
     pub content_hash: String,
-    /// Bounded verbatim text of the backing unit, ready to quote.
+    /// Verbatim text of the backing unit, ready to quote.
     ///
-    /// `None` when the packer had no body to copy. Truncated to
-    /// [`EXCERPT_MAX_TOKENS`]; when truncated the string ends with
-    /// [`EXCERPT_TRUNCATION_MARKER`] on its own line.
+    /// `None` when the packer had no body to copy. Under
+    /// [`RequiredRepresentation::Compact`] this is bounded to
+    /// [`EXCERPT_MAX_TOKENS`], and a truncated string ends with
+    /// [`EXCERPT_TRUNCATION_MARKER`] on its own line. Under
+    /// [`RequiredRepresentation::Full`] — the default representation for a
+    /// `--require-id` reservation — it is copied whole with no bound at all
+    /// and `truncated` stays `false`: `Full` exists so a caller can demand the
+    /// entire unit regardless of `EXCERPT_MAX_TOKENS`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
     /// Whether the item's selected representation was truncated.
@@ -267,7 +272,13 @@ pub struct UnmetRequirement {
     pub id: String,
     /// Estimated tokens the requested representation needs, wrappers included.
     pub needed_tokens: usize,
-    /// Tokens the pack could still spend when the item was considered.
+    /// Tokens left for the item's own body once the markdown chrome its
+    /// inclusion would add — a new section heading, its path's group prefix
+    /// if that path starts a new run — is paid for. See
+    /// `context::pack::required::reserve`, which derives this from the same
+    /// chrome-aware total `needed_tokens` was measured against, so
+    /// `needed_tokens > available_tokens` always agrees with why the item was
+    /// turned away.
     pub available_tokens: usize,
     pub reason: String,
 }
@@ -276,7 +287,9 @@ pub struct UnmetRequirement {
 /// the underlying derived data is.
 ///
 /// `estimated_tokens` covers the Knowledge Brief frame
-/// ([`BRIEF_FRAME_TOKENS`]) plus every packed item's rendered cost — see
+/// ([`BRIEF_FRAME_TOKENS`]), every packed item's rendered cost, and the
+/// markdown chrome `format_knowledge_brief` wraps them in — section headings,
+/// per-path source bullet prefixes, and unmet-requirement lines — see
 /// [`ContextPack::recompute_estimate`]. The packer guarantees
 /// `estimated_tokens <= budget_tokens` (see [`ContextPack::within_budget`])
 /// for any `budget_tokens` at or above [`crate::context::config::MIN_BUDGET_TOKENS`];
@@ -320,14 +333,22 @@ impl ContextPack {
         self.estimated_tokens <= self.budget_tokens
     }
 
-    /// Recompute the estimated cost of the exact brief frame and its items.
+    /// Recompute the estimated cost of the exact brief frame, its items, and
+    /// the markdown chrome wrapped around them — see `rendered_chrome_tokens`
+    /// in `context::render`, the single definition this and the packer's own
+    /// selection accounting both call so a budget decision and this published
+    /// estimate can never disagree.
     pub fn recompute_estimate(&mut self) {
         self.estimated_tokens = BRIEF_FRAME_TOKENS
             + self
                 .items
                 .iter()
                 .map(|item| item.token_count)
-                .sum::<usize>();
+                .sum::<usize>()
+            + crate::context::render::rendered_chrome_tokens(
+                self.items.iter(),
+                &self.unmet_required,
+            );
     }
 }
 
