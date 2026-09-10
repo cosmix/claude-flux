@@ -10,6 +10,7 @@ mod validation_suite;
 mod tests;
 
 pub use detect::{detect_stage_type, detect_stage_type_from_id_name};
+pub(crate) use structural_checks::extract_brief_paths;
 pub use types::{
     AcceptanceCriterion, AdjudicationConfig, ChangeImpactConfig, ChangeImpactPolicy,
     CodeReviewConfig, CommandConfinement, DeadCodeCheck, FilesystemConfig, Implementer,

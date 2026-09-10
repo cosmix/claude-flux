@@ -6,18 +6,20 @@
 pub(crate) mod checks;
 mod foreground;
 mod graph_loader;
+mod plan_inputs;
 mod sandbox_preflight;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_checks;
+#[cfg(test)]
+mod tests_preflight;
 
 use anyhow::{bail, Result};
 use colored::Colorize;
 
 use crate::daemon::{DaemonConfig, DaemonServer};
-use crate::fs::plan_lifecycle;
 use crate::fs::work_dir::{read_terminal_config, write_terminal_config, WorkDir};
 use crate::models::session::{SessionBackendKind, TerminalConfig};
 
@@ -90,6 +92,8 @@ fn prepare_background_run(backend: Option<String>) -> Result<WorkDir> {
     let work_dir = WorkDir::new(&repo_root)?;
     work_dir.load()?;
 
+    plan_inputs::require_committed_plan(&work_dir)?;
+
     resolve_backend_flag(&work_dir, backend, "loom run")?;
 
     // Hard requirement — like `require_jq`: a missing sandbox prerequisite on
@@ -105,15 +109,10 @@ fn prepare_background_run(backend: Option<String>) -> Result<WorkDir> {
     // Advisory Codex lane preflight — never aborts startup.
     checks::advisory_codex_lane_preflight(work_dir.root());
 
-    // Advisory source-graph preflight - never aborts startup. MUST stay above
-    // `mark_plan_in_progress`: that rename dirties a tracked file, and a base
-    // layer is refused on any dirty tree, so publishing after it never works.
-    // No overlay fallback here - `prepare_repo_for_run` already proved the tree
-    // is clean, and a run needs the base layer.
-    checks::advisory_source_graph_preflight(&repo_root, &work_dir, false);
+    plan_inputs::mark_plan_in_progress(&work_dir)?;
 
-    // Mark plan as in-progress when starting execution
-    plan_lifecycle::mark_plan_in_progress(&work_dir)?;
+    // Publish against the committed active filename and the revision stages inherit.
+    checks::advisory_source_graph_preflight(&repo_root, &work_dir, false);
 
     Ok(work_dir)
 }

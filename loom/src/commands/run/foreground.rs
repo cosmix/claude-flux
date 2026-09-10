@@ -29,17 +29,15 @@ pub fn execute(
     let work_dir = WorkDir::new(".")?;
     work_dir.load()?;
 
+    super::plan_inputs::require_committed_plan(&work_dir)?;
+
     resolve_backend_flag(&work_dir, backend, "loom run --foreground")?;
 
-    // Advisory source-graph preflight - never aborts startup. MUST stay above
-    // `mark_plan_in_progress`: that rename dirties a tracked file, and a base
-    // layer is refused on any dirty tree, so publishing after it never works.
-    // No overlay fallback here - `prepare_repo_for_run` already proved the tree
-    // is clean, and a run needs the base layer.
-    super::checks::advisory_source_graph_preflight(&repo_root, &work_dir, false);
+    run_preflights(&work_dir)?;
+    super::plan_inputs::mark_plan_in_progress(&work_dir)?;
 
-    // Mark plan as in-progress when starting execution
-    plan_lifecycle::mark_plan_in_progress(&work_dir)?;
+    // Publish against the committed active filename and the revision stages inherit.
+    super::checks::advisory_source_graph_preflight(&repo_root, &work_dir, false);
 
     crate::utils::print_logo_header("Run (foreground)");
 
@@ -66,8 +64,6 @@ fn execute_foreground(
     auto_merge: bool,
     work_dir: &WorkDir,
 ) -> Result<()> {
-    run_preflights(work_dir)?;
-
     let (graph, plan_sandbox) = build_execution_graph(work_dir)?;
 
     // Parse config.toml to extract base_branch
@@ -99,20 +95,7 @@ fn execute_foreground(
     announce_run_mode(watch);
     let result = orchestrator.run()?;
 
-    // Collect and print the completion summary with timing and execution graph
-    match collect_completion_summary(work_dir.root()) {
-        Ok(summary) => {
-            print_completion_summary(&summary);
-        }
-        Err(e) => {
-            eprintln!("Warning: Failed to collect completion summary: {e}");
-            // Fall back to basic result printing
-            print_result(&result);
-        }
-    }
-
-    // Print additional details for stages that need attention
-    print_needs_attention(&result);
+    report_completion(work_dir, &result);
 
     // If successful, check if all stages are merged and mark plan as done
     if result.is_success() {
@@ -121,6 +104,23 @@ fn execute_foreground(
     } else {
         bail!("Orchestration completed with failures")
     }
+}
+
+fn report_completion(work_dir: &WorkDir, result: &OrchestratorResult) {
+    // Collect and print the completion summary with timing and execution graph
+    match collect_completion_summary(work_dir.root()) {
+        Ok(summary) => {
+            print_completion_summary(&summary);
+        }
+        Err(e) => {
+            eprintln!("Warning: Failed to collect completion summary: {e}");
+            // Fall back to basic result printing
+            print_result(result);
+        }
+    }
+
+    // Print additional details for stages that need attention
+    print_needs_attention(result);
 }
 
 /// Print the startup banner for foreground mode: watch mode explains it will

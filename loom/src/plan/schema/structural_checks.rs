@@ -50,16 +50,16 @@ pub(super) fn check_missing_brief_paths(
 /// A plain substring/token scan, not a markdown-link parser: split on
 /// whitespace and common delimiters, trim surrounding punctuation, and keep
 /// tokens that contain the brief-directory prefix.
-fn extract_brief_paths(text: &str) -> Vec<String> {
+pub(crate) fn extract_brief_paths(text: &str) -> Vec<String> {
     const PREFIX: &str = "doc/plans/briefs/";
     let mut paths = Vec::new();
 
     for token in text.split(|c: char| {
-        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '"' | '\'' | ',' | ';')
+        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '"' | '\'' | ',' | ';' | '|')
     }) {
         let trimmed = token.trim_matches(|c: char| matches!(c, '.' | ',' | ':' | '`'));
         if let Some(idx) = trimmed.find(PREFIX) {
-            let path = &trimmed[idx..];
+            let path = trimmed[idx..].split('#').next().unwrap_or_default();
             if path.len() > PREFIX.len() {
                 paths.push(path.to_string());
             }

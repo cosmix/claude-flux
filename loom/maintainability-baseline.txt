@@ -12,7 +12,6 @@ file src/commands/hook/tests_reconcile_graph.rs 432
 file src/commands/init/tests.rs 570
 file src/commands/plan/verify.rs 599
 file src/commands/review/generate.rs 439
-file src/commands/run/tests.rs 463
 file src/commands/stage/complete.rs 771
 file src/commands/stage/merge.rs 546
 file src/commands/stage/tests/complete.rs 544
@@ -23,7 +22,6 @@ file src/fs/locking.rs 499
 file src/fs/permissions/hooks.rs 446
 file src/fs/permissions/settings.rs 460
 file src/fs/permissions/sync.rs 659
-file src/fs/plan_lifecycle.rs 610
 file src/fs/safe_fs.rs 1019
 file src/fs/work_dir.rs 507
 file src/fs/work_dir/tests.rs 863
@@ -91,7 +89,6 @@ function src/commands/resume.rs execute 57
 function src/commands/review/generate.rs execute 156
 function src/commands/review/generate.rs load_stage_infos 59
 function src/commands/review/generate.rs render_stage_section 59
-function src/commands/run/foreground.rs execute_foreground 63
 function src/commands/run/foreground.rs print_result 58
 function src/commands/self_update/install.rs install_binary 52
 function src/commands/sessions.rs kill 54
