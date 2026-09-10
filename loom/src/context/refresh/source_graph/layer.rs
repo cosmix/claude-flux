@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::Utc;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
@@ -11,6 +10,7 @@ use crate::context::graph_store::{FileEntry, GraphLayer, GraphStore};
 use crate::context::refresh::BoxedExtractor;
 use crate::context::source_graph::{body_hash, FileCoverage};
 use crate::context::store::canonical_json;
+use crate::fs::safe_read::read_bounded;
 use crate::git::runner::run_git_checked;
 
 pub(super) struct LayerBuild {
@@ -45,7 +45,7 @@ pub(super) fn build_layer(
         files_untracked: enumeration.untracked.len(),
         ..Default::default()
     };
-    let deleted = deleted_paths(project_root, scope, enumeration, tree);
+    let deleted = deleted_paths(project_root, scope, enumeration, tree, base);
     let active = active_paths(scope, enumeration, &deleted);
     counters.files_enumerated = active.len().saturating_add(deleted.len());
     counters.files_deleted = deleted.len();
@@ -169,11 +169,23 @@ fn deleted_paths(
     scope: &SourceGraphScope,
     enumeration: &Enumeration,
     tree: &WorkingTree,
+    base: Option<&GraphLayer>,
 ) -> BTreeSet<String> {
     if !matches!(scope, SourceGraphScope::Overlay { .. }) {
         return BTreeSet::new();
     }
     let mut deleted = enumeration.deleted.iter().cloned().collect::<BTreeSet<_>>();
+    // A symlink or gitlink only becomes a tombstone when the base already
+    // holds a regular-file entry for the same path - the same predicate
+    // `persist_layer` applies when it prunes a tombstone the base never had -
+    // so a repo-native symlink never inflates `files_deleted`.
+    deleted.extend(
+        enumeration
+            .not_source
+            .iter()
+            .filter(|path| base.is_some_and(|base| base.files.contains_key(path.as_str())))
+            .cloned(),
+    );
     deleted.extend(
         tree.dirty
             .keys()
@@ -234,7 +246,11 @@ fn read_bytes(
             .map(String::into_bytes)
             .map_err(|error| error.to_string());
     }
-    fs::read(project_root.join(path)).map_err(|error| error.to_string())
+    // The working tree is a sandboxed stage's to write, so a symlink there -
+    // tracked, untracked, or swapped in after enumeration - is refused at every
+    // component instead of followed out of the repository; the refusal lands in
+    // `unreadable_entry` like any other unreadable file. Unbounded, as before.
+    read_bounded(project_root, Path::new(path), usize::MAX).map_err(|error| format!("{error:#}"))
 }
 
 fn unreadable_entry(error: String) -> FileEntry {

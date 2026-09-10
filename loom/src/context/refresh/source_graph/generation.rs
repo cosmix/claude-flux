@@ -1,11 +1,11 @@
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 use super::excluded;
 use crate::context::source_graph::body_hash;
+use crate::fs::safe_read::read_bounded;
 use crate::git::runner::run_git_checked;
 
 pub(crate) struct WorkingTree {
@@ -44,14 +44,18 @@ fn generation(project_root: &Path, head: &str, dirty: &BTreeMap<String, String>)
     hasher.update(b"\n");
     for (path, status) in dirty {
         let full_path = project_root.join(path);
-        // A dirty path that exists but cannot be read (e.g. permission
-        // bits) must not fail the whole refresh - fold the error into the
-        // identity so the generation still hashes deterministically,
-        // mirroring how `layer::read_bytes` treats an unreadable file.
-        let identity = match fs::read(&full_path) {
+        // A dirty path that exists but cannot be read (e.g. permission bits,
+        // or a symlink the sandboxed worktree planted - never followed, see
+        // `read_bounded`) must not fail the whole refresh - fold the refusal
+        // into the identity so the generation still hashes deterministically,
+        // mirroring how `layer::read_bytes` treats an unreadable file. The
+        // marker is hashed rather than embedding the raw error (which could
+        // vary by platform or leak path detail), while still changing the
+        // generation if the refusal state itself changes.
+        let identity = match read_bounded(project_root, Path::new(path), usize::MAX) {
             Ok(bytes) => body_hash(&bytes),
             Err(_) if !full_path.exists() => "deleted".to_string(),
-            Err(error) => format!("unreadable:{error}"),
+            Err(_) => body_hash(format!("{path}\0unreadable").as_bytes()),
         };
         hasher.update(format!("{status} {path} {identity}\n").as_bytes());
     }

@@ -1,5 +1,5 @@
-//! Which files a reconcile counts and represents: tracked, untracked, and
-//! unreadable.
+//! Which files a reconcile counts and represents: tracked, untracked,
+//! unreadable, and symlinked (never followed).
 
 use super::*;
 use crate::context::source_graph::{FileCoverage, SourceNodeKind};
@@ -123,4 +123,121 @@ fn an_unreadable_file_survives_as_a_reported_lexical_only_entry() {
         FileCoverage::LexicalOnly { detail } => assert!(detail.contains("unreadable")),
         other => panic!("expected LexicalOnly coverage naming the failure, got {other:?}"),
     }
+}
+
+/// A function name that exists only in the file outside the repository a
+/// planted symlink points at, so a node carrying it proves a read followed it.
+const LEAKED_SYMBOL: &str = "leaked_secret_symbol";
+
+/// Plant `root/<name>` as a symlink to a Rust file outside the repository
+/// defining `LEAKED_SYMBOL`; the returned guard keeps that file alive.
+fn plant_outside_symlink(root: &Path, name: &str) -> TempDir {
+    let outside = TempDir::new().unwrap();
+    let secret = outside.path().join("secret.rs");
+    std::fs::write(&secret, format!("fn {LEAKED_SYMBOL}() {{}}\n")).unwrap();
+    std::os::unix::fs::symlink(&secret, root.join(name)).unwrap();
+    outside
+}
+
+fn leaked<'a>(mut nodes: impl Iterator<Item = &'a SourceNode>) -> bool {
+    nodes.any(|node| node.signature.contains(LEAKED_SYMBOL) || node.id.contains(LEAKED_SYMBOL))
+}
+
+#[test]
+fn a_committed_symlink_is_left_out_of_the_base_and_never_followed() {
+    let temp = init_repo();
+    let root = temp.path();
+    let _outside = plant_outside_symlink(root, "leak.rs");
+    git_ok(root, &["add", "leak.rs"]);
+    git_ok(root, &["commit", "-m", "symlink"]);
+    let (store, graph_store) = stores(&temp);
+
+    let outcome = reconcile_source_graph(&store, &graph_store, root, base_scope(root)).unwrap();
+    let base = graph_store.load_base(&head_sha(root)).unwrap().unwrap();
+
+    assert!(!base.files.contains_key("leak.rs"));
+    assert!(!leaked(base.nodes()));
+    assert_eq!(
+        outcome.counters.files_parsed, 2,
+        "only src.rs and docs/notes.txt parse"
+    );
+    assert!(
+        layer_mentions(&base, "src.rs", "main"),
+        "a regular file must still parse"
+    );
+}
+
+#[test]
+fn an_untracked_symlink_is_left_out_of_the_overlay() {
+    let temp = init_repo();
+    let root = temp.path();
+    let _outside = plant_outside_symlink(root, "leak.rs");
+    let (store, graph_store) = stores(&temp);
+
+    let outcome =
+        reconcile_source_graph(&store, &graph_store, root, overlay_scope("link")).unwrap();
+    let overlay = graph_store
+        .load_overlay("plan-contract", "link")
+        .unwrap()
+        .unwrap();
+
+    assert!(!leaked(overlay.nodes()));
+    assert_eq!(
+        outcome.counters.files_parsed, 2,
+        "the symlink must not be parsed"
+    );
+    assert!(
+        !overlay.files.contains_key("leak.rs"),
+        "an untracked symlink must never enter the overlay, not even as an unreadable entry"
+    );
+    assert!(
+        layer_mentions(&overlay, "src.rs", "main"),
+        "a regular file must still parse"
+    );
+}
+
+#[test]
+fn a_committed_symlink_does_not_count_as_deleted() {
+    let temp = init_repo();
+    let root = temp.path();
+    let _outside = plant_outside_symlink(root, "leak.rs");
+    git_ok(root, &["add", "leak.rs"]);
+    git_ok(root, &["commit", "-m", "symlink"]);
+    let (store, graph_store) = stores(&temp);
+    reconcile_source_graph(&store, &graph_store, root, base_scope(root)).unwrap();
+
+    let outcome =
+        reconcile_source_graph(&store, &graph_store, root, overlay_scope("clean")).unwrap();
+
+    assert_eq!(
+        outcome.counters.files_deleted, 0,
+        "a committed symlink the base never tracked as a regular file must not tombstone"
+    );
+    assert_eq!(
+        outcome.counters.files_enumerated, 2,
+        "only src.rs and docs/notes.txt count as enumerated"
+    );
+}
+
+#[test]
+fn a_file_staged_as_a_symlink_is_tombstoned_over_the_base() {
+    let temp = init_repo();
+    let root = temp.path();
+    let (store, graph_store) = stores(&temp);
+    let revision = head_sha(root);
+    reconcile_source_graph(&store, &graph_store, root, base_scope(root)).unwrap();
+    std::fs::remove_file(root.join("src.rs")).unwrap();
+    let _outside = plant_outside_symlink(root, "src.rs");
+    git_ok(root, &["add", "src.rs"]);
+
+    reconcile_source_graph(&store, &graph_store, root, overlay_scope("became-link")).unwrap();
+    let resolved = graph_store
+        .resolved(&revision, Some(("plan-contract", "became-link")))
+        .unwrap();
+
+    assert!(
+        !resolved.files.contains_key("src.rs"),
+        "the base's regular src.rs must not show through once the index tracks a symlink"
+    );
+    assert!(!leaked(resolved.nodes()));
 }

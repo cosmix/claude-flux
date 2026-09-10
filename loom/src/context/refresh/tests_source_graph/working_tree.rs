@@ -2,6 +2,8 @@
 //! against the working tree.
 
 use super::*;
+use std::sync::mpsc;
+use std::time::Duration;
 
 #[test]
 fn base_scope_refuses_to_publish_when_the_tracked_tree_is_dirty() {
@@ -108,4 +110,35 @@ fn a_base_publishes_from_committed_content_on_a_dirty_tree() {
     assert!(layer_mentions(&base, "src.rs", "main"));
     assert!(!layer_mentions(&base, "src.rs", "edited_only"));
     assert!(layer_mentions(&overlay, "src.rs", "edited_only"));
+}
+
+#[test]
+fn an_untracked_symlink_to_a_device_does_not_hang_the_generation() {
+    // Old code hashed a dirty path's content with `fs::read`, which follows
+    // symlinks: an untracked symlink to `/dev/zero` made that call read
+    // forever. Run on a worker thread with a timeout so the old behavior
+    // fails by timing out rather than hanging the whole test suite.
+    if !Path::new("/dev/zero").exists() {
+        eprintln!(
+            "SKIP an_untracked_symlink_to_a_device_does_not_hang_the_generation: \
+             /dev/zero is not present on this platform"
+        );
+        return;
+    }
+
+    let temp = init_repo();
+    let root = temp.path().to_path_buf();
+    std::os::unix::fs::symlink("/dev/zero", root.join("huge.rs")).unwrap();
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = working_tree(&root);
+        let _ = tx.send(result.map(|tree| tree.generation));
+    });
+
+    let generation = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("working_tree must return promptly instead of reading a device file forever")
+        .expect("working_tree must not fail on a refused symlink");
+    assert!(!generation.is_empty());
 }
