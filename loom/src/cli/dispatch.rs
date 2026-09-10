@@ -92,16 +92,28 @@ fn dispatch_knowledge(command: KnowledgeCommands) -> Result<()> {
             heading,
             content,
         } => knowledge::replace_section(file, heading, content),
-        // `budget` is bound short so the seven-argument call stays one line.
+        // `budget` is bound short so the context call remains compact.
         KnowledgeCommands::Context {
             stage,
             query,
             budget_tokens: budget,
             scope,
             require_id,
+            history,
+            require_compact,
             explain,
             json,
-        } => knowledge::context::context(stage, query, budget, scope, require_id, explain, json),
+        } => knowledge::context::context(
+            stage,
+            query,
+            budget,
+            scope,
+            require_id,
+            history,
+            require_compact,
+            explain,
+            json,
+        ),
         KnowledgeCommands::Eval {
             cases,
             budget_tokens,

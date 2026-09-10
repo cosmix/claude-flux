@@ -6,9 +6,10 @@
 
 use super::compose::compose;
 use super::*;
+use crate::context::render::rendered_chrome_tokens;
 use crate::context::schema::{
-    Channel, ChunkId, Confidence, ContextItem, Freshness, ItemKind, LifecycleState,
-    OmissionSummary, SelectionReason, SourcePointer,
+    Channel, ChunkId, Confidence, ContextItem, Coverage, Freshness, ItemKind, LifecycleState,
+    OmissionSummary, SelectionReason, SourcePointer, BRIEF_FRAME_TOKENS,
 };
 
 /// The untrusted-data sentence the shared renderer must put in front of every
@@ -48,16 +49,9 @@ fn item(id: &str, content_hash: &str, excerpt: Option<&str>) -> ContextItem {
         state: LifecycleState::Active,
         content_hash: content_hash.to_string(),
         excerpt: excerpt.map(str::to_string),
+        truncated: false,
         matched_term_count: default_config().min_knowledge_terms,
     }
-}
-
-/// One unit with an explicit rank, for the cases that turn on which unit is the
-/// weakest.
-fn scored(id: &str, score: f32, excerpt: &str) -> ContextItem {
-    let mut unit = item(id, "sha256:aa", Some(excerpt));
-    unit.score = score;
-    unit
 }
 
 fn pack_of(items: Vec<ContextItem>) -> ContextPack {
@@ -69,6 +63,7 @@ fn pack_of(items: Vec<ContextItem>) -> ContextPack {
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         items,
+        unmet_required: Vec::new(),
         omitted: OmissionSummary::default(),
         dropped_terms: Vec::new(),
         degraded: None,
@@ -236,14 +231,56 @@ fn units_already_delivered_in_this_epoch_are_dropped() {
     assert_eq!(handed_over.items.len(), 1);
     assert_eq!(handed_over.items[0].id.as_str(), "arch#merge#0");
     assert_eq!(
-        handed_over.estimated_tokens, 42,
-        "the estimate must describe what is actually handed over"
+        handed_over.estimated_tokens,
+        BRIEF_FRAME_TOKENS
+            + handed_over.items[0].token_count
+            + rendered_chrome_tokens(handed_over.items.iter(), &handed_over.unmet_required),
+        "the estimate must describe what is actually handed over, frame and chrome included"
     );
 
     let all = delivered(&[("arch#loop#0", "sha256:aa"), ("arch#merge#0", "sha256:bb")]);
     assert!(
         compose(Some("stage-a"), &pack, &all, &default_config()).is_none(),
         "nothing new to say means nothing at all"
+    );
+}
+
+/// The invariant `context::tests::pack::property_pack_never_exceeds_budget`
+/// holds the packer to (`included + omitted == candidates`) must survive a
+/// dedupe drop too: `carrying` is the one place both `undelivered` and
+/// `without_weakest` narrow a pack's items, so fixing it there closes the gap
+/// for both callers at once.
+#[test]
+fn a_dedupe_drop_keeps_coverage_consistent_with_the_omitted_count() {
+    let mut pack = pack_of(vec![
+        item("arch#loop#0", "sha256:aa", Some("The loop polls.")),
+        item("arch#merge#0", "sha256:bb", Some("Merging is verified.")),
+    ]);
+    pack.omitted.coverage = Coverage {
+        candidates: 2,
+        included: 2,
+        candidate_tokens: 84,
+        included_tokens: 84,
+    };
+
+    let (_, handed_over) = compose(
+        Some("stage-a"),
+        &pack,
+        &delivered(&[("arch#loop#0", "sha256:aa")]),
+        &default_config(),
+    )
+    .expect("the undelivered unit survives");
+
+    assert_eq!(handed_over.items.len(), 1);
+    assert_eq!(handed_over.omitted.coverage.included, 1);
+    assert_eq!(
+        handed_over.omitted.coverage.included_tokens,
+        handed_over.items[0].token_count
+    );
+    assert_eq!(
+        handed_over.omitted.coverage.included + handed_over.omitted.omitted,
+        handed_over.omitted.coverage.candidates,
+        "coverage must describe what survived dedupe, not the pre-dedupe pack"
     );
 }
 
@@ -261,62 +298,6 @@ fn a_changed_content_hash_re_opens_delivery() {
         .is_some(),
         "the id was delivered, but not these bytes"
     );
-}
-
-#[test]
-fn an_empty_pack_produces_no_payload() {
-    assert!(compose(
-        Some("stage-a"),
-        &pack_of(Vec::new()),
-        &BTreeSet::new(),
-        &default_config()
-    )
-    .is_none());
-}
-
-#[test]
-fn a_single_unit_over_the_ceiling_is_not_emitted() {
-    let config = default_config();
-    let excerpt = "x".repeat(config.max_payload_bytes + 1);
-    let pack = pack_of(vec![item("arch#loop#0", "sha256:aa", Some(&excerpt))]);
-
-    // Nothing left to shed: one unit that does not fit cannot be trimmed into
-    // fitting, so this is the one case that still emits nothing.
-    assert!(compose(Some("stage-a"), &pack, &BTreeSet::new(), &config).is_none());
-}
-
-#[test]
-fn an_oversized_pack_sheds_its_weakest_units_until_it_fits() {
-    let config = default_config();
-    let body = "y".repeat(9 * 1024);
-    let pack = pack_of(vec![
-        scored("arch#strong#0", 9.0, &body),
-        scored("arch#middling#0", 5.0, &body),
-        scored("arch#weak#0", 1.0, &body),
-    ]);
-
-    let (line, handed_over) = compose(Some("stage-a"), &pack, &BTreeSet::new(), &config)
-        .expect("a trimmed payload, not silence");
-
-    assert!(
-        line.len() <= config.max_payload_bytes,
-        "{} bytes",
-        line.len()
-    );
-    let ids: Vec<&str> = handed_over
-        .items
-        .iter()
-        .map(|item| item.id.as_str())
-        .collect();
-    assert_eq!(ids, vec!["arch#strong#0"], "the strongest match survives");
-    assert_eq!(
-        handed_over.estimated_tokens, 42,
-        "the estimate must describe what is actually handed over"
-    );
-    // The delivery record is written from `handed_over`, so it can only ever
-    // list what was really emitted.
-    assert_eq!(handed_over.omitted.omitted, 2);
-    assert!(brief_of(&line).contains("Omitted: 2 weaker matches."));
 }
 
 #[test]
@@ -376,3 +357,9 @@ mod e2e;
 // them inlined.
 #[path = "tests_user_prompt_gates.rs"]
 mod gates;
+
+// Byte-ceiling and shedding tests are their own file for the same reason
+// `e2e` and `gates` are: this file was over the maintainability line limit
+// with them inlined.
+#[path = "tests_user_prompt_ceiling.rs"]
+mod ceiling;

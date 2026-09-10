@@ -69,8 +69,8 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Rank offset used by reciprocal-rank fusion.
 pub const RRF_K: f32 = 60.0;
 
-/// True when `reasons` includes at least one exact-match rung. `Lexical` is
-/// the only reason that does not qualify a candidate for tier 1.
+/// True when `reasons` includes one of the explicitly enumerated exact-match
+/// rungs that qualify a candidate for tier 1.
 fn has_exact_rung(reasons: &[SelectionReason]) -> bool {
     reasons.iter().any(|reason| {
         matches!(

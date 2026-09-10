@@ -282,6 +282,7 @@ fn degraded_pack() -> ContextPack {
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         items: Vec::new(),
+        unmet_required: Vec::new(),
         omitted: OmissionSummary::default(),
         dropped_terms: Vec::new(),
         degraded: Some("source graph base deadbeef missing".to_string()),
@@ -297,7 +298,6 @@ fn spawn_if_needed_does_nothing_when_the_pack_is_healthy() {
 
     let healthy = ContextPack {
         degraded: None,
-        semantic_freshness: Freshness::default(),
         ..degraded_pack()
     };
     spawn_if_needed(&healthy, root);

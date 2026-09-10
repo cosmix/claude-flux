@@ -253,8 +253,10 @@ fn write_stage_overlay(root: &Path, stage_id: &str, node: &SourceNode) {
     );
     let layer = GraphLayer {
         revision: "test-revision".to_string(),
+        generation: String::new(),
         built_at: None,
         files,
+        blob_index: BTreeMap::new(),
     };
     graph_store
         .save_overlay("default", stage_id, &layer)

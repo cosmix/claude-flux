@@ -305,10 +305,10 @@ fn test_preflight_silent_when_base_exists() {
     graph_store
         .publish_base(
             &head,
+            // Only `revision` matters to this test; the rest default.
             &GraphLayer {
                 revision: head.clone(),
-                built_at: None,
-                files: Default::default(),
+                ..Default::default()
             },
         )
         .unwrap();

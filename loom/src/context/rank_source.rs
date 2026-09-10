@@ -26,6 +26,7 @@
 //! collision instead of surfacing it.
 
 mod candidacy;
+mod expand;
 mod paths;
 
 pub use paths::normalize_dependency_path;
@@ -39,12 +40,13 @@ use crate::context::rank::{
     RungScore, BOOST_EXACT_PATH, BOOST_EXACT_SYMBOL, BOOST_EXPLICIT_ID, BOOST_STAGE_DEPENDENCY,
 };
 use crate::context::schema::{
-    Channel, ChunkId, FileCoverage, SelectionReason, SourceNode, SourceNodeKind,
+    estimate_tokens, Channel, ChunkId, FileCoverage, SelectionReason, SourceNode, SourceNodeKind,
 };
 use candidacy::admits_lexical_evidence;
+use expand::expand_from_seeds;
 use paths::{apply_test_path_factor, matches_path, names_dependency_path, PathMatch};
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Most source candidates one ranking pass hands to fusion.
@@ -134,13 +136,13 @@ pub fn rank_source_channel_cached(
     );
 
     let scored = score_nodes(query, &nodes, &corpus, &gate, config);
-    rank_order(scored, corpus.dropped_terms)
+    let ranked = sorted_candidates(scored);
+    let ranked = expand_from_seeds(ranked, graph, config);
+    rank_order(ranked, graph, corpus.dropped_terms)
 }
 
-/// Put the scored nodes in the one deterministic order and cut them to the
-/// channel's ceiling: score descending, then `(path, line_start)` ascending so
-/// two runs over identical bytes agree completely.
-fn rank_order(mut scored: Vec<ScoredNode<'_>>, dropped_terms: Vec<String>) -> ChannelRanking {
+/// Put ordinary scored nodes in seed-strength order before graph expansion.
+fn sorted_candidates(mut scored: Vec<ScoredNode<'_>>) -> Vec<RankedCandidate> {
     scored.sort_by(|a, b| {
         b.candidate
             .score
@@ -148,9 +150,42 @@ fn rank_order(mut scored: Vec<ScoredNode<'_>>, dropped_terms: Vec<String>) -> Ch
             .unwrap_or(Ordering::Equal)
             .then_with(|| a.order.cmp(&b.order))
     });
-    scored.truncate(MAX_SOURCE_CANDIDATES);
+    scored.into_iter().map(|scored| scored.candidate).collect()
+}
+
+/// Put ordinary and expanded candidates in the one deterministic order and
+/// cut them to the channel's ceiling.
+fn rank_order(
+    mut ranked: Vec<RankedCandidate>,
+    graph: &ResolvedGraph,
+    dropped_terms: Vec<String>,
+) -> ChannelRanking {
+    let order_by_id: BTreeMap<&str, (&Path, usize)> = graph
+        .nodes()
+        .map(|node| {
+            (
+                node.id.as_str(),
+                (node.path.as_path(), node.span.line_start),
+            )
+        })
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| {
+                match (
+                    order_by_id.get(a.id.as_str()),
+                    order_by_id.get(b.id.as_str()),
+                ) {
+                    (Some(a_order), Some(b_order)) => a_order.cmp(b_order),
+                    _ => a.id.cmp(&b.id),
+                }
+            })
+    });
+    ranked.truncate(MAX_SOURCE_CANDIDATES);
     ChannelRanking {
-        candidates: scored.into_iter().map(|scored| scored.candidate).collect(),
+        candidates: ranked,
         dropped_terms,
     }
 }
@@ -328,6 +363,15 @@ fn node_document(node: &SourceNode) -> Vec<(String, f32)> {
 /// A source item is a signature and a pointer, a few lines at most. The
 /// constant covers the pointer: under-estimating here overfills the pack, so
 /// the estimate deliberately rounds up.
-fn estimate_node_tokens(node: &SourceNode) -> usize {
-    node.signature.len() / 4 + 16
+pub(super) fn estimate_node_tokens(node: &SourceNode) -> usize {
+    estimate_tokens(&node.signature) + 16
+}
+
+#[cfg(test)]
+pub(super) fn expand_from_seeds_for_test(
+    ranked: Vec<RankedCandidate>,
+    graph: &ResolvedGraph,
+    config: &RetrievalConfig,
+) -> Vec<RankedCandidate> {
+    expand_from_seeds(ranked, graph, config)
 }

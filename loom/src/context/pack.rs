@@ -5,15 +5,20 @@
 //! other, so `select` spends the budget on the detail and keeps the summary
 //! only as the fallback for when the detail does not fit.
 
+pub(crate) mod excerpt;
+mod required;
 pub(crate) mod twins;
 
 use crate::context::graph_store::ResolvedGraph;
 use crate::context::rank::RankedCandidate;
+use crate::context::render::{rendered_brief_tokens, rendered_item_tokens};
 use crate::context::schema::{
-    estimate_tokens, Channel, ChunkId, ContextItem, ContextPack, Coverage, Freshness, ItemKind,
-    KnowledgeChunk, LifecycleState, OmissionSummary, SourceNode, SourcePointer,
-    BYTES_PER_TOKEN_ESTIMATE, EXCERPT_MAX_TOKENS, EXCERPT_TRUNCATION_MARKER,
+    Channel, ChunkId, ContextItem, ContextPack, Coverage, Freshness, ItemKind, KnowledgeChunk,
+    LifecycleState, OmissionSummary, RequiredRepresentation, SourceNode, SourcePointer,
+    UnmetRequirement,
 };
+use excerpt::bounded_excerpt;
+use required::reserve_within_budget;
 use twins::{details_before_summaries, explicitly_required, knowledge_twin};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +40,10 @@ pub struct PackRequest {
     /// observability. Retrieval takes these from the knowledge channel's
     /// corpus; see `retrieve::rank_channels`.
     pub dropped_terms: Vec<String>,
+    /// Query terms that survived per-channel corpus stopwording.
+    pub surviving_terms: Vec<String>,
+    /// Representation reserved for explicitly required ids.
+    pub required_representation: RequiredRepresentation,
     /// Why this pack was served from a knowingly incomplete index, when it was.
     ///
     /// Passed straight through to [`ContextPack::degraded`] so the wave that
@@ -58,37 +67,18 @@ fn summary(chunk: &KnowledgeChunk) -> String {
     line.chars().take(120).collect()
 }
 
-/// Copy `body` verbatim, cut to at most [`EXCERPT_MAX_TOKENS`].
-///
-/// This bound is independent of the retrieval budget — the item's `token_count`
-/// still describes the whole chunk — and exists only so one very long section
-/// cannot dominate a rendered brief.
-///
-/// The cut walks back twice: first to a character boundary, because slicing a
-/// `&str` mid-scalar panics, and then to the preceding newline, so a quoted
-/// excerpt never ends mid-line and misrepresents the source. A body with no
-/// newline inside the limit keeps the character-boundary cut.
-fn bounded_excerpt(body: &str) -> String {
-    if estimate_tokens(body) <= EXCERPT_MAX_TOKENS {
-        return body.to_string();
-    }
-
-    let mut end = (EXCERPT_MAX_TOKENS * BYTES_PER_TOKEN_ESTIMATE).min(body.len());
-    while end > 0 && !body.is_char_boundary(end) {
-        end -= 1;
-    }
-
-    let head = &body[..end];
-    let head = match head.rfind('\n') {
-        Some(newline) => &head[..newline],
-        None => head,
-    };
-    format!("{head}\n{EXCERPT_TRUNCATION_MARKER}")
-}
-
 /// Build one `ContextItem` from a ranked candidate and its backing chunk.
-fn build_chunk_item(candidate: &RankedCandidate, chunk: &KnowledgeChunk) -> ContextItem {
-    ContextItem {
+fn build_chunk_item(
+    candidate: &RankedCandidate,
+    chunk: &KnowledgeChunk,
+    terms: &[String],
+    representation: RequiredRepresentation,
+) -> ContextItem {
+    let (excerpt, truncated) = match representation {
+        RequiredRepresentation::Full => (chunk.body.clone(), false),
+        RequiredRepresentation::Compact => bounded_excerpt(&chunk.body, terms),
+    };
+    finalize_item(ContextItem {
         id: candidate.id.clone(),
         kind: ItemKind::KnowledgeChunk,
         pointer: SourcePointer {
@@ -99,7 +89,7 @@ fn build_chunk_item(candidate: &RankedCandidate, chunk: &KnowledgeChunk) -> Cont
         },
         summary: summary(chunk),
         source: candidate.channel,
-        token_count: candidate.token_count,
+        token_count: 0,
         score: candidate.score,
         reasons: candidate.reasons.clone(),
         // Never `Confidence::from_reasons` directly: the ranker can cap a
@@ -109,9 +99,10 @@ fn build_chunk_item(candidate: &RankedCandidate, chunk: &KnowledgeChunk) -> Cont
         confidence: candidate.confidence(),
         state: chunk.state,
         content_hash: chunk.content_hash.clone(),
-        excerpt: Some(bounded_excerpt(&chunk.body)),
+        excerpt: Some(excerpt),
+        truncated,
         matched_term_count: candidate.matched_term_count,
-    }
+    })
 }
 
 /// Build one `ContextItem` from a ranked candidate and its backing source node.
@@ -127,19 +118,35 @@ fn build_chunk_item(candidate: &RankedCandidate, chunk: &KnowledgeChunk) -> Cont
 /// the delivery-record suppression `ContextItem::content_hash` feeds, since it
 /// changes only when this node's own bytes do.
 ///
-/// `excerpt` goes through [`bounded_excerpt`], never
-/// `crate::utils::truncate_for_display`: `bounded_excerpt` is what enforces the
-/// documented contract on `ContextItem::excerpt` (bounded by
-/// [`EXCERPT_MAX_TOKENS`], truncated text ends with
-/// [`EXCERPT_TRUNCATION_MARKER`] on its own line). A signature is short, so
-/// this is nearly always a no-op, but using the other helper would silently
-/// make source items the only ones in the corpus violating that contract.
+/// Under [`RequiredRepresentation::Compact`], `excerpt` goes through
+/// [`bounded_excerpt`], never `crate::utils::truncate_for_display`:
+/// `bounded_excerpt` is what enforces the documented contract on
+/// `ContextItem::excerpt` (bounded by `schema::EXCERPT_MAX_TOKENS`, truncated
+/// text ends with the schema truncation marker on its own line). A signature
+/// is short, so this is nearly always a no-op, but using the other helper
+/// would silently make source items the only ones in the corpus violating
+/// that contract.
+///
+/// Under [`RequiredRepresentation::Full`] — the default, and what every
+/// `--require-id` reservation gets unless the caller asks for `Compact` —
+/// `excerpt` is `node.signature.clone()` verbatim, with no bound at all:
+/// `Full` exists precisely to let a caller demand the whole unit regardless
+/// of `EXCERPT_MAX_TOKENS`, so the bound above does not apply to it.
 ///
 /// No file reads here or anywhere else in the packer: retrieval is a pure
 /// function of bytes already loaded into the `SourceNode`, not of the working
 /// tree at query time.
-fn build_source_item(candidate: &RankedCandidate, node: &SourceNode) -> ContextItem {
-    ContextItem {
+fn build_source_item(
+    candidate: &RankedCandidate,
+    node: &SourceNode,
+    terms: &[String],
+    representation: RequiredRepresentation,
+) -> ContextItem {
+    let (excerpt, truncated) = match representation {
+        RequiredRepresentation::Full => (node.signature.clone(), false),
+        RequiredRepresentation::Compact => bounded_excerpt(&node.signature, terms),
+    };
+    finalize_item(ContextItem {
         id: ChunkId::from(node.id.as_str()),
         kind: ItemKind::SourceNode,
         pointer: SourcePointer {
@@ -157,7 +164,7 @@ fn build_source_item(candidate: &RankedCandidate, node: &SourceNode) -> ContextI
             node.span.line_end
         ),
         source: Channel::Source,
-        token_count: candidate.token_count,
+        token_count: 0,
         score: candidate.score,
         reasons: candidate.reasons.clone(),
         // See `build_chunk_item`: the cap rides on the candidate, not the
@@ -165,13 +172,21 @@ fn build_source_item(candidate: &RankedCandidate, node: &SourceNode) -> ContextI
         confidence: candidate.confidence(),
         state: LifecycleState::Active,
         content_hash: node.body_hash.clone(),
-        excerpt: Some(bounded_excerpt(&node.signature)),
+        excerpt: Some(excerpt),
+        truncated,
         matched_term_count: candidate.matched_term_count,
-    }
+    })
+}
+
+fn finalize_item(mut item: ContextItem) -> ContextItem {
+    item.token_count = rendered_item_tokens(&item);
+    item
 }
 
 /// Summarize coverage and omissions for a completed pack: how many of the
 /// ranked candidates (and their tokens) made it into `items`.
+/// `candidate_tokens` retains ranking's whole-unit estimates, while
+/// `included_tokens` is the exact rendered cost charged by packing.
 fn build_omission_summary(
     ranked: &[RankedCandidate],
     items: &[ContextItem],
@@ -213,22 +228,31 @@ fn build_item(
     candidate: &RankedCandidate,
     chunks: &BTreeMap<&str, &KnowledgeChunk>,
     nodes: &BTreeMap<&str, &SourceNode>,
+    terms: &[String],
+    representation: RequiredRepresentation,
 ) -> Option<ContextItem> {
     match candidate.channel {
         Channel::Knowledge => chunks
             .get(candidate.id.as_str())
-            .map(|chunk| build_chunk_item(candidate, chunk)),
+            .map(|chunk| build_chunk_item(candidate, chunk, terms, representation)),
         Channel::Source => nodes
             .get(candidate.id.as_str())
-            .map(|node| build_source_item(candidate, node)),
+            .map(|node| build_source_item(candidate, node, terms, representation)),
     }
 }
 
 /// What one budget-constrained walk of the fused list produced.
+///
+/// Carries no running token total: every fit decision recomputes one from the
+/// items and unmet lines it would land with (see [`tentative_total`]), and the
+/// number the pack publishes is [`ContextPack::recompute_estimate`]'s. A
+/// second definition of "the total so far" is exactly what a later change
+/// would wire back into a budget decision.
 struct Selection {
     items: Vec<ContextItem>,
-    estimated_tokens: usize,
     omitted: usize,
+    unmet_required: Vec<UnmetRequirement>,
+    superseded: BTreeSet<String>,
 }
 
 /// Walk the fused list in order, taking whole items while they fit the budget.
@@ -242,46 +266,86 @@ struct Selection {
 /// "Omitted: N weaker matches" line would otherwise tell the reader they were
 /// handed everything retrieval found.
 fn select(
-    budget_tokens: usize,
+    request: &PackRequest,
     ranked: &[RankedCandidate],
     chunks: &BTreeMap<&str, &KnowledgeChunk>,
     nodes: &BTreeMap<&str, &SourceNode>,
 ) -> Selection {
-    let mut items = Vec::new();
-    let mut estimated_tokens = 0;
-    let mut omitted = 0;
-    let mut superseded: BTreeSet<String> = BTreeSet::new();
+    let reservation = reserve_within_budget(request, ranked, chunks, nodes);
+    let mut selection = Selection {
+        items: reservation.items,
+        omitted: reservation.omitted,
+        unmet_required: reservation.unmet,
+        superseded: reservation.superseded,
+    };
+    select_optional(request, ranked, chunks, nodes, &mut selection);
+    selection
+}
 
+fn select_optional(
+    request: &PackRequest,
+    ranked: &[RankedCandidate],
+    chunks: &BTreeMap<&str, &KnowledgeChunk>,
+    nodes: &BTreeMap<&str, &SourceNode>,
+    selection: &mut Selection,
+) {
     for candidate in details_before_summaries(ranked) {
-        if superseded.contains(candidate.id.as_str()) && !explicitly_required(candidate) {
+        if explicitly_required(candidate) {
+            continue;
+        }
+        if selection.superseded.contains(candidate.id.as_str()) {
             tracing::debug!(
                 id = candidate.id.as_str(),
                 "tier-1 summary omitted: its tier-2 detail is already in the pack"
             );
-            omitted += 1;
+            selection.omitted += 1;
             continue;
         }
-        let Some(item) = build_item(candidate, chunks, nodes) else {
-            omitted += 1;
+        let Some(item) = build_item(
+            candidate,
+            chunks,
+            nodes,
+            &request.surviving_terms,
+            RequiredRepresentation::Compact,
+        ) else {
+            selection.omitted += 1;
             continue;
         };
-        let remaining = budget_tokens - estimated_tokens;
-        if budget_tokens == 0 || candidate.token_count > remaining {
-            omitted += 1;
+        // The unmet list is final by now — `reserve_within_budget` has run —
+        // so this prices against the same chrome the finished pack renders.
+        if tentative_total(&selection.items, &selection.unmet_required, &item)
+            > request.budget_tokens
+        {
+            selection.omitted += 1;
             continue;
         }
-        estimated_tokens += candidate.token_count;
         if let Some(twin) = knowledge_twin(candidate) {
-            superseded.insert(twin);
+            selection.superseded.insert(twin);
         }
-        items.push(item);
+        selection.items.push(item);
     }
+}
 
-    Selection {
-        items,
-        estimated_tokens,
-        omitted,
-    }
+/// The frame-plus-items-plus-chrome total if `candidate` were appended to
+/// `items` (already-committed pack order) alongside `unmet`.
+///
+/// Delegates to [`rendered_brief_tokens`] rather than tracking chrome
+/// incrementally, so this and [`ContextPack::recompute_estimate`] can never
+/// charge different bytes for the same brief — both apply the identical rule
+/// for what counts as chrome to the identical item list. Item counts are in
+/// the tens, so rebuilding the chrome estimate from scratch for every
+/// tentative candidate costs nothing that matters.
+///
+/// Shared with `pack::required::reserve`, which weighs an explicitly required
+/// candidate against the same accumulated `items`/`unmet` before admitting
+/// it — the required and optional passes must never price chrome by two
+/// different rules.
+pub(super) fn tentative_total(
+    items: &[ContextItem],
+    unmet: &[UnmetRequirement],
+    candidate: &ContextItem,
+) -> usize {
+    rendered_brief_tokens(items.iter().chain(std::iter::once(candidate)), unmet)
 }
 
 /// Build a pack from the fused list, within `request.budget_tokens`.
@@ -303,19 +367,24 @@ pub fn pack(
         .flat_map(|graph| graph.nodes())
         .map(|node| (node.id.as_str(), node))
         .collect();
-    let selected = select(request.budget_tokens, ranked, &chunk_lookup, &node_lookup);
+    let selected = select(request, ranked, &chunk_lookup, &node_lookup);
 
     let omitted_summary = build_omission_summary(ranked, &selected.items, selected.omitted);
-    ContextPack {
+    let mut pack = ContextPack {
         query: request.query.clone(),
         scope: request.scope.clone(),
         budget_tokens: request.budget_tokens,
-        estimated_tokens: selected.estimated_tokens,
+        // Filled in by `recompute_estimate` below; the packer keeps no
+        // running total of its own (see [`Selection`]).
+        estimated_tokens: 0,
         structural_freshness: request.structural_freshness.clone(),
         semantic_freshness: request.semantic_freshness.clone(),
         items: selected.items,
+        unmet_required: selected.unmet_required,
         omitted: omitted_summary,
         dropped_terms: request.dropped_terms.clone(),
         degraded: request.degraded.clone(),
-    }
+    };
+    pack.recompute_estimate();
+    pack
 }

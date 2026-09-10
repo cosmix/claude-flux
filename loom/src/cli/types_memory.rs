@@ -1,8 +1,25 @@
 //! Memory and knowledge CLI command types
 
+use crate::context::config::MIN_BUDGET_TOKENS;
 use crate::validation::{clap_id_validator, clap_knowledge_content_validator};
 use clap::Subcommand;
 use std::path::PathBuf;
+
+/// Clap value parser for `--budget-tokens`.
+///
+/// Rejects a budget below [`MIN_BUDGET_TOKENS`] outright rather than silently
+/// clamping it up: a user who typed 50 should be told their budget cannot
+/// even pay for the Knowledge Brief frame, not handed 256 with no explanation.
+fn clap_budget_tokens_validator(s: &str) -> Result<usize, String> {
+    let value: usize = s.parse().map_err(|_| format!("'{s}' is not a number"))?;
+    if value < MIN_BUDGET_TOKENS {
+        return Err(format!(
+            "--budget-tokens must be at least {MIN_BUDGET_TOKENS} (got {value}); \
+             a smaller budget cannot even pay for the Knowledge Brief frame"
+        ));
+    }
+    Ok(value)
+}
 
 #[derive(Subcommand)]
 pub enum KnowledgeCommands {
@@ -30,6 +47,8 @@ pub enum KnowledgeCommands {
     },
 
     /// Retrieve a token-budgeted context pack for a query (deterministic, offline)
+    ///
+    /// Exits with code 3 when a --require-id could not be honored.
     Context {
         /// Seed the query from this stage's dependencies, and name it in output
         #[arg(long)]
@@ -38,7 +57,7 @@ pub enum KnowledgeCommands {
         #[arg(long)]
         query: String,
         /// Maximum estimated tokens the pack may contain
-        #[arg(long, default_value_t = 2000)]
+        #[arg(long, default_value_t = 2000, value_parser = clap_budget_tokens_validator)]
         budget_tokens: usize,
         /// Retrieval channels to search: knowledge, source, or all
         #[arg(long, default_value = "all")]
@@ -46,6 +65,12 @@ pub enum KnowledgeCommands {
         /// Chunk id that must be included; repeatable
         #[arg(long = "require-id")]
         require_id: Vec<String>,
+        /// Include deprecated, superseded and historical material (default: current knowledge only)
+        #[arg(long)]
+        history: bool,
+        /// Represent --require-id items by their bounded excerpt instead of verbatim; the JSON marks them truncated
+        #[arg(long)]
+        require_compact: bool,
         /// Show per-item scores and selection reasons
         #[arg(long)]
         explain: bool,
@@ -60,7 +85,7 @@ pub enum KnowledgeCommands {
         #[arg(long)]
         cases: Option<PathBuf>,
         /// Override the per-case token budget
-        #[arg(long)]
+        #[arg(long, value_parser = clap_budget_tokens_validator)]
         budget_tokens: Option<usize>,
         /// Machine-readable JSON output (suppresses human text)
         #[arg(long)]

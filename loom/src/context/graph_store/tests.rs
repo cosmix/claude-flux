@@ -11,6 +11,8 @@ fn write_dated_base(store: &GraphStore, revision: &str, seconds_ago: u64) -> Pat
     let path = store.base_path(revision);
     let layer = GraphLayer {
         revision: revision.to_string(),
+        generation: String::new(),
+        blob_index: BTreeMap::new(),
         ..GraphLayer::default()
     };
     write_layer(&path, &layer).unwrap();
@@ -54,6 +56,8 @@ fn an_overlay_entry_shadows_the_base_entry_for_the_same_path() {
 
     let mut base = GraphLayer {
         revision: "rev1".to_string(),
+        generation: String::new(),
+        blob_index: BTreeMap::new(),
         ..GraphLayer::default()
     };
     base.files.insert("src/a.rs".to_string(), entry("base-a"));
@@ -245,6 +249,8 @@ fn republishing_an_existing_revision_prunes_nothing_and_returns_false() {
 
     let layer = GraphLayer {
         revision: "rev1".to_string(),
+        generation: String::new(),
+        blob_index: BTreeMap::new(),
         ..GraphLayer::default()
     };
     assert!(store.publish_base("rev1", &layer).unwrap());

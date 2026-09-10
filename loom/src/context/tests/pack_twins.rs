@@ -12,8 +12,10 @@ use super::source_fixtures::{full_node, graph_with_node, source_candidate};
 use crate::context::pack::twins::tier1_twin;
 use crate::context::pack::{pack, PackRequest};
 use crate::context::rank::RankedCandidate;
+use crate::context::render::rendered_chrome_tokens;
 use crate::context::schema::{
-    Channel, ChunkId, Freshness, KnowledgeChunk, LifecycleState, SelectionReason,
+    Channel, ChunkId, Freshness, KnowledgeChunk, LifecycleState, RequiredRepresentation,
+    SelectionReason, BRIEF_FRAME_TOKENS, BYTES_PER_TOKEN_ESTIMATE,
 };
 use std::path::PathBuf;
 
@@ -31,7 +33,7 @@ fn chunk(id: &str, tokens: usize) -> KnowledgeChunk {
         file: PathBuf::from(path),
         anchor: anchor.to_string(),
         heading: anchor.to_string(),
-        body: "body".to_string(),
+        body: "x".repeat(tokens.saturating_mul(BYTES_PER_TOKEN_ESTIMATE)),
         content_hash: String::new(),
         estimated_tokens: tokens,
         aliases: Vec::new(),
@@ -59,10 +61,12 @@ fn request(budget_tokens: usize) -> PackRequest {
     PackRequest {
         query: "query".into(),
         scope: vec![Channel::Knowledge],
-        budget_tokens,
+        budget_tokens: BRIEF_FRAME_TOKENS + 70 + budget_tokens,
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         dropped_terms: Vec::new(),
+        surviving_terms: vec!["query".to_string()],
+        required_representation: RequiredRepresentation::Full,
         degraded: None,
     }
 }
@@ -153,7 +157,10 @@ fn the_summary_is_dropped_when_its_detail_is_packed() {
         "the summary is reported, not lost"
     );
     assert_eq!(
-        packed.estimated_tokens, 4,
+        packed.estimated_tokens,
+        BRIEF_FRAME_TOKENS
+            + packed.items[0].token_count
+            + rendered_chrome_tokens(packed.items.iter(), &packed.unmet_required),
         "the summary's tokens are not charged to the budget"
     );
 }
@@ -179,106 +186,6 @@ fn the_summary_is_packed_when_its_detail_does_not_fit() {
         vec![TIER1]
     );
     assert_eq!(packed.omitted.omitted, 1);
-}
-
-/// Look-ahead: the summary outranking its own detail must not turn the pack
-/// into the pointer without the text.
-#[test]
-fn a_summary_ranked_above_its_detail_yields_its_slot_to_the_detail() {
-    let ranked = vec![
-        candidate(TIER1, 2.0, 2),
-        candidate("conventions.md#unrelated#0", 1.5, 2),
-        candidate(TIER2, 1.0, 4),
-    ];
-    let chunks = [
-        chunk(TIER1, 2),
-        chunk("conventions.md#unrelated#0", 2),
-        chunk(TIER2, 4),
-    ];
-
-    assert_eq!(
-        packed_ids(100, &ranked, &chunks),
-        vec![TIER2.to_string(), "conventions.md#unrelated#0".to_string()],
-        "the detail takes the summary's position, the rest keep their order"
-    );
-}
-
-/// Promotion must not cost the reader the fallback: a detail that cannot fit,
-/// pulled up to a summary that can, still leaves the summary behind it.
-#[test]
-fn a_promoted_detail_that_does_not_fit_leaves_the_summary_behind_it() {
-    let ranked = vec![candidate(TIER1, 2.0, 2), candidate(TIER2, 1.0, 40)];
-    let chunks = [chunk(TIER1, 2), chunk(TIER2, 40)];
-
-    assert_eq!(packed_ids(5, &ranked, &chunks), vec![TIER1.to_string()]);
-}
-
-#[test]
-fn an_unrelated_pair_sharing_an_anchor_is_packed_whole() {
-    let ranked = vec![
-        candidate("architecture/overview.md#overview#0", 2.0, 4),
-        candidate("conventions.md#overview#0", 1.0, 2),
-    ];
-    let chunks = [
-        chunk("architecture/overview.md#overview#0", 4),
-        chunk("conventions.md#overview#0", 2),
-    ];
-
-    assert_eq!(
-        packed_ids(100, &ranked, &chunks),
-        vec![
-            "architecture/overview.md#overview#0".to_string(),
-            "conventions.md#overview#0".to_string()
-        ]
-    );
-}
-
-/// Promotion is not free. The detail takes the summary's slot, so under a
-/// tight budget it can cost a cheaper candidate that ranked between them the
-/// room it would otherwise have had. Pinned rather than fixed: the reader
-/// asked about this topic and the detail IS the topic, but a future change
-/// must not flip the trade-off without saying so.
-#[test]
-fn a_promoted_detail_can_cost_a_cheaper_later_candidate_its_slot() {
-    let ranked = vec![
-        candidate(TIER1, 2.0, 2),
-        candidate("conventions.md#unrelated#0", 1.5, 2),
-        candidate(TIER2, 1.0, 4),
-    ];
-    let chunks = [
-        chunk(TIER1, 2),
-        chunk("conventions.md#unrelated#0", 2),
-        chunk(TIER2, 4),
-    ];
-
-    assert_eq!(
-        packed_ids(5, &ranked, &chunks),
-        vec![TIER2.to_string()],
-        "the detail fits where the summary and the unrelated chunk together did"
-    );
-}
-
-/// Two tier-2 files can repeat one heading, and both then compute the same
-/// tier-1 twin. The highest-ranked of them is the one promoted into the
-/// summary's slot, and neither is deduplicated against the other — they are
-/// different topics that happen to share a title.
-#[test]
-fn the_highest_ranked_of_two_details_sharing_a_heading_is_the_one_promoted() {
-    let alpha = "mistakes/alpha.md#shared-heading#0";
-    let beta = "mistakes/beta.md#shared-heading#0";
-    let summary = "mistakes.md#shared-heading#0";
-    let ranked = vec![
-        candidate(summary, 3.0, 2),
-        candidate(alpha, 2.0, 2),
-        candidate(beta, 1.0, 2),
-    ];
-    let chunks = [chunk(summary, 2), chunk(alpha, 2), chunk(beta, 2)];
-
-    assert_eq!(
-        packed_ids(100, &ranked, &chunks),
-        vec![alpha.to_string(), beta.to_string()],
-        "alpha outranks beta, so alpha takes the summary's slot"
-    );
 }
 
 /// The channel gate. A source node whose id happens to be punctuated like a
@@ -320,7 +227,7 @@ fn a_summary_the_caller_required_survives_its_detail() {
 
     assert_eq!(
         packed_ids(100, &ranked, &chunks),
-        vec![TIER2.to_string(), TIER1.to_string()]
+        vec![TIER1.to_string(), TIER2.to_string()]
     );
 }
 
@@ -366,3 +273,40 @@ fn a_prose_id_suppresses_no_tier1_summary() {
         vec![prose.to_string(), TIER1.to_string()]
     );
 }
+
+/// The bug this pins: `reserve` used to suppress a required detail's tier-1
+/// twin unconditionally, even when the detail itself went unmet — `reserve`
+/// (`context::pack::required`) must only suppress the twin once the detail
+/// has actually made it into `items`. A reader who asked for `TIER2` and
+/// can't have it, because the budget is too tight, must still get `TIER1`:
+/// the one thing left that can tell them the topic exists.
+#[test]
+fn a_required_detail_that_goes_unmet_leaves_its_tier1_twin_eligible() {
+    let mut required = candidate(TIER2, 2.0, 40);
+    required.reasons.push(SelectionReason::ExplicitId);
+    let summary = candidate(TIER1, 1.0, 2);
+    let ranked = vec![required, summary];
+    let chunks = [chunk(TIER2, 40), chunk(TIER1, 2)];
+
+    let packed = pack(&request(5), &ranked, &chunks, None);
+
+    assert_eq!(
+        packed.unmet_required.len(),
+        1,
+        "{:?}",
+        packed.unmet_required
+    );
+    assert_eq!(packed.unmet_required[0].id, TIER2);
+    assert_eq!(
+        packed
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![TIER1],
+        "the twin must still be eligible once its detail goes unmet, not silently suppressed"
+    );
+}
+
+#[path = "pack_twins_promotion.rs"]
+mod promotion_tests;

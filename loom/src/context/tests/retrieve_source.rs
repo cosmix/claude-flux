@@ -71,8 +71,10 @@ fn write_local_overlay(root: &Path, node: &SourceNode) {
     );
     let layer = GraphLayer {
         revision: "test-revision".to_string(),
+        generation: String::new(),
         built_at: None,
         files,
+        blob_index: BTreeMap::new(),
     };
     graph_store.save_overlay(&plan, &stage, &layer).unwrap();
 }
@@ -264,8 +266,10 @@ fn retrieve_for_stage_is_not_degraded_when_the_semantic_base_exists() {
     let revision = "cafef00dcafef00d";
     let layer = GraphLayer {
         revision: revision.to_string(),
+        generation: String::new(),
         built_at: None,
         files: BTreeMap::new(),
+        blob_index: BTreeMap::new(),
     };
     graph_store.publish_base(revision, &layer).unwrap();
     store

@@ -6,6 +6,7 @@ use crate::context::graph_store::ResolvedGraph;
 use crate::context::pack::*;
 use crate::context::rank::*;
 use crate::context::rank_source::rank_source;
+use crate::context::render::rendered_item_tokens;
 use crate::context::schema::*;
 use std::path::PathBuf;
 
@@ -13,10 +14,12 @@ fn request(budget_tokens: usize) -> PackRequest {
     PackRequest {
         query: "query".into(),
         scope: vec![Channel::Source],
-        budget_tokens,
+        budget_tokens: BRIEF_FRAME_TOKENS + budget_tokens,
         structural_freshness: Freshness::default(),
         semantic_freshness: Freshness::default(),
         dropped_terms: Vec::new(),
+        surviving_terms: vec!["query".to_string()],
+        required_representation: RequiredRepresentation::Full,
         degraded: None,
     }
 }
@@ -36,7 +39,7 @@ fn rule_29_included_candidates_become_fully_mapped_context_items() {
     node.span.line_end = 12;
     let ranked = source_candidate("src/a.rs#function:widget", 2.5, 4);
 
-    let packed = pack(&request(4), &[ranked], &[], Some(&graph_with_node(node)));
+    let packed = pack(&request(100), &[ranked], &[], Some(&graph_with_node(node)));
     let item = &packed.items[0];
 
     assert_eq!(item.kind, ItemKind::SourceNode);
@@ -69,7 +72,7 @@ fn test_source_item_carries_every_field() {
     };
 
     let packed = pack(
-        &request(22),
+        &request(100),
         std::slice::from_ref(&ranked),
         &[],
         Some(&graph_with_node(node.clone())),
@@ -257,7 +260,7 @@ fn assert_provenance_and_lifecycle(
     ranked: &RankedCandidate,
 ) {
     assert_eq!(item.source, Channel::Source);
-    assert_eq!(item.token_count, ranked.token_count);
+    assert_eq!(item.token_count, rendered_item_tokens(item));
     assert!(
         (item.score - ranked.score).abs() < 1e-6,
         "got {}",

@@ -71,6 +71,8 @@ pub struct Span {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum FileCoverage {
+    /// The file was deleted from this overlay.
+    Deleted,
     /// The whole file parsed and every query match was walked.
     Full,
     /// The file was parsed by a real grammar but the extraction is partial.
@@ -105,6 +107,7 @@ impl FileCoverage {
     /// Stable lowercase status name, used in CLI output and fixture JSON.
     pub fn status(&self) -> &'static str {
         match self {
+            FileCoverage::Deleted => "deleted",
             FileCoverage::Full => "full",
             FileCoverage::Partial { .. } => "partial",
             FileCoverage::LexicalOnly { .. } => "lexical-only",

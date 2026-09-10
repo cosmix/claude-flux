@@ -1,77 +1,6 @@
+use super::fuse_fixtures::{candidate, find, tied_tier2_fixture};
 use crate::context::fuse::*;
-use crate::context::rank::*;
 use crate::context::schema::*;
-
-fn candidate(
-    id: &str,
-    channel: Channel,
-    score: f32,
-    reasons: Vec<SelectionReason>,
-    token_count: usize,
-) -> RankedCandidate {
-    RankedCandidate {
-        id: ChunkId::from(id),
-        channel,
-        score,
-        reasons,
-        token_count,
-        matched_term_count: 0,
-        // Fusion must carry a ceiling through untouched, but none of these
-        // fixtures exercise the demotion, so they claim no cap.
-        confidence_ceiling: None,
-    }
-}
-
-fn find<'a>(fused: &'a [RankedCandidate], id: &str) -> &'a RankedCandidate {
-    fused
-        .iter()
-        .find(|candidate| candidate.id.as_str() == id)
-        .unwrap_or_else(|| panic!("no candidate with id {id:?} in {fused:?}"))
-}
-
-/// Fixture for `rule_25`: two channels, each with an exact-rung anchor ahead
-/// of a lexical-only item. Once the anchors are pulled into tier 1 and
-/// filtered out of tier 2's RRF numbering, both lexical items become their
-/// channel's rank-1 survivor, so they tie at an identical RRF contribution of
-/// `1 / (RRF_K + 1)` (~0.0163934) -- but their channels have different
-/// overall maxima (1000.0 vs 50.0), so the within-channel normalized scores
-/// that break the tie diverge: `5.0 / 1000.0 = 0.005` vs `5.0 / 50.0 = 0.1`.
-fn tied_tier2_fixture() -> Vec<Vec<RankedCandidate>> {
-    vec![
-        vec![
-            candidate(
-                "a-anchor",
-                Channel::Knowledge,
-                1000.0,
-                vec![SelectionReason::ExplicitId],
-                1,
-            ),
-            candidate(
-                "a-lex",
-                Channel::Knowledge,
-                5.0,
-                vec![SelectionReason::Lexical],
-                1,
-            ),
-        ],
-        vec![
-            candidate(
-                "b-anchor",
-                Channel::Source,
-                50.0,
-                vec![SelectionReason::ExactSymbol],
-                1,
-            ),
-            candidate(
-                "b-lex",
-                Channel::Source,
-                5.0,
-                vec![SelectionReason::Lexical],
-                1,
-            ),
-        ],
-    ]
-}
 
 #[test]
 fn rule_20_rrf_uses_one_based_positions_within_each_list() {
@@ -179,6 +108,34 @@ fn rule_23_tier1_precedes_tier2_regardless_of_alphabetical_id_order() {
         (fused[1].score - 0.016_393).abs() < 1e-4,
         "tier 2 carries its RRF score, got {}",
         fused[1].score
+    );
+}
+
+#[test]
+fn graph_neighbor_stays_in_tier2_below_a_lower_scoring_exact_symbol() {
+    let fused = fuse(&[vec![
+        candidate(
+            "graph-neighbor",
+            Channel::Source,
+            100.0,
+            vec![SelectionReason::GraphNeighbor],
+            1,
+        ),
+        candidate(
+            "exact-symbol",
+            Channel::Source,
+            1.0,
+            vec![SelectionReason::ExactSymbol],
+            1,
+        ),
+    ]]);
+
+    assert_eq!(
+        fused
+            .iter()
+            .map(|candidate| candidate.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["exact-symbol", "graph-neighbor"]
     );
 }
 

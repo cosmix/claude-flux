@@ -1,11 +1,18 @@
-//! The one tunables surface for retrieval.
+//! The tunables surface for retrieval.
 //!
-//! Every threshold the ranking, packing and hook paths depend on lives here as
-//! a field of [`RetrievalConfig`], loaded once per retrieval and threaded down
-//! as a `&RetrievalConfig` parameter. No global, no `OnceLock`, no re-read
-//! partway through a pipeline: two callers in one process must be able to
-//! retrieve against different roots without one silently inheriting the
-//! other's tunables.
+//! Every OPERATOR-TUNABLE threshold the ranking, packing and hook paths depend
+//! on lives here as a field of [`RetrievalConfig`], loaded once per retrieval
+//! and threaded down as a `&RetrievalConfig` parameter. No global, no
+//! `OnceLock`, no re-read partway through a pipeline: two callers in one
+//! process must be able to retrieve against different roots without one
+//! silently inheriting the other's tunables.
+//!
+//! Not every constant retrieval depends on lives here: a fixed STRUCTURAL
+//! bound with no plausible reason to differ between checkouts stays as a
+//! file-local `const` next to the algorithm it shapes instead — see
+//! `rank_source::MAX_SOURCE_CANDIDATES` and the seed/neighbor bounds in
+//! `rank_source::expand`. The line is "would an operator ever want to change
+//! this per project", not "is it a number".
 //!
 //! ## The file
 //!
@@ -45,15 +52,44 @@
 //! values clamp or fall back per field rather than rejecting the file, so one
 //! bad key cannot discard twelve good ones.
 
-use std::path::{Component, Path};
+mod values;
+
+use crate::context::schema::BRIEF_FRAME_TOKENS;
+use std::path::Path;
 use toml::{Table, Value};
+use values::{budget, count, prior, prose_roots, ratio, seconds};
 
 /// Path of the config file, relative to the main project root.
 const CONFIG_RELPATH: &str = ".loom/config.toml";
 
-/// Smallest accepted token/byte budget. Below this a budget cannot hold even
-/// one item, so honouring it would silently produce empty output forever.
-const MIN_BUDGET: usize = 100;
+/// Smallest accepted token/byte budget.
+///
+/// Every pack this crate renders is charged [`BRIEF_FRAME_TOKENS`] before a
+/// single item is considered (see `ContextPack::recompute_estimate`), so a
+/// budget at or below that frame cost cannot even pay for the frame, let
+/// alone one item — honouring it would silently produce empty output
+/// forever. Defined off `BRIEF_FRAME_TOKENS` rather than as an independent
+/// round number so the two constants cannot drift apart again: however
+/// `BRIEF_FRAME_TOKENS` moves, the floor keeps the same room above it.
+///
+/// 128 tokens of headroom is roughly one small excerpted chunk, or several
+/// `Required but unmet` lines. Nothing here asserts that relation, because
+/// there is no constant for "the cheapest possible item" to check it against —
+/// an item costs whatever its own text renders to. An assert of the form
+/// `BRIEF_FRAME_TOKENS + 128 > BRIEF_FRAME_TOKENS` would hold for every value
+/// the frame could ever take, and so would guard nothing.
+pub const MIN_BUDGET_TOKENS: usize = BRIEF_FRAME_TOKENS + 128;
+
+/// Smallest accepted `max_payload_bytes`.
+///
+/// Deliberately its own constant rather than [`MIN_BUDGET_TOKENS`]: that floor
+/// is derived from [`BRIEF_FRAME_TOKENS`], a TOKEN cost policing a TOKEN
+/// budget, and is only a sane BYTE floor today by coincidence. Deriving
+/// `max_payload_bytes`'s floor from it would let a future change to
+/// `BRIEF_FRAME_TOKENS` silently move a BYTE ceiling it has no relationship
+/// to. 256 bytes is comfortably below any real hook payload, which is a JSON
+/// envelope around a rendered brief.
+const MIN_PAYLOAD_BYTES: usize = 256;
 
 /// Largest accepted token/byte budget.
 const MAX_BUDGET: usize = 100_000;
@@ -204,13 +240,20 @@ impl RetrievalConfig {
                 self.knowledge_curated_prior = prior(value, key, self.knowledge_curated_prior);
             }
             "prompt_budget_tokens" => {
-                self.prompt_budget_tokens = budget(value, key, self.prompt_budget_tokens);
+                self.prompt_budget_tokens =
+                    budget(value, key, self.prompt_budget_tokens, MIN_BUDGET_TOKENS);
             }
             "stage_brief_budget_tokens" => {
-                self.stage_brief_budget_tokens = budget(value, key, self.stage_brief_budget_tokens);
+                self.stage_brief_budget_tokens = budget(
+                    value,
+                    key,
+                    self.stage_brief_budget_tokens,
+                    MIN_BUDGET_TOKENS,
+                );
             }
             "max_payload_bytes" => {
-                self.max_payload_bytes = budget(value, key, self.max_payload_bytes);
+                self.max_payload_bytes =
+                    budget(value, key, self.max_payload_bytes, MIN_PAYLOAD_BYTES);
             }
             "keep_base_graphs" => self.keep_base_graphs = count(value, key, self.keep_base_graphs),
             "reconcile_debounce_secs" => {
@@ -228,134 +271,6 @@ impl RetrievalConfig {
             unknown => tracing::debug!(key = %unknown, "ignoring an unknown [retrieval] key"),
         }
     }
-}
-
-/// Read a ratio or factor into `(0.0, 1.0]`.
-///
-/// A non-finite, zero or negative value falls back to `default` rather than to
-/// the clamp bound: `test_path_factor = 0` reads as "turn this off", but zeroing
-/// a multiplier applied to a total score erases the score of every node it
-/// touches, which is not a tuning outcome anyone can have wanted. Only the
-/// upper end is a true clamp.
-fn ratio(value: &Value, key: &str, default: f32) -> f32 {
-    let Some(raw) = number(value, key) else {
-        return default;
-    };
-    if !raw.is_finite() || raw <= 0.0 {
-        return default;
-    }
-    raw.min(1.0)
-}
-
-/// Read an additive score prior: any finite, non-negative value is legal.
-///
-/// Unlike [`ratio`] this is not bounded above by 1.0 — it is added to a BM25
-/// score, whose scale is unbounded, and its default is 5.0.
-fn prior(value: &Value, key: &str, default: f32) -> f32 {
-    let Some(raw) = number(value, key) else {
-        return default;
-    };
-    if !raw.is_finite() || raw < 0.0 {
-        return default;
-    }
-    raw
-}
-
-/// Read a token or byte budget, clamped into `[MIN_BUDGET, MAX_BUDGET]`.
-///
-/// Clamped in `i64` before the cast: `-1 as usize` is `usize::MAX`, which would
-/// clamp to the *maximum* budget and turn a nonsense value into the most
-/// expensive possible setting.
-fn budget(value: &Value, key: &str, default: usize) -> usize {
-    let Some(raw) = integer(value, key) else {
-        return default;
-    };
-    raw.clamp(MIN_BUDGET as i64, MAX_BUDGET as i64) as usize
-}
-
-/// Read a count, clamped to at least 1. A zero count would make its rule
-/// vacuous rather than strict — no term long enough, no chunk rare enough.
-fn count(value: &Value, key: &str, default: usize) -> usize {
-    let Some(raw) = integer(value, key) else {
-        return default;
-    };
-    raw.max(1) as usize
-}
-
-/// Read a duration in seconds. `0` is legal and means "no delay"; a negative
-/// value is not expressible as a duration and falls back to `default`.
-fn seconds(value: &Value, key: &str, default: u64) -> u64 {
-    let Some(raw) = integer(value, key) else {
-        return default;
-    };
-    if raw < 0 {
-        return default;
-    }
-    raw as u64
-}
-
-/// Read `prose_roots`, dropping every entry that could point the indexer
-/// outside the project. `None` leaves the current value alone.
-///
-/// An absolute path, or one with a `..` component, would let a config file aim
-/// the prose indexer at any directory the process can read and pull its
-/// contents into a Knowledge Brief. Empty strings are dropped because
-/// `Path::new("")` joins to the project root itself. A list that survives
-/// filtering empty is honoured as written: it means "index no prose".
-fn prose_roots(value: &Value, key: &str) -> Option<Vec<String>> {
-    let Some(array) = value.as_array() else {
-        log_wrong_type(key, "an array of strings");
-        return None;
-    };
-    Some(
-        array
-            .iter()
-            .filter_map(Value::as_str)
-            .filter(|entry| is_contained_root(entry))
-            .map(str::to_string)
-            .collect(),
-    )
-}
-
-/// True when `entry` names a directory inside the project.
-fn is_contained_root(entry: &str) -> bool {
-    let path = Path::new(entry);
-    !entry.is_empty()
-        && path.is_relative()
-        && !path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-}
-
-/// Read a value as a float, accepting a TOML integer for it — `stop_df_ratio = 1`
-/// is what an operator writes when they mean `1.0`.
-fn number(value: &Value, key: &str) -> Option<f32> {
-    match value
-        .as_float()
-        .or_else(|| value.as_integer().map(|raw| raw as f64))
-    {
-        Some(raw) => Some(raw as f32),
-        None => {
-            log_wrong_type(key, "a number");
-            None
-        }
-    }
-}
-
-/// Read a value as a TOML integer.
-fn integer(value: &Value, key: &str) -> Option<i64> {
-    match value.as_integer() {
-        Some(raw) => Some(raw),
-        None => {
-            log_wrong_type(key, "an integer");
-            None
-        }
-    }
-}
-
-/// Log a value whose TOML type is not the one its key needs.
-fn log_wrong_type(key: &str, expected: &str) {
-    tracing::warn!(key, expected, "ignoring a wrong-typed [retrieval] value");
 }
 
 #[cfg(test)]

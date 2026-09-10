@@ -128,7 +128,7 @@ fn format_node_line(node: &SourceNode) -> String {
 fn file_coverage_line(coverage: &FileCoverage) -> String {
     let status = coverage.status();
     match coverage {
-        FileCoverage::Full => format!("coverage: {status}"),
+        FileCoverage::Deleted | FileCoverage::Full => format!("coverage: {status}"),
         FileCoverage::Partial { detail } | FileCoverage::LexicalOnly { detail } => {
             format!(
                 "coverage: {status} - {}",

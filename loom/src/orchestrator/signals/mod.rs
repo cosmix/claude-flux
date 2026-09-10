@@ -67,7 +67,7 @@ pub use format::{
 // path uses (`commands::hook::user_prompt`) rather than a second copy.
 pub use adjudication::generate_adjudication_signal;
 pub(crate) use cache::stable_prefix_for;
-pub(crate) use format::{format_knowledge_brief, render_excerpt_block};
+pub(crate) use format::format_knowledge_brief;
 pub use generate::{
     build_embedded_context_with_stage, generate_signal, generate_signal_with_metrics,
     generate_signal_with_skills, DEFAULT_MAX_SKILL_RECOMMENDATIONS,
