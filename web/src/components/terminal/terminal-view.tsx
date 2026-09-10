@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { useAtomValue } from "jotai/react";
-import { EyeIcon, ExternalLinkIcon, KeyboardIcon, MousePointer2Icon } from "lucide-react";
+import { ExternalLinkIcon } from "lucide-react";
 import {
   createContext,
   useContext,
@@ -17,6 +17,7 @@ import { CopyCommand } from "@/components/copy-command";
 import { useNow } from "@/components/hooks/use-now";
 import { StateLine } from "@/components/stage-heading";
 import { toneClass } from "@/components/state-badge";
+import { ModeKey } from "@/components/terminal/mode-key";
 import {
   useTerminal,
   type EmulatorFactory,
@@ -28,7 +29,6 @@ import {
 } from "@/components/terminal/use-terminal";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Kbd } from "@/components/ui/kbd";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatElapsed, stateMeta } from "@/lib/format";
 import { snapshotAtom } from "@/state/atoms";
 
@@ -121,8 +121,8 @@ export function TerminalView({ stage, frame, factory, deps }: TerminalViewProps)
           <div ref={hostRef} className="terminal-host" aria-label="Agent terminal" />
           {mode === "view" && phase === "live" && (
             <span className="terminal-takeover-cue" aria-hidden="true">
-              <MousePointer2Icon />
-              click to take control
+              <span className="terminal-dot" />
+              take control
             </span>
           )}
           <Notice state={state} alive={stage.session_alive} terminals={terminals} retry={retry} />
@@ -165,11 +165,7 @@ function Head({
         </span>
       </div>
       <div className={cn("terminal-controls rise", frame === "dialog" && "pr-9")} style={rise(2)}>
-        <ModeSwitch mode={mode} switchable={switchable} onMode={onMode} />
-        <span className="terminal-conn" role="status">
-          <span className="terminal-dot" aria-hidden="true" />
-          {connectionWord(mode, phase)}
-        </span>
+        <ModeKey mode={mode} phase={phase} switchable={switchable} onMode={onMode} />
       </div>
     </header>
   );
@@ -189,52 +185,6 @@ function Line({ stage, frame }: { stage: StageSummary; frame: TerminalViewProps[
       {frame === "dialog" ? <DialogDescription asChild>{line}</DialogDescription> : line}
     </div>
   );
-}
-
-function ModeSwitch({
-  mode,
-  switchable,
-  onMode,
-}: {
-  mode: TerminalMode;
-  switchable: boolean;
-  onMode: (mode: TerminalMode) => void;
-}) {
-  return (
-    <div className="terminal-seg" data-mode={mode} role="radiogroup" aria-label="Terminal mode">
-      <button
-        type="button"
-        role="radio"
-        aria-checked={mode === "view"}
-        disabled={!switchable}
-        onClick={() => onMode("view")}
-      >
-        <EyeIcon aria-hidden="true" />
-        <span>View</span>
-      </button>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            role="radio"
-            data-control=""
-            aria-checked={mode === "control"}
-            disabled={!switchable}
-            onClick={() => onMode("control")}
-          >
-            <KeyboardIcon aria-hidden="true" />
-            <span>Take control</span>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>Keystrokes reach a running autonomous agent</TooltipContent>
-      </Tooltip>
-    </div>
-  );
-}
-
-function connectionWord(mode: TerminalMode, phase: TerminalPhase): string {
-  if (phase === "live") return mode === "view" ? "viewing" : "controlling";
-  return phase;
 }
 
 /// What the well says when there is no screen to show, or a stamp over the
@@ -368,7 +318,7 @@ function Hint({
     return (
       <span className="terminal-hint" data-control="">
         every key reaches the agent ·{" "}
-        {frame === "dialog" ? "close with ✕ or the back button" : "View stops sending"}
+        {frame === "dialog" ? "close with ✕ or the back button" : "release stops sending"}
       </span>
     );
   }

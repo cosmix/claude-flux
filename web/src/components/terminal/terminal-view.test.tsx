@@ -284,6 +284,34 @@ describe("terminal view", () => {
     expect(well().dataset.mode).toBe("control");
   });
 
+  it("releases control when the key is pressed again", async () => {
+    const { factory } = await live();
+    const key = () => screen.getByRole("switch", { name: "Take control" });
+    await waitFor(() => expect(key().textContent).toBe("viewingtake control"));
+    expect(key().getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(key());
+    await waitFor(() => expect(factory.doubles).toHaveLength(2));
+    act(() => FakeSocket.instances[1].open());
+    await waitFor(() => expect(key().getAttribute("aria-checked")).toBe("true"));
+    expect(well().dataset.mode).toBe("control");
+    expect(key().textContent).toBe("controllingrelease");
+
+    fireEvent.click(key());
+    await waitFor(() => expect(well().dataset.mode).toBe("view"));
+    expect(key().getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("turns the key into a plain indicator once the session has ended", async () => {
+    await live();
+    act(() => FakeSocket.instances[0].closeFromServer(1000));
+
+    const key = await screen.findByRole("switch", { name: "Take control" });
+    await waitFor(() => expect(key.textContent).toBe("ended"));
+    expect(key).toHaveProperty("disabled", true);
+    expect(well().dataset.phase).toBe("ended");
+  });
+
   it("keeps the terminal open when Esc is pressed in control mode", async () => {
     const timers = fakeTimers();
     const factory = fakeFactory();
@@ -296,7 +324,7 @@ describe("terminal view", () => {
     );
 
     await waitForMount(factory);
-    fireEvent.click(screen.getByRole("radio", { name: "Take control" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Take control" }));
     await waitFor(() => expect(well().dataset.mode).toBe("control"));
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
 
@@ -330,7 +358,7 @@ describe("terminal view", () => {
       `/?stage=${stage.id}&view=terminal`,
     ).router;
     await waitForMount(control);
-    fireEvent.click(screen.getByRole("radio", { name: "Take control" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Take control" }));
     await waitFor(() => expect(screen.getByRole("dialog").dataset.mode).toBe("control"));
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     fireEvent.pointerDown(document.body);
@@ -346,7 +374,7 @@ describe("terminal view", () => {
     renderModal(stage, factory.factory, timers.deps, `/?stage=${stage.id}&view=terminal`);
 
     await waitForMount(factory);
-    fireEvent.click(screen.getByRole("radio", { name: "Take control" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Take control" }));
     await waitFor(() => expect(factory.doubles).toHaveLength(2));
     const emulator = factory.doubles[1];
     await waitFor(() => expect(emulator.calls.opened).toHaveLength(1));

@@ -85,6 +85,7 @@
     transform: translateY(-1px);
   }
 
+  /* The key's echo: only rendered in view while live, only shown on hover. */
   .terminal-takeover-cue {
     position: absolute;
     top: 12px;
@@ -92,34 +93,30 @@
     z-index: 3;
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 6px 9px;
-    border: 1px solid color-mix(in oklch, var(--well-fg) 13%, transparent);
-    border-radius: 7px;
+    gap: 8px;
+    padding: 5px 9px 5px 8px;
+    border: 1px solid color-mix(in oklch, var(--tone-executing) 32%, transparent);
+    border-radius: 6px;
     background: color-mix(in oklch, var(--well) 86%, transparent);
     box-shadow: 0 4px 18px color-mix(in oklch, black 22%, transparent);
-    font-family: var(--font-terminal);
+    font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 600;
     line-height: 14px;
-    letter-spacing: 0.04em;
-    color: var(--well-dim);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--well-fg);
     pointer-events: none;
-    opacity: 0.64;
+    opacity: 0;
     transform: translateY(-2px);
     transition:
-      border-color 180ms ease,
-      color 180ms ease,
       opacity 180ms ease,
       transform 180ms ease;
   }
-  .terminal-takeover-cue svg {
-    width: 13px;
-    height: 13px;
+  .terminal-takeover-cue .terminal-dot {
+    animation: terminal-status-pulse 2.8s ease-in-out infinite;
   }
   .terminal-well:hover .terminal-takeover-cue {
-    border-color: color-mix(in oklch, var(--tone-executing) 32%, transparent);
-    color: var(--well-fg);
     opacity: 1;
     transform: translateY(0);
   }
@@ -254,11 +251,6 @@
     .terminal-head {
       flex-direction: column;
     }
-    .terminal-controls {
-      flex-direction: row;
-      align-items: center;
-      gap: 12px;
-    }
   }
 }
 
@@ -293,5 +285,8 @@
   .terminal-host,
   .terminal-takeover-cue {
     transition: none;
+  }
+  .terminal-takeover-cue .terminal-dot {
+    animation: none;
   }
 }
