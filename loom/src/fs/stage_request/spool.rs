@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use super::types::StageRequest;
 use crate::daemon::MAX_REQUEST_BYTES;
+use crate::fs::safe_read::open_regular_no_follow;
 use crate::git::worktree::find_worktree_root_from_cwd;
 
 /// Spool location relative to a worktree root.
@@ -121,8 +122,11 @@ pub fn append_to_spool(worktree_root: &Path, request: &StageRequest) -> Result<(
 ///
 /// Missing-spool is the overwhelmingly common case (every daemon tick, for
 /// every stage that has queued nothing) so this must stay cheap and must never
-/// create the file or the `.loom/` directory.
-pub fn read_pending(worktree_root: &Path) -> Result<Vec<StageRequest>> {
+/// create the file or the `.loom/` directory. Exercised only by tests -
+/// production code learns about spooled requests solely through
+/// [`drain_spool`].
+#[cfg(test)]
+pub(crate) fn read_pending(worktree_root: &Path) -> Result<Vec<StageRequest>> {
     let path = spool_path(worktree_root);
     if !path.exists() {
         return Ok(Vec::new());
@@ -156,20 +160,21 @@ pub fn read_pending(worktree_root: &Path) -> Result<Vec<StageRequest>> {
 /// Malformed lines are skipped (counted, not retried) rather than blocking the
 /// requests around them; they are discarded on the truncate that follows a
 /// successful pass, since a line that couldn't parse this time never will.
+///
+/// A spool the session replaced with a symlink (at the spool or its `.loom/`
+/// directory), a hard link, or a FIFO is refused with an `Err` and left
+/// untouched (see `open_regular_no_follow` in `fs::safe_read`), so the
+/// trusted daemon never reads or truncates a file outside the worktree.
 pub(super) fn drain_spool(
     worktree_root: &Path,
     sink: &mut dyn FnMut(&StageRequest) -> Result<()>,
 ) -> Result<DrainOutcome> {
     let path = spool_path(worktree_root);
-    if !path.exists() {
+    let opened = open_regular_no_follow(worktree_root, SPOOL_RELPATH, libc::O_RDWR)
+        .with_context(|| format!("Stage request spool {} was not drained", path.display()))?;
+    let Some(mut file) = opened else {
         return Ok(DrainOutcome::default());
-    }
-
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .with_context(|| format!("Failed to open stage request spool: {}", path.display()))?;
+    };
     file.lock_exclusive()
         .with_context(|| format!("Failed to lock stage request spool: {}", path.display()))?;
 

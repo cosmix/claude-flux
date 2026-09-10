@@ -164,3 +164,51 @@ fn a_request_larger_than_the_daemon_accepts_is_refused_before_it_is_written() {
         "a refused request must not have been partially written"
     );
 }
+
+const VICTIM: &str = "outside the worktree; a drain must never read or truncate this\n";
+
+/// A file named `name` outside any worktree, holding `VICTIM`; the returned
+/// guard keeps its directory alive.
+fn victim_outside(name: &str) -> (TempDir, std::path::PathBuf) {
+    let outside = TempDir::new().unwrap();
+    let victim = outside.path().join(name);
+    fs::write(&victim, VICTIM).unwrap();
+    (outside, victim)
+}
+
+/// A worktree holding an empty `.loom/` directory, ready for a planted spool.
+fn worktree_with_loom_dir() -> TempDir {
+    let worktree = TempDir::new().unwrap();
+    fs::create_dir_all(worktree.path().join(".loom")).unwrap();
+    worktree
+}
+
+#[test]
+fn drain_refuses_a_spool_symlinked_outside_the_worktree() {
+    let worktree = worktree_with_loom_dir();
+    let (_outside, victim) = victim_outside("victim.txt");
+    std::os::unix::fs::symlink(&victim, spool_path(worktree.path())).unwrap();
+
+    let error = drain_spool(worktree.path(), &mut |_| Ok(())).unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("was not drained"),
+        "{error:#}"
+    );
+    assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM);
+}
+
+#[test]
+fn drain_refuses_a_spool_under_a_symlinked_loom_directory() {
+    let worktree = TempDir::new().unwrap();
+    let (outside, victim) = victim_outside("stage-request-spool.jsonl");
+    std::os::unix::fs::symlink(outside.path(), worktree.path().join(".loom")).unwrap();
+
+    let error = drain_spool(worktree.path(), &mut |_| Ok(())).unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("was not drained"),
+        "{error:#}"
+    );
+    assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM);
+}

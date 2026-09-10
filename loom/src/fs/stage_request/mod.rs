@@ -39,8 +39,10 @@ mod spool;
 mod types;
 
 pub use apply::drain_requests;
+#[cfg(test)]
+pub(crate) use spool::read_pending;
 pub use spool::{
-    append_to_spool, read_pending, spool_path, spool_target_from_cwd, DrainOutcome,
-    SPOOL_MAX_BYTES, SPOOL_RELPATH,
+    append_to_spool, spool_path, spool_target_from_cwd, DrainOutcome, SPOOL_MAX_BYTES,
+    SPOOL_RELPATH,
 };
 pub use types::StageRequest;

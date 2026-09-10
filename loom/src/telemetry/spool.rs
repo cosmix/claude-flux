@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 
 use super::{append_record, TelemetryRecord};
+use crate::fs::safe_read::open_regular_no_follow;
 
 /// Telemetry spool location relative to a worktree root.
 pub const TELEMETRY_SPOOL_RELPATH: &str = ".loom/telemetry-spool.jsonl";
@@ -60,14 +61,17 @@ pub fn append_to_spool(worktree_root: &Path, record: &TelemetryRecord) -> Result
     Ok(())
 }
 
-/// Read pending well-formed records without removing them.
-pub fn read_pending(worktree_root: &Path) -> Result<Vec<TelemetryRecord>> {
+/// Read pending well-formed records without removing them. Exercised only by
+/// tests - production code learns about spooled telemetry solely through
+/// [`drain_into_events`].
+#[cfg(test)]
+pub(crate) fn read_pending(worktree_root: &Path) -> Result<Vec<TelemetryRecord>> {
     let path = spool_path(worktree_root);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let file = fs::File::open(&path)
+    let opened = open_regular_no_follow(worktree_root, TELEMETRY_SPOOL_RELPATH, libc::O_RDONLY)
         .with_context(|| format!("Failed to open telemetry spool: {}", path.display()))?;
+    let Some(file) = opened else {
+        return Ok(Vec::new());
+    };
     file.lock_shared()
         .with_context(|| format!("Failed to lock telemetry spool: {}", path.display()))?;
     let mut contents = String::new();
@@ -79,17 +83,17 @@ pub fn read_pending(worktree_root: &Path) -> Result<Vec<TelemetryRecord>> {
 
 /// Drain every valid record into the canonical event file, then truncate the
 /// spool while still holding its exclusive lock. Malformed lines are counted
-/// and discarded.
+/// and discarded. A spool the session replaced with a symlink (at the spool or
+/// its `.loom/` directory), a hard link, or a FIFO is refused with an `Err` and
+/// left untouched, so the trusted daemon never reads or truncates a file
+/// outside the worktree.
 pub fn drain_into_events(work_dir: &Path, worktree_root: &Path) -> Result<DrainOutcome> {
     let path = spool_path(worktree_root);
-    if !path.exists() {
+    let opened = open_regular_no_follow(worktree_root, TELEMETRY_SPOOL_RELPATH, libc::O_RDWR)
+        .with_context(|| format!("Telemetry spool {} was not drained", path.display()))?;
+    let Some(mut file) = opened else {
         return Ok(DrainOutcome::default());
-    }
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .with_context(|| format!("Failed to open telemetry spool: {}", path.display()))?;
+    };
     file.lock_exclusive()
         .with_context(|| format!("Failed to lock telemetry spool: {}", path.display()))?;
     let mut contents = String::new();

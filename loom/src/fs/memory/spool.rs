@@ -12,7 +12,9 @@
 //! worktree's own write boundary and needs no new sandbox grant. The loom
 //! daemon runs outside the sandbox, so on its poll loop it calls
 //! [`drain_spool`] to move every pending entry into the real journal file
-//! and empties the spool.
+//! and empties the spool. Because the daemon is trusted and the spool is
+//! agent-writable, every host-side open goes through `open_regular_no_follow`
+//! (`fs::safe_read`), which refuses a planted symlink instead of following it.
 //!
 //! Deliberately absent from the spool payload: a stage id. Attribution of a
 //! drained entry comes from *which worktree* the daemon drained it from, not
@@ -23,6 +25,7 @@
 use super::persistence::{validate_content, validate_evidence};
 use super::storage::append_entry;
 use super::types::MemoryEntry;
+use crate::fs::safe_read::open_regular_no_follow;
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use std::fs;
@@ -99,12 +102,11 @@ pub fn append_to_spool(worktree_root: &Path, entry: &MemoryEntry) -> Result<()> 
 /// never create the file or the `.loom/` directory.
 pub fn read_pending(worktree_root: &Path) -> Result<Vec<MemoryEntry>> {
     let path = spool_path(worktree_root);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let file = fs::File::open(&path)
+    let opened = open_regular_no_follow(worktree_root, SPOOL_RELPATH, libc::O_RDONLY)
         .with_context(|| format!("Failed to open memory spool: {}", path.display()))?;
+    let Some(file) = opened else {
+        return Ok(Vec::new());
+    };
     file.lock_shared()
         .with_context(|| format!("Failed to lock memory spool: {}", path.display()))?;
 
@@ -130,20 +132,21 @@ pub fn read_pending(worktree_root: &Path) -> Result<Vec<MemoryEntry>> {
 /// Malformed lines are skipped (counted, not retried) rather than blocking
 /// the entries around them; they are discarded on the truncate that follows
 /// a successful pass, since a line that couldn't parse this time never will.
+///
+/// A spool the session replaced with a symlink (at the spool or its `.loom/`
+/// directory), a hard link, or a FIFO is refused with an `Err` and left
+/// untouched (see `open_regular_no_follow` in `fs::safe_read`), so the
+/// trusted daemon never reads or truncates a file outside the worktree.
 pub fn drain_spool(
     worktree_root: &Path,
     sink: &mut dyn FnMut(&MemoryEntry) -> Result<()>,
 ) -> Result<DrainOutcome> {
     let path = spool_path(worktree_root);
-    if !path.exists() {
+    let opened = open_regular_no_follow(worktree_root, SPOOL_RELPATH, libc::O_RDWR)
+        .with_context(|| format!("Memory spool {} was not drained", path.display()))?;
+    let Some(mut file) = opened else {
         return Ok(DrainOutcome::default());
-    }
-
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .with_context(|| format!("Failed to open memory spool: {}", path.display()))?;
+    };
     file.lock_exclusive()
         .with_context(|| format!("Failed to lock memory spool: {}", path.display()))?;
 
