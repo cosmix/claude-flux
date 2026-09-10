@@ -32,3 +32,26 @@ modules. `WorkDir::new` also searches upward, so the one stray `.work` this bug 
 root was adopted by every test that built a `TempDir` beneath it. The failures looked environmental
 and were not — they were a real production defect reported through an unrelated symptom. A test
 failure whose cause looks like "the machine" deserves a root cause before it earns that label.
+
+## `find_repo_root_from_cwd` Returns `Some(cwd)` Outside Any Repo (2026-08-11)
+
+**What happened:** `get_or_create_work_dir` in `commands/memory/handlers/work_dir.rs` needed "am I inside a
+git repo?" before it would create a `.work` directory. `find_repo_root_from_cwd` returns
+`Option<PathBuf>`, so `None` reads as "not in a repo" — but it is not. After walking to the
+filesystem root without finding a `.git`, it ends at
+`git/worktree/paths.rs:84-85` with an explicit _"Fallback: return the original cwd if nothing else
+works"_ → `cwd.canonicalize().ok()`. Outside any repo it therefore returns `Some(cwd)`.
+
+**Why it matters:** the name says _find repo root_ and the `Option` implies a search that can
+fail, so `if let Some(root)` looks like a repo check and compiles clean. Here it would have
+scattered a `.work` directory into any directory the command was ever run from.
+
+**Prevention:** treat `find_repo_root_from_cwd` as _"the best base path to use"_, never as a repo
+predicate. When you need the predicate, confirm it yourself:
+`find_repo_root_from_cwd(&cwd).filter(|root| root.join(".git").exists())`.
+
+**Detection:** the giveaway is an `Option` whose `None` arm you cannot trigger in a test. If you
+cannot write the failing case, the function probably never returns `None` — read its tail before
+relying on it. Existing callers are unaffected only because they all pair it with
+`.unwrap_or_else(|| cwd)`, which wants exactly the fallback; that idiom hides the trap from anyone
+reading call sites to infer semantics.

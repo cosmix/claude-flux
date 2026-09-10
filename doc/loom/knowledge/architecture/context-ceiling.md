@@ -69,3 +69,13 @@ recitation-section context line) into Green `<60%`, Yellow `60-90%`, Red `>=90%`
 itself trigger anything; the 1.0x/1.25x/1.5x mechanisms above are independent of these display
 bands. See [architecture.md](../architecture.md) "Context Budget Enforcement" for the full
 field/resolver contract.
+
+## Handoff System (Full Chain)
+
+Fully functional handoff chain, of which `hooks/pre-compact.sh` (above) is one link:
+
+1. **`loom handoff create`** — CLI command accepting `--stage`, `--session`, `--trigger`, `--message` flags
+2. **`pre-compact.sh`** — two-phase block-then-allow pattern (see above); no longer creates a recovery marker file
+3. **`session-end.sh`** — uses glob `*-${LOOM_STAGE_ID}.md` for stage file lookup (handles depth prefixes)
+4. **Signals** — `cache.rs`'s `append_common_footer()` adds compaction recovery instructions to ALL signal types
+5. **`session-start.sh`** — on `SessionStart` with `.source == "compact"` or `"resume"`, emits `hookSpecificOutput` `additionalContext` re-anchor pointer so the agent finds its signal file after compaction

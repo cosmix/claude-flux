@@ -83,15 +83,16 @@ survived every merge. The daemon's deferred-cleanup branch
 
 **Misleading signal:** the worktree WAS clean — empty `git status`, stage merged and
 Completed. Nothing pointed at loom's own pre-check; the natural suspects were untracked
-files (`.loom/`, say), which cannot be it: the non-forced `git worktree remove` runs
-`git status --porcelain` without `--ignored`, so ignored paths never block it.
+files (a worktree-local runtime dir, say), which cannot be it: the non-forced
+`git worktree remove` runs `git status --porcelain` without `--ignored`, so ignored paths
+never block it.
 
 **Why:** the creation side and the removal side of the scaffold encoded different
 assumptions. Creation was conditional ("plant a symlink only if the checkout has
-none"); removal was unconditional ("it must be our symlink"). Tests covered
-`.claude/CLAUDE.md`, never a regular root `CLAUDE.md`. And bailing on "unexpected
-content" in `.claude/` re-implemented git's cleanliness check in front of git, but
-stricter and blind — no path in the error, no ignore semantics.
+none"); removal was unconditional ("it must be our symlink"). Tests covered the
+worktree-local CLAUDE.md symlink case, never a regular tracked root `CLAUDE.md`. And
+bailing on "unexpected content" in `.claude/` re-implemented git's cleanliness check in
+front of git, but stricter and blind — no path in the error, no ignore semantics.
 
 **Prevention:** when a pre-removal step mirrors a conditional creation step, it must
 mirror the condition: remove only what you can prove you planted (`remove_if_symlink`),

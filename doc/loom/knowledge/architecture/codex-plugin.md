@@ -28,14 +28,15 @@ companion runtime and the hook pins BOTH agent types.
 
 Spawn via the Agent tool with `subagent_type: "codex:codex-rescue"`.
 
-Its frontmatter (`agents/codex-rescue.md`) declares `model: sonnet`, `tools: Bash`. **That sonnet is the
+Its frontmatter (the plugin's own agents/codex-rescue.md — part of the installed marketplace
+plugin, not a file in this repo) declares `model: sonnet`, `tools: Bash`. **That sonnet is the
 THIN FORWARDING WRAPPER, not the implementing model** — the real work runs in Codex behind the companion
 script. Do not read that `sonnet` as the quality tier of the result. **The `tools: Bash` line is
 inert:** plugin agents' `tools:` field is ignored by design
 (code.claude.com/docs/en/sub-agents#available-tools), so this wrapper actually runs with a full
 toolset — the mechanism behind the rogue-wrapper incident.
 
-Wrapper contract (all from `agents/codex-rescue.md`):
+Wrapper contract (all from the plugin's agents/codex-rescue.md):
 
 - Exactly ONE Bash call to `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task ...`, and it
   returns that stdout **verbatim**, with no commentary before or after.
@@ -313,10 +314,11 @@ requirement. See [Sandbox & Settings](../mistakes/sandbox-and-settings.md) for t
 
 ## What Codex Actually Reads (verified 2026-08-29)
 
-Codex loads `AGENTS.md` from its working directory and never reads `CLAUDE.md`. Probed both
-directions with `codex exec -m gpt-5.6-luna` in a scratch repo: a passphrase planted in
-`AGENTS.md` came back verbatim; the identical file renamed `CLAUDE.md` produced `UNKNOWN`.
-`loom install-assets` now writes `~/.codex/AGENTS.md` from `AGENTS.md.template`
+Codex loads a project doc file named AGENTS.md from its working directory and never reads
+`CLAUDE.md`. Probed both directions with `codex exec -m gpt-5.6-luna` in a scratch repo: a
+passphrase planted in a file named AGENTS.md came back verbatim; the identical file renamed
+`CLAUDE.md` produced `UNKNOWN`.
+`loom install-assets` now writes `~/.codex/AGENTS.md` from the repo-root AGENTS.md.template file
 (`loom/src/assets/install.rs:110-127`), capped at 12,288 bytes (`loom/src/assets/mod.rs:22`) —
 well under codex's own 32,768-byte `project_doc_max_bytes` truncation point.
 
@@ -325,8 +327,8 @@ Two consequences:
 - Codex still starts every run with no doctrine beyond what a project's `~/.codex/AGENTS.md` and
   the prompt carry, since a scratch repo or one that never ran `loom install-assets` has neither.
   `hooks/codex-forward.sh` still prepends its own per-task stage contract on every forwarded task —
-  the one channel an orchestrator writing a prompt cannot forget, and the standing `AGENTS.md` does
-  not make it redundant.
+  the one channel an orchestrator writing a prompt cannot forget, and the standing `~/.codex/AGENTS.md`
+  does not make it redundant.
 - The old signal doctrine's claim that codex "inherits CLAUDE.md's knowledge-first rule" named the
   wrong mechanism. The rule reached codex because orchestrators pasted CLAUDE.md Rule 5's Claude
   preamble ("READ CLAUDE.md IMMEDIATELY AND FOLLOW ALL ITS RULES") into codex prompts. Codex obeyed,

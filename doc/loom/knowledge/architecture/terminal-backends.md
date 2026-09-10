@@ -260,3 +260,17 @@ unattributable. Nothing currently reaps that viewer socket (see `concerns.md`).
   (`:346-400`), `require_tty` (`:414-419`). Tests in `attach/tests.rs`.
 - `loom/src/cli/types.rs:101-106` — `Attach { stage_id: Option<String> }`; dispatch at
   `cli/dispatch.rs:48`. Shell completions complete live stage ids after `loom attach`.
+
+## macOS Terminal Detection Priority
+
+1. `LOOM_TERMINAL` env var (explicit override)
+2. `TERMINAL` env var (user preference)
+3. Parent process detection (walks process tree up to 10 levels via `ps`)
+4. Cross-platform binary check (ghostty, kitty, alacritty, wezterm via `which`)
+5. macOS native apps (`/Applications/Ghostty.app`, `/Applications/iTerm.app`, `Terminal.app` fallback)
+
+Note: `$TERM_PROGRAM` is NOT checked.
+
+## find_claude_path() (src/claude.rs)
+
+Shared binary resolution: `which::which("claude")` -> `~/.claude/local/claude` -> `~/.local/bin/claude` -> `~/.cargo/bin/claude` -> `/usr/local/bin/claude` -> `/opt/homebrew/bin/claude`.

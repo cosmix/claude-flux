@@ -147,3 +147,97 @@ retry can ever satisfy. When you hit one: say so explicitly in the finishing rep
 name the stage-amend operator command as the fix (`commands/stage/amend.rs`, added for
 exactly this) — do NOT keep working the stage, and never quietly rewrite your own gate to
 green.
+
+## Binary: PATH vs target/debug/loom
+
+**Mistake:** Agents invoked stale `target/debug/loom` instead of the installed version from PATH.
+**Fix:** Always use `loom` from PATH. Exception: integration-verify of unreleased features may use `./loom/target/debug/loom`.
+
+## Goal-Backward Verification: False Negatives
+
+**Mistake:** (1) `cargo test 2>&1 | tail -1` fails due to trailing newline. (2) `pub fn foo` pattern misses `pub(super) fn foo`.
+**Fix:** Filter for target line first, then check. Use regex `pub.*fn foo` to match all visibility modifiers.
+
+## Acceptance: Case Sensitivity in Patterns
+
+**Mistake:** Template had lowercase text but acceptance criteria grep pattern required uppercase.
+**Fix:** Ensure template text matches the exact case of acceptance criteria patterns.
+
+## loom check: Negation Patterns are Literal
+
+**Mistake:** Wiring check for `!Merge` was a false positive -- `!` is literal, not negation.
+**Fix:** Use positive patterns in wiring checks. Use `acceptance` shell commands for absence checks.
+
+## A Layer a Command Drives Must Appear in That Command's Output
+
+**What happened:** `loom knowledge sync` drove two derived layers — the structural
+knowledge catalog and the semantic source graph — and printed the result of only the
+first. When the semantic half was refused (dirty tree) or failed (unwritable cache),
+`sync` still exited 0 and still printed a success line about the catalog. Users
+experienced it as "sync does nothing".
+
+**Why:** this is the tail of the failure recorded in
+`mistakes/store-without-consumer.md`. A derived artifact was built, persisted and given
+a CLI while the consumer that justified it stayed unbuilt — and once a command drives a
+layer, nothing forces it to REPORT on that layer, so half its work can degrade behind a
+success line about the other half.
+
+**Prevention:**
+
+1. **Every layer a command drives appears in that command's output, on success and on
+   failure.** Not a log line — output. If the command has `--json`, the layer gets a
+   typed field there too.
+2. **Report the layer you actually wrote, as a VALUE, not a boolean.** `SemanticLayer`
+   (`context/refresh/semantic.rs:50-64`) is the shape that fixed this:
+   `Base { revision }` | `LocalOverlay { plan, stage, refusal }` | `Skipped { reason }`,
+   serialized kebab-case, printed by `print_semantic` (`sync.rs:132-148`) behind the
+   `source graph:` prefix. "Did it work?" is not answerable; "which layer did I write,
+   and why not the other one?" is.
+3. A freshness flag cannot carry this. `Freshness` alone could not say which layer ran
+   or how big it was (`semantic.rs:33-37`) — which is exactly why the typed outcome had
+   to be introduced.
+
+**Fix:** if you add a second layer to an existing command, extend its output type in the
+same commit. A layer added without an output field is a layer that will silently stop
+working.
+
+## "It Does Nothing" Has Two Opposite Causes — Tell Them Apart Before Debugging
+
+Within one plan, two commands were both reported as doing nothing, and the two diagnoses
+had nothing in common:
+
+- **`loom map --deep`** did nothing _because its work was already present._ The output
+  was correct and the run was a legitimate no-op. Nothing was broken.
+- **`loom knowledge sync`** did nothing _because its failure was written into a JSON
+  field instead of into the exit code._ It exited 0 with
+  `{"semantic":{"layer":"skipped","stale":true,"nodes":0,"detail":"Failed to write
+  context state: ..."}}`.
+
+**Prevention:** before debugging an apparently inert command, decide which of the two it
+is — and the test is cheap: **look at the failure channel, not the exit code.** An
+idempotent command that already did its work, and a command whose failure was serialized
+into its own output, are both silent and both exit 0. Ask what it would have printed had
+it worked, and compare.
+
+**Corollary for acceptance criteria:** never grep for the presence of a JSON KEY the
+degraded path also emits. `loom knowledge sync --json | rg -q '"semantic":{'` passes on a
+sync that did nothing, because `semantic` is present in the skipped case too. Grep for
+the VALUE that proves work happened.
+
+## Untracked Plan and Worker Briefs Leave a Worktree Stage Blind
+
+**What happened:** two separate stages of the same plan (`status-payload-parity`, `ledger-tui`) hit
+the same gap: the plan file and its worker briefs under `doc/plans/briefs/<plan>/<stage>/` were
+untracked in the main checkout, so the worktree branch cut from main HEAD carried neither. Only
+truncated excerpts survived in the signal's Knowledge Brief; `loom knowledge context` from inside the
+worktree cannot serve the rest either, because it rebuilds an in-memory catalog from the worktree
+tree and the shared cache under the main repo's `.loom/cache` is not writable from a stage sandbox.
+
+**Why:** `git worktree` branches from a commit, not from the working tree's untracked files —
+committing the plan late does not retroactively appear in a worktree already cut from an earlier
+commit.
+
+**Prevention:** plan authors must commit `doc/plans/**` (the plan file and its briefs) before
+`loom run`. A stage that discovers its briefs missing mid-session must reconstruct them inline from
+the signal's spec plus the tree rather than guessing, and should not commit the plan/briefs itself if
+they fall outside its own `files` scope — flag it so whoever owns the plan commits it on `main`.

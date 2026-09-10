@@ -92,3 +92,39 @@ threshold and cost the stage its verification marker
 - **Test the degraded environment, not just the happy one.** The regression tests build a tree
   containing a `0o000` file and assert the match is still found — and skip loudly (rather than
   passing vacuously) where permission bits are not enforced, e.g. under root.
+
+## Schema Root: LoomConfig vs Plan
+
+**Mistake:** Passing the top-level YAML document (which wraps `loom:` key) where a `LoomConfig` (the inner object) is expected, or vice versa. This commonly manifests as "missing field" serde errors.
+
+**Why:** Plan YAML has the structure `{ loom: LoomConfig }`. `parse_plan()` extracts the `loom:` block and deserializes that into `LoomMetadata` / `LoomConfig`, not the outer wrapper.
+
+**Prevention:** The canonical deserialization root is `LoomConfig` (at `plan/schema/types.rs`), not the outer document. Nested fields (execution, stages, sandbox) live on `LoomConfig`.
+
+## A Scalar Config Field Silently Asserts "Exactly One" (2026-08-07)
+
+**What happened:** the codex lane shipped as `implementer: claude | codex`, a single enum per stage.
+That scalar quietly encoded a claim nobody had checked: that every subagent a stage spawns comes
+from ONE lane. Real stages do not work that way — an implementation stage routinely wants codex for
+routine file work, sonnet for tests, opus for the architectural call, and fable on a second failure.
+The doctrine text then hardened the wrong model, telling stages "Codex REPLACES sonnet/haiku."
+
+**Why:** the field was named for the decision it was born from ("which implementer do we use here?")
+rather than for the state it represents ("which lanes may this stage draw from?"). A scalar can only
+answer the first. Worse, the safety doctrine was gated on `implementer == Codex`, so the mixed case
+was not merely inexpressible — it was UNSAFE: a `claude` stage that spawned one codex subagent got
+none of codex's blast-radius rules (`.work/` symlink escape, hooks not seeing codex's own shell), and
+nothing in the system would say so.
+
+**Prevention (detection rule):** before shipping an enum-valued stage field, ask whether a single
+stage could legitimately want two of its values AT ONCE. If yes, it is a set, not a scalar — ship the
+list on day one. Then check every gate that reads it: a capability's safety doctrine must be gated on
+MEMBERSHIP (`includes_x()`), never on equality with the preferred value. Equality gating is the bug
+that hides, because the common cases still look right.
+
+**Fix:** `Implementers`, a `#[serde(transparent)]` newtype over `Vec<Implementer>` with
+`Default = [Claude]`, where membership licenses a lane and ORDER names the routine-work preference
+(`preferred()`, `includes_codex()`, `is_mixed()`). Signal doctrine gates on `includes_codex()` and
+tells the orchestrator to choose per subagent. Validation rejects the two shapes only a list admits:
+empty, and a repeated lane (which would make the preference ambiguous). See
+[Codex Plugin](../architecture/codex-plugin.md) for the wiring.

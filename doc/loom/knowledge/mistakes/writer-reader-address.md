@@ -1,6 +1,8 @@
+---
+---
 # Writer/Reader Address
 
-> Topic notes for the mistakes knowledge area.
+> A layer written under a key its reader ignores looks identical to no-op.
 
 ## A Fallback That Writes Under a Key No Reader Consults
 

@@ -14,13 +14,13 @@
 
 ## A Verdict Re-queued the Stage While Another Dispute Was Unanswered
 
-**What happened:** Two disputes were filed against `loom-dir-migration` seconds apart. Answering the first dispute re-queued the stage unconditionally, which made the second dispute's `request.md` permanently unschedulable — nothing ever put the stage back into `NeedsAdjudication`.
+**What happened:** Two disputes were filed against `loom-dir-migration` seconds apart. Answering the first dispute re-queued the stage unconditionally, which made the second dispute's request file (`.loom/work/disputes/<stage>/<n>/request.md`) permanently unschedulable — nothing ever put the stage back into `NeedsAdjudication`.
 
-**Why:** `job_for_dispute` only hands out an adjudicator while `stage.status == NeedsAdjudication`, and `apply_accept` transitioned the stage straight to `Queued` on every accepted verdict without checking whether a sibling dispute still lacked its own `verdict.md`.
+**Why:** `job_for_dispute` only hands out an adjudicator while `stage.status == NeedsAdjudication`, and `apply_accept` transitioned the stage straight to `Queued` on every accepted verdict without checking whether a sibling dispute still lacked its own verdict file at that same path.
 
 **Prevention:** A stage can carry more than one unanswered dispute at a time. Any verdict-apply path must count the stage's remaining unanswered disputes before deciding where to transition, not assume its own verdict is the last one.
 
-**Fix:** `requeue_or_hold_for_remaining_disputes` (`loom/src/orchestrator/adjudication/apply.rs`) counts `request.md` files with no sibling `verdict.md` and only re-queues once none remain; a Reject verdict's `NeedsHumanReview` state is never overwritten by a later sibling verdict.
+**Fix:** `requeue_or_hold_for_remaining_disputes` (`loom/src/orchestrator/adjudication/apply.rs`) counts request files (`.loom/work/disputes/<stage>/<n>/request.md`) with no sibling verdict file and only re-queues once none remain; a Reject verdict's `NeedsHumanReview` state is never overwritten by a later sibling verdict.
 
 ## The Disputing Agent Was Never Retired
 
@@ -140,7 +140,7 @@
 
 **Prevention:** when a state stops for a human, every surface that announces it (status row, attention block, daemon console, notification, the stored reason) names the exact command and the choices; test the hint text against the real subcommand.
 
-**Fix:** the attention block renders whenever a stage needs a decision (`--verbose` now expands only the `Evidence:` listing); its `NeedsHumanReview` hint is `loom stage human-review <id>` followed by the three choices (`--approve` queues a fresh session, `--force-complete`, `--reject <reason>`); the daemon line and notification add `Next: loom stage human-review <id>`; the reject reason carries the absolute `verdict.md` path and the command.
+**Fix:** the attention block renders whenever a stage needs a decision (`--verbose` now expands only the `Evidence:` listing); its `NeedsHumanReview` hint is `loom stage human-review <id>` followed by the three choices (`--approve` queues a fresh session, `--force-complete`, `--reject <reason>`); the daemon line and notification add `Next: loom stage human-review <id>`; the reject reason carries the absolute path to the verdict file (`.loom/work/disputes/<stage>/<n>/verdict.md`) and the command.
 
 ## The Daemon Shut Down While the Last Stage Was Being Re-queued
 

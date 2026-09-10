@@ -282,3 +282,64 @@ the companion job status, never `loom subagents`. Poll
 before spawning anything that touches its files. Companion at
 `~/.claude/plugins/cache/openai-codex/codex/<ver>/scripts/codex-companion.mjs`; per-job log
 at `~/.claude/plugins/data/codex-openai-codex/state/<worktree>-<hash>/jobs/<job>.log`.
+
+## Subagent File Overlap Causes Lost Work
+
+**Mistake:** Multiple subagents writing the same file leads to lost work (last writer wins).
+**Fix:** Every subagent MUST have exclusive write access to its files. Use file ownership tables. If overlap is unavoidable, use one subagent or handle sequentially.
+
+## Interactive Claude cannot be captured or made to auto-exit without risking API billing
+
+**What happened:** A first cut of the `loom pressure` fixes assumed `claude -p` (or capturing Claude's stdout to a log) was the way to make Claude run one slash command and exit so the driver could proceed. Both are wrong for a subscription user.
+**Why:** (1) `claude --help` states Claude runs in non-interactive mode "via -p, or when stdout is not a TTY, e.g. piped or redirected output" — so redirecting/capturing Claude's stdout flips it into the `-p` path, which can bill against pay-per-token API credits instead of the claude.ai subscription (known bug anthropics/claude-code#43333). (2) Feeding EOF on stdin (`< /dev/null`) does NOT let the task finish then exit — the REPL quits _before_ the agentic work completes (data loss), and an empirically-tested run also hit a workspace-trust dialog that `--permission-mode auto` did not skip. (3) There is no `--max-turns`/exit-when-done flag for interactive mode.
+**Prevention:** For anything that must keep subscription billing, Claude's stdout MUST stay a real TTY (foreground, uncaptured). Do not reach for `-p` or output redirection to "automate" it. Only ONE process can own the foreground TTY, so anything running concurrently (e.g. Codex) must be backgrounded with captured output.
+**Fix:** Mirror the loom daemon's own model — the daemon never relies on Claude self-exiting; it SIGTERMs the session (`event_handler.rs` → `NativeBackend::kill_session`) once the agent signals completion via `loom stage complete`. `loom pressure` does the analog: inject a "`touch <marker>` as your final action" instruction via `--append-system-prompt`, poll for the marker, then SIGTERM the idle foreground session (manual exit as fallback).
+
+## Large-Scale Parallel Doc Editing: Whole-File Writes Fail, Self-Lint Reports Lie (2026-07-01)
+
+**What happened:** During the 61-file skills/ overhaul (4 coordinators × ~6 workers), two recurring failures: (1) workers rewriting very large files (~2-3K lines, e.g. `skills/loom-react/SKILL.md`) with a single whole-file Write died repeatedly with "Connection closed mid-response" (0 tokens, files untouched); the same file succeeded when the worker was re-instructed to apply ~18 small targeted Edits instead. (2) Workers self-reported "markdownlint clean" but a single authoritative `markdownlint-cli2` pass at the gate found 35 residual errors across territories (MD032/MD056/MD038/MD034/MD028) — worker self-verification via ad-hoc greps does not implement markdownlint rules.
+**Why:** A multi-thousand-line Write is one giant model response — long uninterrupted output maximizes exposure to connection drops, and a failure loses ALL of the work; incremental Edits checkpoint progress per tool call. Lint self-reports were grep-approximations, not the real linter (bunx was sandbox-blocked for workers: bun needs tempdir writes outside the sandbox allowlist).
+**Prevention:** (1) When directing agents to rewrite files >~1000 lines, instruct them to transform via a sequence of targeted Edits, never one whole-file Write. (2) Never trust per-agent lint claims — run ONE authoritative `bunx markdownlint-cli2 "skills/**/SKILL.md"` at the merge/verify gate (no sandbox escape needed — point `TMPDIR` and `BUN_INSTALL_CACHE_DIR` at a writable scratch dir; recipe in `mistakes/testing-and-lint.md`); the repo `.markdownlint.json` is picked up from the root.
+**Fix:** Re-spawned failed workers with the incremental-Edit instruction; ran the gate lint pass and fixed the 12 residual errors (main agent) + 23 (backend coordinator) directly.
+
+## `loom pressure` codex "never starts" — it was invisible, not broken (2026-07-02)
+
+**What happened:** The backgrounded Codex half of `loom pressure` was reported as "never starts (or starts and fails)". Investigation of the leftover logs (`/tmp/loom-pressure-codex-<pid>.log`) proved Codex ran fine in the recent runs: it triggered the `$pressure` skill, spent 170k–260k tokens, wrote its review next to the plan, and `/address` folded it in. Nothing was broken.
+**Misleading signals:** (1) The driver printed NOTHING when codex spawned; the only codex UI was the wait-spinner, shown only when codex outlived the foreground Claude session — codex finishing first left zero terminal trace. (2) The codex report is deleted as final cleanup after all rounds, so no artifact survives a full run. (3) Every log contains a scary `ERROR rmcp::transport::worker … AuthorizationRequired` line even on successful runs — it is codex-side and non-fatal.
+**Prevention:** Before diagnosing a `loom pressure` codex failure, read `/tmp/loom-pressure-codex-*.log` (one per driver invocation, overwritten per round) and check for `Wrote the pressure review to …` near the tail. Also note codex shares the driver's foreground process group: a Ctrl+C aimed at Claude SIGINTs codex too (`turn interrupted` in the log).
+**Fix:** The driver now prints status lines — `→ codex review started in background (log: …)` at spawn, and after exit either `✓ codex review written → <report>` or a warning when codex exited cleanly without writing the report.
+
+## A Fable Session Implemented the Fix It Had Just Diagnosed (2026-08-11)
+
+**What happened:** a fable main agent investigated a bug, understood it, and then wrote the fix
+itself instead of delegating — mainstream Rust edits at the most expensive tier available.
+
+**Why:** the delegation rule was framed as "ORCHESTRATION IS ALWAYS OPUS / the orchestrator does
+NOT implement." A fable session does not read itself as "the opus orchestrator," so the sentence
+that should have bound it appeared to describe someone else. The fable _implementer_ tier also
+listed "major bugs", and an agent that has just diagnosed a bug will classify it as major — the
+exception swallowed the rule at exactly the moment the rule mattered.
+
+**Prevention:** watch for the transition from "I now understand the bug" to the first Edit call.
+That boundary is the delegation point, not a continuation of the investigation. Understanding the
+fix is what makes a cheap subagent viable, so the cheaper the fix could now be, the stronger the
+pull to type it yourself. Scope guidance to the SESSION's model, never to a model name assumed
+from the role.
+
+**Fix:** `CLAUDE.md.template` hard stop 6 (DELEGATION) plus Engineering Discipline E (Cheapest
+capable agent) and a rewritten Rule 7 Model allocation: the rule is now stated model-independently
+("the main agent never implements — whatever model it runs"), investigation is defined as ending
+in a brief, the fable exception is narrowed from "major bugs" to "a bug that survived a delegated
+fix attempt", and escalation requires evidence (a failed attempt), not a hunch.
+
+**Follow-on (same day):** that template-only edit left every OTHER copy of the doctrine stale, and
+the copies are not equivalent in how loudly they complain. `tests_doctrine.rs` pins BLOCK-A and
+BLOCK-B byte-for-byte across `CLAUDE.md.template` and `skills/loom-plan-writer/SKILL.md`, so those
+two failed the build immediately. The copies that say the same thing in DIFFERENT words are pinned
+by nothing: the runtime signal prose in `orchestrator/signals/cache.rs` and
+`signals/format/sections.rs`, the `Implementer::Claude` doc comment, and the knowledge summaries in
+`patterns.md`. Those still told every spawning orchestrator "fable (major bugs, …)" — the exact
+exception the change existed to close, on the surface an agent actually reads at run time. Editing a
+doctrine block means `rg` for a distinctive phrase of the OLD wording across `loom/src`, `skills/`,
+`agents/`, `hooks/` and `doc/loom/knowledge/` before committing; a green `tests_doctrine` proves the
+two pinned surfaces agree, not that the doctrine is consistent.

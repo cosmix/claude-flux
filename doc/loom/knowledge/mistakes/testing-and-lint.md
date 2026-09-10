@@ -216,7 +216,7 @@ the last green run was 2026-08-20. Nothing in those commits touched Rust — the
 `src/context/lexical/evidence.rs`. The local toolchain was still 1.97.1, which has no such lint.
 
 **Why:** `.github/workflows/ci.yml` installs `dtolnay/rust-toolchain@stable` and the repo pins no
-`rust-toolchain.toml` and no `rust-version`. CI therefore silently follows the newest stable, while
+toolchain file and no `rust-version`. CI therefore silently follows the newest stable, while
 a developer machine sits on whatever `rustup update` last fetched. Every six weeks a new stable can
 turn previously-clean code into `-D warnings` errors, and the offending commit will be whichever
 one happened to push next — usually one that changed nothing relevant.
@@ -258,9 +258,9 @@ locally against the CI toolchain is the only route to the actual diagnosis.
 
 **Fix applied:** `backtick_spans` now uses `as_chunks::<2>().0.iter()` with a `&[open, close]`
 pattern. `as_chunks` is stable since 1.88 and discards a trailing odd element exactly as
-`chunks_exact` did, so the unpaired-backtick behaviour is unchanged. Pinning a `rust-toolchain.toml`
-would trade these surprise breakages for silently ageing lint coverage; it was deliberately NOT
-done.
+`chunks_exact` did, so the unpaired-backtick behaviour is unchanged. There is no `rust-toolchain.toml`
+in this repo — pinning one would trade these surprise breakages for silently ageing lint coverage,
+and that trade was deliberately rejected.
 
 ## `install.sh` Aborts With No Controlling TTY, After All Real Work Already Succeeded (2026-08-30)
 
@@ -465,3 +465,77 @@ load needs a loaded runner to catch: `scripts/flake-check.sh` re-runs `quota::`,
 **Prevention:** when many unrelated tests fail with `current_dir` NotFound, run `cargo test --lib -- --test-threads=1` and fix the FIRST failure only; the rest are the cascade. Run a suspect module in isolation (`cargo test --lib <module>`) to separate a real failure from contamination. A new cwd-changing test should restore via a guard type (Drop) rather than a trailing statement.
 
 **Fix:** corrected the one assertion; the other 70 passed untouched.
+
+## Using npx Instead of bunx
+
+**Mistake:** Used npx instead of bunx during implementation.
+**Fix:** Always use `bun`/`bunx` per project conventions. Check CLAUDE.md tool preferences before running package managers.
+
+## toml_edit vs toml: Different Use Cases
+
+**Mistake:** Using `toml_edit Item -> serde` for reading nested config sections. `toml_edit` is designed for round-trip writes; its typed access silently drops nested sub-tables.
+
+**Why:** `toml_edit::Item` doesn't implement full `serde::Deserialize` for complex nested structures the same way `toml::Value` does.
+
+**Prevention:** Use `toml_edit` for writes (round-trip safe). Use `toml` (re-parse the full file with `toml::Value`, then `try_into::<T>()` on the section) for typed reads of nested structures.
+
+## CI Clippy Failures That Don't Reproduce Locally = Toolchain Drift (2026-07-22)
+
+**What happened:** CI's Clippy job failed on main while `cargo clippy --all-targets -- -D warnings` passed locally with zero warnings. Local toolchain was 1.95.0; CI installs latest stable via `dtolnay/rust-toolchain@stable`, which had moved to 1.97.1 and shipped new lints (`useless_borrows_in_formatting`, broader `question_mark`) that fired on 21 existing sites.
+**Why:** The workflow floats on `@stable` while local toolchains only move on explicit `rustup update`. Every ~6-week Rust release can introduce lints that break CI with `-D warnings` even though no code changed.
+**Prevention:** When a CI clippy failure doesn't reproduce locally, check `rustup check` FIRST — if stable has moved, `rustup update stable` and re-run before hunting for any other cause. Most new-lint fallout is machine-applicable: `cargo clippy --fix --all-targets --allow-dirty`, then review the diff (non-trivial rewrites like `question_mark` can leave awkward leftover blocks worth hand-cleaning).
+**Fix:** Updated local stable to 1.97.1, applied `cargo clippy --fix`, hand-simplified the `?`-operator rewrite in `fs/work_dir.rs`, verified clippy + fmt + full test suite green.
+
+## Bash Tool CWD Persists — Never Bare-`cd` Into a Subdirectory Crate (2026-08-08)
+
+**Two stages of one plan hit this.** The Bash tool's working directory persists across calls, and this
+repo's crate root is the `loom/` subdirectory — so a single `cd loom` silently retargets every later
+relative path, **including calls issued in the same parallel message block**.
+
+**Why it keeps recurring:** the failure presents as `No such file or directory`, i.e. as a _missing
+file_, not as a wrong-directory error. It reads as "that file doesn't exist" and sends you looking for
+the wrong bug. The other tell is `git status` printing `loom/src/...` prefixes instead of `src/...`.
+
+**Prevention:** never bare-`cd`. Prefix every command with its own `cd <dir> &&` so each call is
+self-contained and order-independent.
+
+## `libc::mode_t` Width Differs by Platform — `.into()` Is a Clippy Error on Linux (2026-08-10)
+
+`libc::mode_t` is `u32` on Linux and `u16` on macOS, while the std APIs we call
+(`DirBuilderExt::mode`, `PermissionsExt::from_mode`, our own `safe_fs::open_safely`) all take `u32`
+unconditionally. So `const MODE: libc::mode_t = 0o700; builder.mode(MODE.into())` compiles on macOS
+and fails on Linux with `useless_conversion`, which `-D warnings` promotes to an error — it blocked
+`git push` (`loom/src/daemon/server/storage.rs:14`). The same trap applies to any
+platform-width alias: `c_int`, `off_t`, `nlink_t`, `time_t`.
+
+**Prevention:** declare permission constants as `u32` (the type every Rust-side API wants) and cast
+at the raw-libc boundary only: `libc::fchmod(fd, MODE as libc::mode_t)`. A cast to an alias is exempt
+from `unnecessary_cast`, so it is lint-clean on both platforms, whereas `.into()`/`u32::from()` is
+lint-clean on exactly one.
+
+**Also:** the pre-push hook runs Clippy, the pre-commit hook does not. A lint-broken commit lands
+locally and only surfaces at push time. Run `cargo clippy --all-targets -- -D warnings` before
+committing, not after.
+
+## A Test Substring That Crosses a `colored` Segment Boundary Passes Under a Pipe and Fails in the Pre-Push Hook
+
+**What happened:** `cleanup_warning_renders_as_a_single_line_with_a_stage_file_hint` in
+`loom/src/commands/status/render/attention_tests.rs` passed under plain `cargo test` and in CI but
+failed inside the pre-push hook, blocking `git push`. Its assertion looked for `"Cleanup warning:
+failed: worktree busy\nretrying next cycle"`, a substring that starts in the plain label and
+continues into the `warning.yellow()` argument.
+
+**Why:** the `colored` crate emits ANSI escapes whenever stdout is a terminal and
+`CLICOLOR`/`NO_COLOR` are unset. Git runs hook stdout on the terminal, so `cargo test` inside
+`loom/.githooks/pre-push` renders with colors and an escape sequence lands between the label and the
+text. Under a pipe, a sandbox, or CI the same test sees no escapes and passes, so the failure
+surfaces only at push time.
+
+**Prevention:** in a test that renders through `colored`, assert on substrings that lie wholly inside
+one colored segment or wholly in plain text, never across the boundary between a label and a
+`.yellow()`/`.dimmed()`/etc. argument. To reproduce the hook's environment locally, run
+`CLICOLOR_FORCE=1 cargo test --lib <test-name>`. `loom/src/commands/graph/tests.rs` has a private
+`strip_ansi` helper if a test genuinely must match across segments.
+
+**Fix:** split the assertion into `contains("Cleanup warning: ")` and `contains("failed: worktree
+busy\nretrying next cycle")`.

@@ -38,7 +38,7 @@ update, and dedup downstream turns a one-frame glitch into a permanent one.
 ## A Field Named `since` Meant Two Different Things Across a Worker Boundary (2026-09-04)
 
 **What happened:** `web/src/api/ws.ts` stamped `connectionAtom.since` only on a PHASE change
-(never moving while a connection stayed live); `web/src/components/connection-badge.tsx`
+(never moving while a connection stayed live); `web/src/components/header-lines.tsx`
 rendered it as "last frame N ago", so a healthy socket delivering a frame every second showed
 an age that climbed forever. Both sides type-checked; parallel workers never saw each other's
 code.

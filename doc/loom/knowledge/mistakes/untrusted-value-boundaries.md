@@ -139,3 +139,50 @@ and rendered as two identical-looking rows — and a trailing zero-width charact
 flattening and deduping/normalizing both apply to the same value, flatten first — dedup/normalize
 logic that runs on a not-yet-flattened string treats cosmetically-different byte sequences as
 distinct keys.
+
+## Security: Consolidated Findings
+
+- **Socket permissions:** Created with default umask (world-accessible). Fix: `umask(0o077)` before bind.
+- **PID handling:** `pid as i32` can overflow; raw `libc::kill` mishandles `EPERM`/`ESRCH`. Fix: use `nix::sys::signal::kill`.
+- **Script injection:** AppleScript/XTerm strings not escaped. Fix: escape backslashes and quotes.
+- **TOML injection:** `config.toml` via string formatting. Fix: use `toml::to_string_pretty`.
+- **File locking TOCTOU:** `locked_write` truncated before lock. Fix: extracted `fs/locking.rs` with open-lock-truncate-write-flush.
+- **State machine bypass:** `--force-unsafe` and recovery bypass skip validation. Fix: log all bypasses.
+
+## String Handling: UTF-8 Truncation Panic
+
+**Mistake:** Byte-level slicing `&s[..n]` panics on multi-byte UTF-8 characters.
+**Fix:** Use `chars().take(n).collect::<String>()` for safe truncation.
+
+## Byte-Index Slicing Panics on a Multi-Byte String From an Untrusted Source
+
+**What happened:** `commands/status/data/execution_models.rs::normalize_model` stripped a trailing `-YYYYMMDD` stamp by
+slicing a `&str` at a fixed byte offset (`len - 9`). The model name comes from `spawns.jsonl`, written
+verbatim from a caller-controlled tool argument (`hooks/spawn-guard.sh::record_spawn`), and
+`execution_models_for_stage` runs inside `collect_status_data`, which backs both `loom status` and
+the daemon's broadcast — a single crafted spawn row with a multi-byte character near that offset
+would panic the whole status subsystem.
+
+**Why:** a fixed byte offset is not guaranteed to land on a UTF-8 character boundary; slicing at one
+that doesn't panics at runtime, not compile time.
+
+**Prevention:** strip a known-ASCII suffix/prefix with `rsplit_once`/`strip_suffix`/`char_indices`,
+never a byte-offset slice, on any string that did not originate as a Rust literal you wrote yourself.
+
+**Fix:** replaced the slice with `rsplit_once('-')`, which splits on a char boundary by construction.
+
+## A Character-Class Allowlist Is Not a Path-Component Allowlist
+
+**What happened:** `hooks/codex-forward.sh` and `hooks/spawn-guard.sh` both validate a stage id with
+a character-class case (`case $stage_id in *[!A-Za-z0-9._-]* | "") return 0`), which ACCEPTS `.` and
+`..` because both are made only of allowed characters. The resulting ledger path
+`${work_dir}/subagents/${stage_id}` then resolves to the work dir itself for a `..` id — `chmod 700`
+changes the work dir's own mode and the ledger row lands one level outside its per-stage directory.
+The Rust reader (`commands/status/data/sanitize.rs::valid_stage_id`) gets this right by explicitly
+rejecting `..`, so the two sides of the same boundary disagree, and the same check now exists in four
+places at three different strengths (`commands/status/data/execution_models.rs:38`, `commands/memory/handlers/work_dir.rs:99`,
+`hooks/codex-forward.sh:43`, `hooks/spawn-guard.sh:309`).
+
+**Prevention:** when validating a value that becomes a path COMPONENT, reject `.` and `..` by name
+explicitly — a charset check alone is not a path-component allowlist, whatever language it's written
+in. For concerns.md: the four copies are a shared-helper candidate.

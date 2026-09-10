@@ -258,9 +258,10 @@ value crosses into a subprocess with a different cwd, unit-test the relative inp
 explicitly; an absolute-only fixture proves nothing about the production path.
 
 **Detection:** a session that dies inside ~15s with an empty log is almost always the
-`claude` argv itself failing, not the agent. Read the generated wrapper in
-`.work/wrappers/*-wrapper.sh` and run its `exec` line by hand from the worktree — the flag
-error surfaces immediately, where the crash report only says `Process no longer running`.
+`claude` argv itself failing, not the agent. Read the generated wrapper — it is named
+`<pid-key>-wrapper.sh` under `.loom/work/wrappers/` — and run its `exec` line by hand from
+the worktree; the flag error surfaces immediately, where the crash report only says
+`Process no longer running`.
 
 ## `loom memory` Was Unwritable in Every Sandboxed Stage (2026-08-18)
 
@@ -514,3 +515,94 @@ the browser directly — e.g. build to `$TMPDIR/dist` and have the Playwright pr
 serve fixtures via `page.route`/`page.routeWebSocket` rather than proxying to a live server
 in a different Bash call. `browser_run_code_unsafe`-style sandboxes have no
 `process`/`require`/`import`, only `page`.
+
+## A Sandboxed `git merge` That Aborts Still Leaves the Branch's New Files Untracked (2026-09-10)
+
+**What happened:** a merge-resolver session ran `git merge loom/memory-events` in the main
+checkout. Git failed with `unable to unlink old '.gitignore': Device or resource busy` (and the
+same for `CLAUDE.md.template`, `commands/distill.md`, `skills/loom-plan-writer/SKILL.md`, plus
+`Read-only file system` for `hooks/pre-compact.sh`) and printed `Merge with strategy ort
+failed.` HEAD, the index and every tracked file were unchanged, but the ten files the branch
+ADDS had already been written as untracked files. The later `git merge --ff-only` aborted with
+`untracked working tree files would be overwritten by merge`.
+
+**Why:** the Bash sandbox bind-mounts each individually allow-listed path (`.gitignore`,
+`CLAUDE.md.template`, the hook and skill files), so git cannot unlink and recreate them. Ort
+checks out new paths before it reaches the busy ones and does not remove them on abort. The
+resolver's clean-tree check filtered `??` lines, so the strays went unseen.
+
+**Prevention:** after any failed merge or checkout in the main repo, compare
+`git diff --name-only --diff-filter=A <base> <branch>` against the working tree, not just
+tracked status. When the branch touches a bind-mounted path, merge in a detached temporary
+worktree (`git worktree add --detach <scratch> main`), commit there, and have the user
+fast-forward main from outside the sandbox. In the pre-commit hook and cargo, export
+`RUSTC_WRAPPER=` (see the sccache entry above).
+
+**Fix:** confirm each stray is byte-identical to the merge commit
+(`git hash-object <f>` equals `git rev-parse <commit>:<f>`), remove it, then fast-forward.
+
+## `loom review` wrote through the `.work` symlink into the main repo's doc/plans (2026-07-22)
+
+**What happened:** From inside a worktree, `loom review` printed `✓ Review document written to doc/plans/REVIEW-....md` (exit 0) but the file never appeared in the worktree's `doc/plans/` — it had been written to the MAIN repo's copy, invisible from the worktree.
+**Why:** The command resolved its output root via `WorkDir::main_project_root()`, which follows the worktree's `.work` symlink back to the main repo. The success message then printed the path relative to that root, making it look local.
+**Prevention:** Commands that WRITE user-visible files must anchor on the current checkout (worktree root when `cwd` is inside `.worktrees/`), not on `main_project_root()` — that helper is for reaching shared `.work` state, not for output placement. Exit 0 + "written to <relative path>" is not proof the file is where the reader thinks; check which root the path was relativized against.
+**Fix:** `commands/review/generate.rs::resolve_output_root()` — writes to `find_worktree_root_from_cwd(cwd)` when inside a worktree, else the main project root.
+
+## Worktree Test Runs Resolve node_modules From the MAIN Repo When the Worktree Has None (2026-08-11)
+
+**What happened:** in a JS-project worktree stage (cartolyth `city-detail-popup`), codex's proof
+command `bunx vitest run …` failed with EROFS writing `node_modules/.vite-temp`, with no test
+assertions executed — while the file edits themselves landed fine.
+
+**Why:** a fresh git worktree has no `node_modules` (ignored files are not part of the checkout).
+Node module resolution walks UP from the worktree — `.worktrees/<stage>/` → `.worktrees/` → the
+MAIN repo's `node_modules/` — so test runners load dependencies from the main checkout and write
+their caches there too (vite writes `node_modules/.vite-temp/` while loading config). Both the
+codex nested sandbox and the stage sandbox refuse that write, correctly: it lands outside the
+worktree, in shared mutable state that parallel stages and the operator's checkout depend on.
+Proof it really happens: `node_modules/.vite-temp` exists in cartolyth's MAIN repo, created by a
+later unsandboxed run.
+
+**Prevention:** a plan whose stages run JS/TS tests in-session MUST provision dependencies inside
+the worktree before the first test run — an explicit first task (`bun install` from the worktree
+root) in the stage description. `setup:` does NOT cover this: it only prefixes acceptance
+commands, which `loom check` runs on the host after the session's work, not inside the session.
+
+**Fix:** never widen a sandbox toward the main repo's `node_modules` — the denial is the system
+working. Install dependencies in the worktree, then re-run the tests.
+
+## A Ledger Written From Inside the Bash Sandbox Silently Never Filled
+
+**What happened:** the MODELS column of `loom status --live` never showed a codex tier on any
+stage — every row read `opus›sonnet,opus` — while Claude subagents always appeared. The codex lane
+was installed and licensed on the stages that ran.
+
+**Why:** `.loom/work/subagents/<stage-id>/codex.jsonl` was appended by `hooks/codex-forward.sh`,
+which the forwarder subagent invokes through the Bash tool — so it ran INSIDE the stage's Bash
+sandbox. From a worktree that append resolves through the `.loom/work` symlink into the main repo,
+outside the sandbox's write allow-list (handoffs and `doc/loom/knowledge`, `sandbox/settings.rs:295-311`).
+`record_codex_task` was best-effort and returned 0 on every failure path, so the denial was logged
+nowhere. Its sibling `spawns.jsonl` filled normally because `hooks/spawn-guard.sh` is a PreToolUse
+hook, and hook processes are not under that sandbox. The display could not fall back either: the
+forwarder's own `spawns.jsonl` row carries the shim's sonnet tier and is skipped on purpose, so a
+codex run left NO trace at all.
+
+**Prevention:** decide where a recorder RUNS before deciding what it writes. Anything the agent
+invokes through Bash is inside the stage sandbox and reaches only the worktree, handoffs and the
+knowledge dir; a hook process is not. A best-effort writer that returns 0 on every failure will
+never report its own breakage, so its write path has to be checked when it is written, not when it
+is missed.
+
+**Fix:** moved the row into `hooks/codex-forward-guard.sh`, the PreToolUse hook that already parses
+and validates the forwarding command, so only an authorized forward records. Widening the sandbox
+was rejected: a ledger of what the agent did must not be writable by the agent.
+
+## A Comment Described an RPC That Was Never Built
+
+`loom memory note` failed with EROFS in every sandboxed stage: `.work` is a symlink out of
+the worktree and the sandbox grants `Read(.work/memory/**)` with no matching `Edit`. It read
+as intentional because the comment beside the grant said memory is "written through daemon
+RPCs" — and `daemon/protocol.rs` has no such RPC. `loom stage complete` got a broker when
+the `excluded_commands` escape was removed; `loom memory` did not, and nothing failed loudly.
+Verify an RPC exists before treating a missing write grant as deliberate, and after removing
+a sandbox escape, audit every operation that relied on it.

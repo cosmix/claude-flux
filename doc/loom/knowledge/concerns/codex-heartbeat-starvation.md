@@ -1,6 +1,6 @@
 # Codex Heartbeat Starvation
 
-> Topic notes for the concerns knowledge area.
+> Heartbeat starvation from long codex runs; stale-badge constant mismatch
 
 ## Long Codex Runs Starve the Loom Heartbeat (2026-08-07)
 
@@ -55,3 +55,23 @@ a judgment call the orchestrator has to make from silence.
 monitor to genuinely dead sessions on every other stage in order to silence a cosmetic warning on
 one lane, and the per-stage override already covers the real case. Do NOT "fix" this by editing the
 default — it was considered and rejected as disproportionate.
+
+## `loom status` "Stale" Badge Is Not Stage-Aware (2026-08-07)
+
+Two independent 300s constants with different consumers:
+
+- **detection** — `orchestrator::monitor::heartbeat::DEFAULT_HUNG_TIMEOUT_SECS`
+  (`monitor/heartbeat.rs:21`), per-stage overridable via `subagent_timeout_secs`.
+- **display** — `models::constants::STALENESS_THRESHOLD_SECS` (`models/constants.rs:37`), hardcoded
+  at `commands/status/data/collector.rs:49` and `commands/status/render/activity.rs:21`.
+
+`subagent_timeout_secs` reroutes only the detection one. A stage with `subagent_timeout_secs: 900`
+stays healthy to the orchestrator until 900s but renders `Stale` / "session may be hung" in
+`loom status` from 301s — which can push an operator into intervening on a healthy stage.
+
+Flagged twice (implementation, then confirmed by integration-verify) and NOT fixed on purpose:
+`determine_activity_status(session, staleness_secs)` takes no `Stage`, so making it stage-aware
+means threading the effective timeout through that call site AND the render path — a status
+subsystem change with its own test surface, unrelated to the codex lane. Fix if picked up later:
+pass `Stage::effective_subagent_timeout_secs()` into `determine_activity_status` and the activity
+renderer instead of the constant.

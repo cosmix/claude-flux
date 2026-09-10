@@ -1,6 +1,8 @@
+---
+---
 # Status Broadcast Hardening
 
-> Topic notes for the mistakes knowledge area.
+> Frame-overflow eviction and read-timeout desync from a widened status broadcast.
 
 ## Status Broadcast Hardening: Frame-Overflow Eviction and Read-Timeout Desync (2026-09-04)
 

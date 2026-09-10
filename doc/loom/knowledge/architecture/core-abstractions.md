@@ -27,6 +27,14 @@ validated in transitions.rs. See [patterns.md -- State Machine Pattern](../patte
 1. **`--force-unsafe`** (`handle_force_unsafe_completion`) — sets `Status::Completed` from any state. Manual recovery only.
 2. **Phantom-merge revert** (`reconcile_main_repo_active_merge` and `complete()`'s `RevertAndSpawnResolver` arm) — flips a `Completed + merged=true` stage back to `MergeConflict + merged=false + merge_conflict=true` when an active main-repo merge is attributed to that stage. The bypass is necessary because `Completed` is terminal; `try_transition` would refuse, but this is exactly the case the bypass is designed for. All such mutations are logged at `error` level.
 
+**Transitions FROM `NeedsAdjudication`** (`transitions.rs`) — note it can loop to itself:
+
+- `Queued` — verdict applied, stage re-queued
+- `NeedsAdjudication` — evidence loop (another round on the same dispute)
+- `NeedsHumanReview` — by design, a **`Reject` verdict**: the adjudicator upheld the criterion and ruled the implementation wrong, while the agent disputed it as impossible. Neither side can move, so this is the one outcome a human is needed for. Also reached when a bound is exhausted: the evidence loop (`MAX_EVIDENCE_ROUNDS`, 5), the per-stage amendment cap (`max_amendments_per_stage`, default 10), or the adjudication respawn budget (`MAX_ADJUDICATION_ATTEMPTS`, 3). An earlier version named `ANTHROPIC_API_KEY not set` here; that gate no longer exists — see conventions.md § Adjudicator Transport Convention
+
+`CompletedWithFailures` also transitions into `NeedsAdjudication` (dispute filed after a failed completion) and into `NeedsHumanReview` (budget escalation).
+
 ### StageType Enum (plan/schema/types.rs)
 
 - **Standard** (default) -- Regular implementation stages, require goal-backward verification
@@ -91,3 +99,38 @@ proof.
 | `.work/config.toml`   | commands/init/, commands/run/    | Plan reference       |
 | `.worktrees/`         | git/worktree/                    | Isolated workspaces  |
 | `doc/loom/knowledge/` | fs/knowledge.rs                  | Persistent learnings |
+
+## Layering Violations (Known Issues)
+
+Correct dependency direction: commands/ -> orchestrator/ -> models/ (top), daemon/ / git/ / plan/ (middle), fs/ (bottom).
+
+Known violations (all four are pre-existing, none introduced by the context work):
+
+- daemon imports commands (mark_plan_done_if_all_merged) -- fix: move to fs/plan_lifecycle.rs
+- orchestrator imports commands (check_merge_state) -- fix: move to git/merge/status.rs
+- git/worktree imports orchestrator (hook config) -- fix: extract hooks/ as top-level
+- models imports plan/schema (WiringCheck, StageType) -- fix: move types to models/
+
+### The newer modules are clean (verified 2026-08-17)
+
+The list above predates `context/`, `telemetry/` and `process/`, so its silence about them was
+ambiguous rather than reassuring. Verified with
+`rg '^use crate::[a-z_]+' loom/src/context`:
+
+- **`context`** imports only `crate::context`, `crate::fs`, `crate::language`, `crate::models`
+  and `crate::git`. **No upward edge** to `orchestrator`, `commands` or `daemon`. The single
+  `git` edge is deliberate — `git::runner::run_git_checked` at
+  `context/refresh/source_graph.rs:30`, needed to list tracked files and judge tree
+  cleanliness — and it points downward, so it is not a violation. Record it rather than
+  rediscovering it.
+- **`telemetry`** is a leaf: one module, no `crate::` imports beyond its own serde types. The
+  orchestrator calls into it (`orchestrator/core/stage_telemetry.rs`), never the reverse.
+- **`process`** holds the env allowlist and is consumed by both `verify` and the terminal
+  spawner without importing either.
+
+The rule to preserve: the orchestrator calls into `context`, never the other way around. A
+`use crate::orchestrator` appearing anywhere under `loom/src/context/` is a regression, and the
+one-line check above is the way to catch it.
+
+(Note that a match for `crate::external` under `context/extract/rust.rs:132` is inside a golden
+test fixture string, not a real import.)

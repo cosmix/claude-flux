@@ -28,7 +28,7 @@
 
 ## Parallel Deletion Stages: Straggler Files Outside Assignment Tables
 
-**What happened:** After a parallel subagent deletion stage (`remove-container-keep-scaffolding`), 7 files remained with stale container references because they were not assigned to any subagent: `commands/mod.rs`, `completions/dynamic/tests.rs`, `plan/schema/mod.rs`, `commands/handoff/create.rs`, `commands/stage/tests/session.rs`, `orchestrator/preflight.rs`. These caused compile failures discovered only at integration-verify.
+**What happened:** After a parallel subagent deletion stage (`remove-container-keep-scaffolding`), 7 files remained with stale container references because they were not assigned to any subagent: `commands/mod.rs`, `completions/dynamic/tests.rs`, `plan/schema/mod.rs`, `commands/handoff/create.rs`, `commands/stage/tests/session.rs`, and an orchestrator preflight-checks module (since removed from the tree entirely in a later refactor). These caused compile failures discovered only at integration-verify.
 
 **Why:** Parallel subagent deletion scopes by files owned — files that re-export, import, or reference the deleted code but weren't explicitly in the ownership table are silently missed. Test files (`#[cfg(test)]`) are especially prone since `cargo build` doesn't compile them.
 
@@ -80,3 +80,15 @@ worth the ~70 seconds: `git clone --no-hardlinks --branch <branch> . $TMPDIR/x &
 
 **Fix:** `git reset --soft` to the pre-stage commit, then re-commit the same groups with the
 missing file included — content was never at risk since a soft reset keeps the working tree.
+
+## Registering a New Global PreToolUse Hook Has a Fourth Site Beyond the Documented Three
+
+**What happened:** adding a global `PreToolUse` hook has a documented three-site checklist
+(`fs/permissions/tests/constants_tests.rs:71`), but `fs/permissions/tests/hooks_tests.rs:32` also
+hardcodes `assert_eq!(pre_tool.len(), N)` over the whole `pre_tool_hooks` list. Miss the fourth site
+and the new hook compiles, installs, and runs correctly — the only symptom is
+`test_hooks_config_structure` failing on a bare count mismatch that names no hook.
+
+**Prevention:** when adding or removing a global hook, grep for every hardcoded count of
+`pre_tool_hooks`/`post_tool_use`/similar lists, not just the documented checklist — a passing count
+assertion elsewhere is a silent fourth site.

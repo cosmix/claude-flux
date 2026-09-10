@@ -303,3 +303,42 @@ writes state.
 
 **Fix:** `close_adjudication_session` calls `confirm_session_gone` (now `pub(crate)`) before
 persisting the session status; the judge test modules run under the flake-check job.
+
+## Orchestrator Loop: Unbounded Subprocess Freezes All Scheduling
+
+**Mistake:** Session teardown (`handle_stage_completed` → `kill_session` → window close) shelled out with `Command::output()` and no timeout, on the orchestrator's single poll thread. On macOS that call is `osascript`, which blocks indefinitely on a TCC Automation prompt, a terminal modal, or an unresponsive terminal app. One user's daemon froze there for 10 hours: the dependent stage sat `Queued`, no `.work/` file was written, and nothing appeared in the log.
+**Why it hid:** the daemon's socket thread is separate, so `loom status` kept reporting "● daemon running". Restarting fixed it, which reads as a transient glitch rather than a hang.
+**Prevention:** every external command issued from the poll loop goes through `process::run_bounded`. Teardown steps are best-effort — never `?` between removing the session and `try_auto_merge`, because `StageCompleted` is edge-triggered and never fires twice for the same stage. Check `.work/orchestrator.tick`: a stale tick with a live daemon means the loop is stuck, and the second line names the phase.
+**Note:** Linux is less exposed only by accident — its `wmctrl`/`xdotool` paths are `which`-guarded and no-op when the tools are absent. The structure was the bug, not the platform.
+
+## Diagnostics: Restart Destroys the Evidence
+
+**Mistake:** `.work/orchestrator.log` was opened with `File::create`, truncating it on every `loom run`. Restarting the daemon is the standard response to a stuck orchestrator, so the log of the run that got stuck was destroyed at exactly the moment it was needed.
+**Fix:** rotate to `orchestrator.log.prev` on start. When diagnosing a stall after a restart, read the `.prev` file — the live log only covers the recovery run.
+
+## detection.rs: Session Exit for Merge States
+
+**Mistake:** `detection.rs` only recognized `Completed` as normal session exit. Merge conflict sessions treated as crashes.
+**Fix:** Added `MergeConflict | MergeBlocked` to the matches! pattern. When adding new terminal stage statuses, always update detection.rs.
+
+## macOS GUI App CLI Not on PATH — Detection-Spawn Mismatch (2026-04-27)
+
+**What happened:** `TerminalEmulator::Ghostty` detection succeeded on macOS via a `/Applications/Ghostty.app` path-existence fallback (detection.rs:190-191), but spawn called `Command::new("ghostty")` and failed with "Failed to spawn terminal 'ghostty'. Is it installed?" The Ghostty CLI binary lives inside the bundle at `/Applications/Ghostty.app/Contents/MacOS/ghostty` and is not added to PATH (ghostty-org/ghostty#2483). Detection picked the terminal; spawn couldn't launch it.
+
+**Misleading signal:** `which::which("ghostty")` failing was _handled_ by an explicit `.app` existence check that succeeded. The fallback proved the GUI app was installed, not that its CLI was reachable from a child `Command`. Two-binary detection (`which` OR `.app exists`) silently expanded the set of "detected" terminals beyond the set of "spawnable via PATH" terminals.
+
+**Why it broke:** Detection logic and spawn logic relied on different existence proofs. Detection accepted "the .app exists" as sufficient; spawn assumed the binary was on PATH. The asymmetry produced a guaranteed runtime failure for any macOS user without a manual PATH shim.
+
+**Prevention:**
+
+- For any `TerminalEmulator` variant whose detection has a path-based fallback (anything beyond `which::which(binary())` succeeding), the corresponding `build_command()` arm MUST use a launch path that does not depend on PATH — typically `open -na <AppName> --args ...` (see patterns.md "macOS GUI App Launch Pattern") or AppleScript via `osascript`. Treat any macOS `.app`-bundled tool as PATH-unreachable by default.
+- When adding a new terminal emulator: check that detection and spawn agree about _how_ the binary is reachable. If detection falls back to `.app` existence, spawn must NOT call `Command::new(binary())` directly on macOS.
+
+**Fix:** `Self::Ghostty` arm in `emulator.rs:build_command()` is now cfg-gated; macOS reassigns `command = Command::new("open")` and uses `open -na Ghostty --args --working-directory=... --title=... -e bash -c CMD`. Linux behavior unchanged. `binary()` still returns `"ghostty"` (correct for Linux PATH lookup and for any macOS user with a manual shim). Tests `test_ghostty_build_command_macos` and `test_ghostty_build_command_linux` are cfg-gated so each runs on its target platform.
+
+## Sessions Died in One Second on WSL: Sandbox Required but Unavailable (2026-09-03)
+
+**What happened:** A first run on WSL had every Claude session exit within a second of spawn, three times, then block. The crash reports said only "No log output captured", the retry logic blamed `--remote-control` and dropped it, and the stage burned its whole retry budget on a deterministic startup refusal.
+**Why:** Generated settings set `sandbox.failIfUnavailable: true` whenever the plan sandbox is enabled, and Claude Code refuses to start when its Linux sandbox cannot initialize (missing `bwrap`/`socat`, or WSL1). Nothing in `loom run` checked those prerequisites; the tmux backend captured no pane output; `hooks/session-end.sh` discarded the SessionEnd `reason`; and the crash handler retried an exit that identical arguments could never fix.
+**Prevention:** `loom run` now refuses to start on Linux/WSL when `bwrap` or `socat` is missing or the kernel is WSL1 (`commands/run/sandbox_preflight.rs`); the wrapper tees Claude's stderr to `.loom/work/logs/<session>.stderr.log` and the crash report embeds its tail; a crash inside the fast-fail window with no remote-control fallback left to apply is a `StartupRefusal` and is never retried.
+**Fix:** On the host, `sudo apt install bubblewrap socat`, confirm `uname -r` contains `WSL2`, then `loom stage retry <stage-id>`. To see Claude's own error for any instant exit, run the stage's wrapper by hand: `bash .loom/work/wrappers/<pid-key>-wrapper.sh`.

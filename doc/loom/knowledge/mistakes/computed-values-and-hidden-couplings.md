@@ -1,6 +1,8 @@
+---
+---
 # Computed Values and Hidden Couplings
 
-> Topic notes for the mistakes knowledge area. Three lessons from the
+> Values computed right but unread downstream; hidden coupling bugs
 > retrieval-precision work, all real, all the same underlying shape: a piece
 > of logic was locally correct and globally wrong because of something
 > outside the function currently being read — a downstream consumer that
@@ -62,7 +64,7 @@ the brief's revision line. A first version of `degraded_reason`
 (`context/retrieve/graph.rs:116-125`) treated ANY missing base file as
 degraded. That is wrong on its own terms — a dirty working tree never
 publishes a base at all (bases are immutable and revision-keyed; see
-`graph_store.rs`'s module doc), so "no base for HEAD, served from the local
+`context/graph_store/mod.rs`'s module doc), so "no base for HEAD, served from the local
 overlay" is the ordinary steady state of any checkout someone is actively
 working in — but the consequence went well past a wrong banner:
 `reconcile_graph::spawn_if_needed` (`commands/hook/reconcile_graph.rs:210-211`)

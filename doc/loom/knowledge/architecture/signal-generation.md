@@ -1,6 +1,8 @@
+---
+---
 # Signal Generation
 
-> How a stage signal is assembled: stable-prefix cache, shared append_* helpers, per-stage-type prefixes, soft signals.
+> Signal assembly: cache, append_* helpers, per-stage prefixes, hung escalation.
 
 ## Signal Generation Pipeline (orchestrator/signals/) [DETAILED]
 
@@ -146,30 +148,35 @@ SHA-256 of stable prefix text → first 16 hex chars → `SignalMetrics::stable_
 
 ## Soft Signals
 
-Soft signals are advisory per-session notices persisted to disk so that dedup survives daemon restarts. File: `.work/monitor/soft-signals.jsonl` (JSONL, append-only, no compaction).
+The JSONL-backed `possibly_stuck` soft-signal system this section used to describe is gone. `orchestrator/monitor/soft_signals.rs` no longer exists, and `orchestrator/monitor/tool_analysis.rs` no longer exists either, along with `.work/monitor/soft-signals.jsonl` and `Stage.is_possibly_stuck` — none of those symbols or files exist anymore (verified with a full-tree `rg`, corrected
+2026-09-10). Hung-session detection is now entirely heartbeat-driven:
 
-**Schema (single variant today):**
+**Detection pipeline (`orchestrator/monitor/heartbeat.rs`, `orchestrator/monitor/hung_latch.rs`):**
 
-```json
-{
-  "kind": "possibly_stuck",
-  "session_id": "s1",
-  "stage_id": "my-stage",
-  "recent_events": 10,
-  "failure_count": 9,
-  "failure_ratio": 0.9,
-  "emitted_at": "<RFC3339>",
-  "expires_at": "<RFC3339>"
-}
-```
+1. `HeartbeatWatcher::check_session_hung(stage_id, session_id, timeout)` compares the session's
+   last heartbeat against its resolved response budget (`Stage::effective_subagent_timeout_secs()`,
+   falling back to `MonitorConfig.hung_timeout`, default 300s / `DEFAULT_HUNG_TIMEOUT_SECS`).
+2. `hung_latch::is_stall_escalation` reports a silence twice, never more: once when the budget is
+   first crossed (`SessionHung` event, advisory), and once more only if the silence reaches
+   `STALL_ESCALATION_MULTIPLIER` (3x) the budget — the escalation line the recovery path acts on.
+   A session that answers again clears both latches (`clear_hung_report`), so a blip cannot creep
+   toward escalation across unrelated silences.
+3. Adjudication sessions (judges) are measured and latched separately
+   (`adjudicator_stall_event` → `MonitorEvent::AdjudicatorStalled`), since a stalled judge has no
+   stage to hand off — it is closed and the stage it left in `NeedsAdjudication` is re-judged on
+   the next poll under the dispute's own attempt budget, latched once rather than twice.
+4. A `subagent_timeout_secs: 0` stage never escalates (warnings only), so a mis-configured zero
+   budget cannot get a session killed on its first poll.
 
-**Decay window:** `DECAY_WINDOW_SECS = 120` — signals expire 120 seconds after they are written. `read_active(work_dir, now)` filters out expired signals. `read_active_for_session(work_dir, now, session_id)` further filters by session.
+## Telemetry (`loom/src/telemetry/`)
 
-**Detection pipeline:**
+One append-only JSON-lines file, `.work/telemetry/events.jsonl`, recording whether a spawned
+session received a context brief (`ContextDelivered` / `ContextUnavailable`). Best-effort by
+contract: `emit` may never fail a spawn and `read_events` skips a malformed line rather than
+failing the file. Every count is an item count, never a token saving.
 
-1. `post-tool-use.sh` updates a private per-session heartbeat and persists no tool output.
-2. Heartbeat and session liveness drive hung-session reporting. The legacy `tool_analysis` reader can consume older `.work/tool-events.jsonl` data, but no production hook writes new records.
-3. Soft signals remain bounded, advisory state. `daemon/server/status.rs::collect_status()` calls `soft_signals::read_active_for_session()` to derive `Stage.is_possibly_stuck` at read time; the field is never persisted to stage files (`#[serde(skip)]`).
-4. Static `loom status` reads through the same helper.
-
-**Key files:** `orchestrator/monitor/soft_signals.rs` (schema + I/O), `orchestrator/monitor/tool_analysis.rs` (analysis), `orchestrator/monitor/detection.rs` (event emission), `daemon/server/status.rs` (status derivation).
+Written only by `orchestrator/core/stage_telemetry.rs` (called from `stage_executor.rs:570`),
+which derives its fields from the `DeliveryRecord` signal generation already wrote — no second
+retrieval. `read_events` has **no production caller** today, and `.work/` is removed when the
+plan finishes, so events currently go unread; the intended reader is a future `loom status`/
+`loom map` diagnostic.

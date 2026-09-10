@@ -101,3 +101,11 @@ rust+terraform returned `/loom-skills` as the third suggestion, DISPLACING a rea
 `apply_install_layout`) had any external caller. `pub` items in a lib crate are never
 dead-code-warned, so `cargo clippy` misses an unused re-export entirely — this class of debt needs
 a deliberate sweep (`rg` each re-exported name for callers outside its own module), not a linter.
+
+## Component Architecture (loom/src/skills/)
+
+Loads skill metadata from SKILL.md files across the two roots above, builds an inverted index of trigger keywords, and matches stage descriptions against it. Components: `types.rs` (`SkillMetadata`, `SkillMatch`), `matcher.rs` (keyword matching, phrase match = 2pts, word match = 1pt, threshold 2.0), `index.rs` (`SkillIndex`, `load_from_directory`, `match_skills` — visibility of `add_skill`/`parse_skill_file` widened to `pub(super)` for the catalog loader, otherwise unchanged), `index_catalog.rs` (the compiled-in core manifest via `include_str!` of `skills/core-skills.txt`, the two-root loader `load_with_catalog`, and `skill_invocation()` which renders the correct invocation form), `install_layout.rs` (reads `~/.claude/loom-install.toml` and re-places skills after a self-update). Up to 5 skill recommendations are embedded in agent signals.
+
+Diagnosis Module (`loom/src/diagnosis/`): analyzes failed/blocked stages. `DiagnosisContext` collects `crash_report`, `log_tail`, `git_status`, `git_diff`. Generates a diagnostic signal for Claude Code investigation. CLI: `loom diagnose <stage-id>`.
+
+Map Module (`loom/src/map/`): automated codebase analysis that populates knowledge files. Detectors: project type, dependencies, entry points, structure, conventions, concerns. Features: `--deep` (3-level depth + concerns), `--focus` (filter entry points), `--overwrite`. CLI: `loom map`.

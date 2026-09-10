@@ -174,3 +174,23 @@ Stated explicitly because these are natural things to expect and go looking for:
 Row values are untrusted: the `model` field is the caller-controlled `.tool_input.model` written verbatim by the hook. `normalize_model`/`strip_date_suffix` (`commands/status/data/execution_models.rs:118-140`) strip a `claude-` prefix and a trailing `-YYYYMMDD` stamp using `rsplit_once('-')` (byte-index slicing panicked on a multi-byte model name before this fix). Flattening (`context::untrusted::inline_safe`) runs BEFORE dedup/normalize, not after — deduping on the raw ledger string let `sonnet` and `sonnet<zero-width char>` count as two distinct models.
 
 `valid_stage_id` guards the ledger path on both sides of the read/write boundary, but at different strengths: the Rust reader (`commands/status/data/sanitize.rs:84`) explicitly rejects `.` and `..`; the shell writers (`hooks/spawn-guard.sh:309`, `hooks/codex-forward.sh:43`) are character-class allowlists (`[A-Za-z0-9._-]`) that accept `.` and `..` because both are made only of allowed characters — a stage id of `..` resolves the ledger directory to the work dir itself. See concerns.md for the outstanding shared-helper cleanup.
+
+## Status Command Module Layout
+
+The status command is organized as a sub-module tree:
+
+```text
+commands/status.rs          # Entry: dispatches to 3 modes + validate/doctor
+commands/status/
+  data.rs                   # collect_status_data() → StatusData struct
+  render/                   # Pure render functions (progress, graph, merge, compact)
+  ui/                       # TUI backed by daemon IPC subscription
+  diagnostics.rs            # Workspace integrity checks
+  display.rs                # count_files() helper
+  merge_status.rs           # Merge section data
+  validation.rs             # Markdown + cross-reference validation
+```
+
+**Data flow (static mode):** `collect_status_data()` loads plan name, stage list (with status/context), session list, merge state, and progress counts into a single `StatusData`. Renderers receive `StatusData` and write to `impl Write`.
+
+**TUI mode:** `ui::run_tui(work_path)` subscribes to the daemon's Unix socket (`orchestrator.sock`) and re-renders on each update. Requires daemon running; errors with hint if not.

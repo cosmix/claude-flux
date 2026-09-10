@@ -60,3 +60,7 @@ both pointed at it, which is why operators fell back to `git merge loom/<id>` by
 The merge runs in the operator's main checkout. Tracked modifications or untracked files that the
 merge would overwrite make `git merge` refuse, and that is the most likely cause when a
 knowledge-distill stage, which touches `doc/loom/knowledge/**` and `README.md`, ends up blocked.
+
+## Merge Lock (git/merge/lock.rs)
+
+`MergeLock` serializes loom-driven merges with an exclusive OS advisory lock (`fs2::try_lock_exclusive`) on the stable `.work/merge.lock` inode. The file is created once and never unlinked; the holder's pid and timestamp are written into it for diagnosis only. `acquire` polls every 100 ms up to the caller's timeout (30 s from `merge_stage` and the probe). Release is by `Drop` or process exit, so there is no stale-lock reclamation and a pid left in the file after a merge is not a held lock. An earlier version of this section named `progressive_merge/lock.rs` and a five-minute stale sweep; neither exists.

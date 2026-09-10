@@ -189,3 +189,35 @@ Mirror the script's text into a `const` beside `PREAMBLE_LINE` (`hooks_spawn_gua
 doc comment naming the script and line, rather than inlining the literal at the assertion — the
 const gives the scan and the next reader one place to check. A few hits are legitimate (fixture
 symbol names such as `POLL_INTERVAL`, which is test data, not hook output).
+
+## Mutation-Test the Test, and Re-Prove a Silent-Drop Claim End to End
+
+**Mutation testing is cheap and decisive for this repo's most recurrent defect class.**
+After fix agents reported done, each behaviour was broken one line at a time — remove the
+`canonicalize`; replace the `File`-kind filter with `true`; neuter the `reasons.is_empty()`
+guard; empty the span `push_str`; early-return from `publish_source_graph` — and ONLY the
+matching test was run, then `git checkout --` restored it. All five tests went red on
+their own mutation and stayed green on the others. That is what distinguishes a real test
+from one that merely passes.
+
+**COMMIT BEFORE MUTATING.** Restoring with `git checkout --` otherwise discards the
+subagents' uncommitted work, and that is unrecoverable.
+
+**A silent-drop claim needs an end-to-end proof, not a count.** `git ls-files` C-quotes
+non-ASCII paths, so the old newline-split-plus-`exists()`-filter dropped them from the
+source graph with no diagnostic. The proof: create the pathological name in a scratch
+clone, run `git ls-files` to see the WIRE format, then grep the built layer for a symbol
+only that file defines. Counting files is not enough — the count can move for unrelated
+reasons. (Fix: `git ls-files -z` and NUL splitting.)
+
+## Tests That Cannot Fail — Now the Repo's Most Recurrent Class
+
+Five fresh instances landed in one plan across three stages: a feature-flag suite that
+only drove the OFF path (so "disabled" was indistinguishable from "structurally broken"),
+a formatter test that hand-built its own input while no producer ever populated it, a
+root-only path fixture that could not tell a resolver from string equality, a ranking
+heuristic only ever tested on tidy fixtures, and an equality assertion pinning a CLI
+string that does not work. Four of the five passed because the test constructed its own
+input, so test and production path never met.
+
+The deletion question catches all of them: **delete the production line — does it go red?**

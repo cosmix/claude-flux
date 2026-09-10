@@ -58,7 +58,9 @@ space. Matching on `"## "` is correct for H2-only detection and lets an H2 secti
 subsections.
 
 **Prevention:** verify a prefix-matching claim with an actual assertion before changing code to
-satisfy it. Pinned by a regression test in `fs/knowledge/tests_gc.rs`.
+satisfy it. Pinned by a regression test under `fs/knowledge/tests/` (the standalone
+`fs/knowledge/tests_gc.rs` module this was originally pinned in no longer exists — that
+gc-era test file was folded into the current `tests/` module tree).
 
 ## `str::lines()` on a Trailing-Newline String Adds No Empty Element (2026-07-28)
 
@@ -84,3 +86,20 @@ worker's file and work is lost. The main agent is the only one that verifies a g
 **Prevention:** before `replace-section`, run `rg -n '^#{2,6} ' <file>` and check whether any deeper heading sits between the target and the next same-level heading. If one does, either target the deepest heading that contains only the text you mean to change, or include the child sections verbatim in the replacement body. Compare `git diff --stat` on the file afterwards: a large net deletion from a one-row edit is the tell.
 
 **Fix:** restored the file from HEAD and re-applied the single row with an editor.
+
+## Verify a Prefix-Matching Claim Before "Fixing" It
+
+(Duplicate heading created by an editing mistake — see the dated entry above, which carries the
+full content.)
+
+## loom knowledge update: Path Resolution
+
+**Mistake:** Running `loom knowledge update` from a subdirectory creates files relative to cwd, not worktree root.
+**Fix:** Always run knowledge commands from the worktree root.
+
+## Knowledge Commands: CWD Resolution (2026-04-16)
+
+**What happened:** Knowledge commands used `main_project_root()` which followed `.work` symlinks to resolve to the main repo root. In worktree contexts (e.g., integration-verify stages), `loom knowledge update` wrote to the main repo instead of the worktree, causing cross-worktree state pollution.
+**Why:** `main_project_root()` was designed to always find the true main repo root, which was correct for `.work/` state but wrong for knowledge files that should be worktree-local.
+**Prevention:** Use `project_root()` (cwd-relative) for file writes that should respect worktree isolation. Use `main_project_root()` only for accessing shared state (`.work/`). Always run `loom knowledge update` from the worktree root, not a subdirectory.
+**Fix:** Replaced all `main_project_root()` calls in knowledge commands and map.rs with `project_root()`. Updated signal content to require commits for knowledge stages. Removed commit-guard.sh bypass for knowledge stages.

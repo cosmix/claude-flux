@@ -96,3 +96,20 @@ the next author writing `1.0`, or overwriting a `Parser` edge.
 as a **design escalation, not a justification**. The fix is a second constructor encoding the wider
 bound (`SourceEdge::resolve_to`, clamped to 0.9, refusing `Parser` and already-resolved edges),
 never a raw field write.
+
+## Daemon Module Visibility
+
+**Mistake:** Used `crate::daemon::server::DaemonServer` but `server` module is private.
+**Fix:** Use re-export path: `crate::daemon::DaemonServer`.
+
+## `pub(crate)` Is Invisible to `tests/` (2026-08-08)
+
+`tests/e2e/*` is an **external test crate**, so it can only reach `pub` items. A stage description that
+names a helper both `pub(crate)` _and_ "the e2e test seam" is self-contradictory. Before marking a
+helper `pub(crate)`, check whether anything under `tests/` calls it — `src/` unit tests can reach it,
+integration targets cannot.
+
+Related: when changing a fn signature under `src/commands/`, the call-site inventory must include the
+sibling `#[cfg(test)]` module. `src/commands/init/tests.rs` held a fifth `cleanup_orphaned_sessions()`
+call site beyond the four an `rg` for the primary feature symbol surfaced. `rg` the **exact fn name**
+across `src/` _and_ `tests/` before writing a subagent's step list.

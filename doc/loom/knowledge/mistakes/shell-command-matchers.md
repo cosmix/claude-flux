@@ -35,7 +35,7 @@ are table-driven in `loom/tests/integration/hooks_subagent_verify_guard_cases.rs
 ## Glob + `head -1` Is Forgeable in a Security Gate (2026-07-28)
 
 **What happened:** the integration-verify carve-out resolved its stage file with
-`ls WORK_DIR/stages/*-STAGE_ID.md | head -1`. Stage files carry a numeric prefix, so a planted
+`ls WORK_DIR/stages/*-<stage-id>.md | head -1`. Stage files carry a numeric prefix, so a planted
 `00-<stage-id>.md` declaring `stage_type: integration-verify` beat the real `02-<stage-id>.md`
 lexicographically and granted a full-suite carve-out to an ordinary stage. Reproduced: exit 0
 where it must be 2.
@@ -169,10 +169,10 @@ strips heredoc bodies, which would otherwise tokenize as real command words.
 
 **What happened:** ad-hoc probes of `loom_tokenize_command` produced results that contradicted
 each other run to run — the same input appeared to splice `sh -c` payloads in one invocation and
-not the next. Nothing was flaky. The probes that ran as `bash script.sh` were correct; the ones
-typed inline were evaluated by the session's **interactive zsh**, where arrays are 1-based, so
-every index computed by the walker was off by one and the token dumps were meaningless. Nearly
-led to a fabricated "non-deterministic tokenizer" bug report.
+not the next. Nothing was flaky. The probes run via `bash <file>` on a saved script were correct;
+the ones typed inline were evaluated by the session's **interactive zsh**, where arrays are
+1-based, so every index computed by the walker was off by one and the token dumps were
+meaningless. Nearly led to a fabricated "non-deterministic tokenizer" bug report.
 
 **Why:** the default shell here is zsh; `hooks/*.sh` are all `#!/usr/bin/env bash` and are only
 ever executed by bash in production. Sourcing one into zsh runs bash-targeted array code under

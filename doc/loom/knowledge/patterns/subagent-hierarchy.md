@@ -60,3 +60,23 @@ rg -n "HIERARCHY SECOND" skills/   # must be ZERO hits (criteria-keyed, not rank
 ```
 
 **Watch item:** whether Claude Code hooks (PreToolUse etc.) fire identically for depth-2 subagents is undocumented upstream. Loom's `commit-filter.sh` detection walks the process tree (nearest claude ancestor vs `LOOM_MAIN_AGENT_PID`) and is depth-agnostic by construction, but re-verify on major Claude Code upgrades. Separately, PreToolUse hooks do NOT see commands codex runs internally — codex is handed `workspace-write` with approval `never`, so never give it a `.work/` path.
+
+## Model Playbook: Orchestration Is Always Opus (2026-07-28)
+
+Every `StageType` now defaults to **opus** (`models/stage/types.rs::default_model`), with
+`default_reasoning_effort()` returning `xhigh` whenever the effective model is opus. Judgement-
+heavy orchestration work — planning, distillation, review, verification — is never downgraded to
+save tokens.
+
+Savings come from **delegation, not downgrade**: an opus main agent spawns implementation
+subagents by agent type across four tiers — fable (visual/UI design, a bug that survived a
+delegated fix attempt, extremely challenging algorithmic design; no agent type pins it, so the
+model override is explicit at spawn), opus (`loom-senior-software-engineer`, mainstream architecture and algorithm
+implementation), sonnet or GPT-5.6 Terra (`loom-software-engineer` or the `loom-codex-forwarder`
+codex lane, common implementation and integration tests), and GPT-5.6 Luna (codex lane,
+boilerplate, scaffolding, simple unit tests). The codex tiers are licensed only on stages listing
+codex in `implementers`; elsewhere terra- and luna-tier work goes to sonnet. The codex tiers also
+require the `codex` CLI and plugin to be installed; when either is missing, `loom run` warns at
+startup (never aborts) and the same terra-/luna-to-sonnet fallback applies for the run — see
+[Codex Plugin](../architecture/codex-plugin.md). A knowledge stage runs on opus and delegates its
+code spot-reads to sonnet; the two facts are easy to conflate.
