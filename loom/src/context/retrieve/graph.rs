@@ -43,9 +43,12 @@ impl GraphLoad {
 /// reads only the base layer, and a base miss there becomes an *empty* graph
 /// rather than a missing one, silently dropping an overlay the query should
 /// have read. [`OverlayScope::Local`] resolves to the `(plan, stage)` address
-/// `local_overlay_key` computes and `loom map` writes (`commands/map.rs`) —
-/// the only production writer of that overlay today — so a `Local`-scoped
-/// query is what lets a caller see working-tree changes beyond the base.
+/// `local_overlay_key` computes, written through
+/// `ensure_snapshot(SnapshotPolicy::LocalCurrent)` by `loom map`
+/// (`commands/map.rs`), `loom knowledge sync`, and the prompt hook's
+/// background reconcile (`commands/hook/reconcile_graph.rs`) — so a
+/// `Local`-scoped query is what lets a caller see working-tree changes beyond
+/// the base.
 ///
 /// Retrieval itself never builds or refreshes this graph: `resolve_catalog`
 /// calls `refresh` with `structural_only = true`, which skips the semantic
