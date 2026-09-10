@@ -6,6 +6,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::commands::common::resolve_state_dir;
+use crate::fs::memory::archive_run_state;
+use crate::fs::work_dir::WorkDir;
 use crate::git::branch::branch_name_for_stage;
 use crate::git::runner::run_git;
 use crate::orchestrator::terminal::tmux::{
@@ -177,6 +179,16 @@ pub fn cleanup_work_directory(repo_root: &Path) -> Result<()> {
         return Ok(());
     }
 
+    let workspace = WorkDir::new(&work_dir).ok();
+    let plan_id = workspace
+        .as_ref()
+        .and_then(|work_dir| work_dir.load_config().ok().flatten())
+        .and_then(|config| config.plan_id().map(str::to_owned));
+    let main_root = workspace
+        .and_then(|work_dir| work_dir.main_project_root())
+        .unwrap_or_else(|| repo_root.to_path_buf());
+    archive_run_state(&work_dir, &main_root, plan_id.as_deref());
+
     fs::remove_dir_all(&work_dir)
         .with_context(|| format!("Failed to remove state directory at {}", work_dir.display()))?;
     println!(
@@ -238,4 +250,27 @@ pub fn cleanup_worktrees_directory(repo_root: &Path) -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn cleanup_work_directory_archives_memory_before_removal() {
+        let temp = TempDir::new().unwrap();
+        let work_dir = temp.path().join(".loom/work");
+        fs::create_dir_all(work_dir.join("memory")).unwrap();
+        fs::write(work_dir.join("memory/stage.md"), "journal").unwrap();
+
+        cleanup_work_directory(temp.path()).unwrap();
+
+        let archive_root = temp.path().join(".loom/memory/archive");
+        let archive = fs::read_dir(archive_root).unwrap().next().unwrap().unwrap();
+        assert_eq!(
+            fs::read_to_string(archive.path().join("memory/stage.md")).unwrap(),
+            "journal"
+        );
+    }
 }

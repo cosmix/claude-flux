@@ -120,6 +120,10 @@ pub enum MemoryCommands {
         /// The note text
         text: String,
 
+        /// Evidence reference (repeatable)
+        #[arg(short = 'e', long)]
+        evidence: Vec<String>,
+
         /// Stage ID (auto-detected from LOOM_STAGE_ID if not provided)
         #[arg(short = 'S', long, value_parser = clap_id_validator)]
         stage: Option<String>,
@@ -134,6 +138,10 @@ pub enum MemoryCommands {
         #[arg(short, long)]
         context: Option<String>,
 
+        /// Evidence reference (repeatable)
+        #[arg(short = 'e', long)]
+        evidence: Vec<String>,
+
         /// Stage ID (auto-detected from LOOM_STAGE_ID if not provided)
         #[arg(short = 'S', long, value_parser = clap_id_validator)]
         stage: Option<String>,
@@ -143,6 +151,10 @@ pub enum MemoryCommands {
     Question {
         /// The question text
         text: String,
+
+        /// Evidence reference (repeatable)
+        #[arg(short = 'e', long)]
+        evidence: Vec<String>,
 
         /// Stage ID (auto-detected from LOOM_STAGE_ID if not provided)
         #[arg(short = 'S', long, value_parser = clap_id_validator)]
@@ -154,9 +166,50 @@ pub enum MemoryCommands {
         /// Description of what changed (e.g., "src/foo.rs - Added bar() function")
         text: String,
 
+        /// Evidence reference (repeatable)
+        #[arg(short = 'e', long)]
+        evidence: Vec<String>,
+
         /// Stage ID (auto-detected from LOOM_STAGE_ID if not provided)
         #[arg(short = 'S', long, value_parser = clap_id_validator)]
         stage: Option<String>,
+    },
+
+    /// Record how a captured memory event was processed
+    Resolve {
+        /// ID of the note, decision, question, or change being settled
+        event_id: String,
+
+        /// Processing outcome
+        #[arg(long, value_parser = ["promoted", "merged", "discarded", "deferred"])]
+        outcome: String,
+
+        /// Knowledge target for a promoted or merged event
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Explanation for the outcome
+        #[arg(long)]
+        reason: Option<String>,
+
+        /// Stage ID (auto-detected from LOOM_STAGE_ID if not provided)
+        #[arg(short = 'S', long, value_parser = clap_id_validator)]
+        stage: Option<String>,
+    },
+
+    /// List notes, decisions, and questions that have no receipt
+    Pending {
+        /// Stage ID to scope pending entries to
+        #[arg(short = 'S', long, value_parser = clap_id_validator)]
+        stage: Option<String>,
+
+        /// Print a machine-readable report
+        #[arg(long)]
+        json: bool,
+
+        /// Exit non-zero when any pending entry is found
+        #[arg(long)]
+        strict: bool,
     },
 
     /// Search memory entries
@@ -175,9 +228,13 @@ pub enum MemoryCommands {
         #[arg(short = 'S', long, value_parser = clap_id_validator)]
         stage: Option<String>,
 
-        /// Filter by entry type (note, decision, question)
+        /// Filter by entry type (note, decision, question, change, receipt)
         #[arg(short = 't', long)]
         entry_type: Option<String>,
+
+        /// Print entries as a JSON array
+        #[arg(long)]
+        json: bool,
     },
 
     /// Show full memory journal
@@ -189,5 +246,9 @@ pub enum MemoryCommands {
         /// Show ALL stage memories
         #[arg(short, long)]
         all: bool,
+
+        /// Print entries as JSON (`--all` uses a stage-to-entries object)
+        #[arg(long)]
+        json: bool,
     },
 }

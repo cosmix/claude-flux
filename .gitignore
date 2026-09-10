@@ -54,6 +54,7 @@ logs/
 .work
 .loom/work/
 .loom/work
+.loom/memory/
 
 # Rust build artifacts
 target/

@@ -14,6 +14,8 @@ use sessions::{clean_sessions, SessionReapMode};
 use worktrees::{clean_worktrees, confirm_branch_deletion, run_bare_clean};
 
 use crate::commands::common::resolve_state_dir;
+use crate::fs::memory::archive_run_state;
+use crate::fs::work_dir::WorkDir;
 
 /// Statistics for cleanup operations
 #[derive(Default)]
@@ -166,6 +168,16 @@ fn clean_state_directory(repo_root: &Path) -> Result<bool> {
         return Ok(false);
     }
 
+    let workspace = WorkDir::new(&work_dir).ok();
+    let plan_id = workspace
+        .as_ref()
+        .and_then(|work_dir| work_dir.load_config().ok().flatten())
+        .and_then(|config| config.plan_id().map(str::to_owned));
+    let main_root = workspace
+        .and_then(|work_dir| work_dir.main_project_root())
+        .unwrap_or_else(|| repo_root.to_path_buf());
+    archive_run_state(&work_dir, &main_root, plan_id.as_deref());
+
     fs::remove_dir_all(&work_dir)
         .with_context(|| format!("Failed to remove state directory at {}", work_dir.display()))?;
     println!(
@@ -259,13 +271,20 @@ mod tests {
         // No config.toml anywhere under `temp_dir`, so `WorkDir::new` resolves to the
         // nested fallback root regardless of layout — create the directory there.
         let work_dir = temp_dir.path().join(".loom").join("work");
-        fs::create_dir_all(&work_dir).unwrap();
+        fs::create_dir_all(work_dir.join("memory")).unwrap();
         fs::write(work_dir.join("test.txt"), "test").unwrap();
+        fs::write(work_dir.join("memory/stage.md"), "journal").unwrap();
 
         let result = clean_state_directory(temp_dir.path());
         assert!(result.is_ok());
         assert!(result.unwrap());
         assert!(!work_dir.exists());
+        let archive_root = temp_dir.path().join(".loom/memory/archive");
+        let archive = fs::read_dir(archive_root).unwrap().next().unwrap().unwrap();
+        assert_eq!(
+            fs::read_to_string(archive.path().join("memory/stage.md")).unwrap(),
+            "journal"
+        );
     }
 
     #[test]
