@@ -13,7 +13,7 @@ use super::source_graph::{
 use super::{SourceGraphCounters, SourceGraphOutcome, SourceGraphScope};
 use crate::context::extract;
 use crate::context::graph_store::{GraphLayer, GraphStore};
-use crate::context::local_overlay::{local_overlay_key, LOCAL_PLAN_KEY};
+use crate::context::local_overlay::local_overlay_key;
 use crate::context::source_graph::FileCoverage;
 use crate::context::store::ContextStore;
 
@@ -53,72 +53,50 @@ pub struct SnapshotOutcome {
     pub counters: SourceGraphCounters,
     pub elapsed: Duration,
 }
-impl SnapshotOutcome {
-    /// Render the one advisory line shared by every source-graph entry point.
-    pub fn describe(&self) -> String {
-        if self.action == SnapshotAction::Unavailable {
-            return format!("source graph: unavailable ({})", self.reason);
-        }
 
-        let target = self.target_description();
-        if self.action == SnapshotAction::Reused {
-            let state = if self.overlay.is_some() {
-                "generation current"
-            } else if self.generation == clean_generation(&self.revision) {
-                "tree clean"
-            } else {
-                "tree dirty"
-            };
-            return format!("source graph: reused {target} ({state})");
-        }
-
-        format!(
-            "source graph: {} {target} ({}; {})",
-            self.action.as_str(),
-            describe_counters(&self.counters),
-            describe_elapsed(self.elapsed)
-        )
-    }
-
-    fn target_description(&self) -> String {
-        match &self.overlay {
-            Some((plan, stage)) if plan == LOCAL_PLAN_KEY => {
-                format!("local overlay {plan}/{stage}")
-            }
-            Some((plan, stage)) => format!("stage overlay {plan}/{stage}"),
-            None => format!("base {}", super::short_revision(&self.revision)),
-        }
-    }
-}
+mod describe;
 
 /// Ensure the policy-selected graph layer without making callers repeat its decision tree.
+///
+/// Every failure - inspecting the working tree, building a layer, or
+/// persisting it - is reported as `SnapshotAction::Unavailable` with the
+/// full cause chain in `reason`.
 pub fn ensure_snapshot(
     store: &ContextStore,
     graph_store: &GraphStore,
     project_root: &Path,
     policy: SnapshotPolicy,
-) -> Result<SnapshotOutcome> {
+) -> SnapshotOutcome {
     let started = Instant::now();
     let tree = match working_tree(project_root) {
         Ok(tree) => tree,
         Err(error) => {
-            let reason = format!("failed to inspect the working tree: {error}");
+            let reason = format!("failed to inspect the working tree: {error:#}");
             let _ = super::mark_semantic_stale(store, &reason);
-            return Ok(unavailable(reason, started.elapsed()));
+            return unavailable(reason, started.elapsed());
         }
     };
 
-    let mut outcome = match policy {
-        SnapshotPolicy::BaseOnly => ensure_base_only(store, graph_store, project_root, &tree)?,
+    let dispatched = match policy {
+        SnapshotPolicy::BaseOnly => ensure_base_only(store, graph_store, project_root, &tree),
         SnapshotPolicy::LocalCurrent => {
-            ensure_local_current(store, graph_store, project_root, &tree)?
+            ensure_local_current(store, graph_store, project_root, &tree)
         }
         SnapshotPolicy::StageOverlay { plan, stage } => {
-            ensure_stage_overlay(store, graph_store, project_root, &tree, plan, stage)?
+            ensure_stage_overlay(store, graph_store, project_root, &tree, plan, stage)
+        }
+    };
+
+    let mut outcome = match dispatched {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let reason = format!("{error:#}");
+            let _ = super::mark_semantic_stale(store, &reason);
+            unavailable_with_tree(&tree, reason)
         }
     };
     outcome.elapsed = started.elapsed();
-    Ok(outcome)
+    outcome
 }
 
 fn ensure_base_only(
@@ -362,31 +340,5 @@ fn tree_state(tree: &WorkingTree) -> &'static str {
         "tree clean"
     } else {
         "tree dirty"
-    }
-}
-
-fn describe_counters(counters: &SourceGraphCounters) -> String {
-    let mut parts = Vec::new();
-    if counters.files_parsed > 0 {
-        parts.push(format!("{} parsed", counters.files_parsed));
-    }
-    if counters.files_reused > 0 {
-        parts.push(format!("{} reused", counters.files_reused));
-    }
-    if counters.files_deleted > 0 {
-        parts.push(format!("{} deleted", counters.files_deleted));
-    }
-    if parts.is_empty() {
-        parts.push("0 parsed".to_string());
-    }
-    parts.join(", ")
-}
-
-fn describe_elapsed(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs_f64();
-    if seconds >= 10.0 {
-        format!("{seconds:.1}s")
-    } else {
-        format!("{seconds:.2}s")
     }
 }

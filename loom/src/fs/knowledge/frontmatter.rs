@@ -93,12 +93,17 @@ pub(crate) fn file_state(bytes: &[u8]) -> Option<LifecycleState> {
 }
 
 /// Apply a fallible metadata mutation under the same parent-directory lock as
-/// all other knowledge writers, returning the resulting frontmatter block.
+/// all other knowledge writers, returning the rendered frontmatter block, or
+/// an empty string when no block was written.
+///
+/// A file with no leading `---` block that the mutation leaves empty (e.g. a
+/// blurb-only annotation) is written back unchanged: no empty block is
+/// introduced.
 pub(crate) fn update_file<F>(path: &Path, update: F) -> Result<String>
 where
     F: FnOnce(&mut Frontmatter) -> Result<()>,
 {
-    let mut rendered = None;
+    let mut rendered = String::new();
     crate::fs::locking::locked_update(path, |content| {
         if content.is_empty() {
             bail!(
@@ -106,16 +111,19 @@ where
                 path.display()
             );
         }
-        let (mut frontmatter, body) = match raw_frontmatter(&content) {
-            Some((raw, body)) => (Frontmatter::parse(raw)?, body),
-            None => (Frontmatter::default(), content.as_str()),
+        let (mut frontmatter, body, had_block) = match raw_frontmatter(&content) {
+            Some((raw, body)) => (Frontmatter::parse(raw)?, body, true),
+            None => (Frontmatter::default(), content.as_str(), false),
         };
         update(&mut frontmatter)?;
+        if !had_block && frontmatter == Frontmatter::default() {
+            return Ok(content);
+        }
         let block = frontmatter.render_block()?;
-        rendered = Some(block.clone());
+        rendered = block.clone();
         Ok(format!("{block}{body}"))
     })?;
-    rendered.context("frontmatter update did not run")
+    Ok(rendered)
 }
 
 fn raw_frontmatter(text: &str) -> Option<(&str, &str)> {

@@ -251,6 +251,40 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "");
     }
 
+    const VICTIM: &str = "outside the worktree; a drain must never read or truncate this\n";
+
+    #[test]
+    fn drain_refuses_a_spool_symlinked_outside_the_worktree() {
+        let worktree = TempDir::new().unwrap();
+        let work_dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, VICTIM).unwrap();
+        std::fs::create_dir_all(worktree.path().join(".loom")).unwrap();
+        std::os::unix::fs::symlink(&victim, spool::spool_path(worktree.path())).unwrap();
+
+        let error = spool::drain_into_events(work_dir.path(), worktree.path()).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("was not drained"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), VICTIM);
+    }
+
+    #[test]
+    fn drain_refuses_a_spool_under_a_symlinked_loom_directory() {
+        let worktree = TempDir::new().unwrap();
+        let work_dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let victim = outside.path().join("telemetry-spool.jsonl");
+        std::fs::write(&victim, VICTIM).unwrap();
+        std::os::unix::fs::symlink(outside.path(), worktree.path().join(".loom")).unwrap();
+
+        assert!(spool::drain_into_events(work_dir.path(), worktree.path()).is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), VICTIM);
+    }
+
     #[test]
     fn summary_counts_briefs_abstentions_and_pulls_per_stage() {
         let events = vec![

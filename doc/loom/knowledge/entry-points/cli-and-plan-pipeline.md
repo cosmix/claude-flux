@@ -63,7 +63,7 @@ Three files to add a new subcommand:
 
 ## Plan Parsing Pipeline
 
-- `plan/parser.rs` - Markdown plan parser (extracts YAML from `<!-- loom METADATA -->`)
+- `plan/parser/mod.rs` - Markdown plan parser (extracts YAML from `<!-- loom METADATA -->`)
 - `plan/schema/types.rs` - LoomMetadata, StageDefinition structs
 - `plan/schema/validation.rs` - Stage validation (goal-backward required for Standard only)
 - `plan/graph/mod.rs` - Execution DAG with cycle detection

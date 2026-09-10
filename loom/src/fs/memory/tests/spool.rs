@@ -263,3 +263,64 @@ fn drain_into_journal_on_a_worktree_with_no_spool_is_a_no_op() {
     assert!(!work_dir.path().join("memory").exists());
     assert!(!worktree.path().join(".loom").exists());
 }
+
+const VICTIM: &str = "outside the worktree; a drain must never read or truncate this\n";
+
+/// A file named `name` outside any worktree, holding `VICTIM`; the returned
+/// guard keeps its directory alive.
+fn victim_outside(name: &str) -> (TempDir, std::path::PathBuf) {
+    let outside = TempDir::new().unwrap();
+    let victim = outside.path().join(name);
+    fs::write(&victim, VICTIM).unwrap();
+    (outside, victim)
+}
+
+/// A worktree holding an empty `.loom/` directory, ready for a planted spool.
+fn worktree_with_loom_dir() -> TempDir {
+    let worktree = TempDir::new().unwrap();
+    fs::create_dir_all(worktree.path().join(".loom")).unwrap();
+    worktree
+}
+
+#[test]
+fn drain_refuses_a_spool_symlinked_outside_the_worktree() {
+    let worktree = worktree_with_loom_dir();
+    let (_outside, victim) = victim_outside("victim.txt");
+    std::os::unix::fs::symlink(&victim, spool_path(worktree.path())).unwrap();
+
+    let error = drain_spool(worktree.path(), &mut |_| Ok(())).unwrap_err();
+
+    assert!(
+        format!("{error:#}").contains("was not drained"),
+        "{error:#}"
+    );
+    assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM);
+}
+
+#[test]
+fn drain_refuses_a_spool_under_a_symlinked_loom_directory() {
+    let worktree = TempDir::new().unwrap();
+    let (outside, victim) = victim_outside("memory-spool.jsonl");
+    std::os::unix::fs::symlink(outside.path(), worktree.path().join(".loom")).unwrap();
+
+    assert!(drain_spool(worktree.path(), &mut |_| Ok(())).is_err());
+    assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM);
+}
+
+#[test]
+fn drain_refuses_a_spool_hard_linked_to_an_outside_file() {
+    let worktree = worktree_with_loom_dir();
+    let (_outside, victim) = victim_outside("victim.txt");
+    fs::hard_link(&victim, spool_path(worktree.path())).unwrap();
+
+    assert!(drain_spool(worktree.path(), &mut |_| Ok(())).is_err());
+    assert_eq!(fs::read_to_string(&victim).unwrap(), VICTIM);
+}
+
+#[test]
+fn drain_refuses_a_fifo_spool_instead_of_blocking_on_it() {
+    let worktree = worktree_with_loom_dir();
+    nix::unistd::mkfifo(&spool_path(worktree.path()), nix::sys::stat::Mode::S_IRWXU).unwrap();
+
+    assert!(drain_spool(worktree.path(), &mut |_| Ok(())).is_err());
+}

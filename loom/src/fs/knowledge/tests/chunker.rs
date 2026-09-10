@@ -263,6 +263,88 @@ fn there_is_no_followed_by_other_words_stays_live() {
 }
 
 #[test]
+fn a_path_after_e_g_is_an_example() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) =
+        references_in("Stage files use a depth prefix (e.g., `01-knowledge-bootstrap.md`).\n");
+    assert_eq!(references[0].kind, EvidenceKind::Example);
+}
+
+#[test]
+fn e_g_followed_by_a_space_still_marks_the_example() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) = references_in("Name it by depth, e.g. `01-foo.md`.\n");
+    assert_eq!(references[0].kind, EvidenceKind::Example);
+}
+
+#[test]
+fn a_dotted_path_does_not_split_the_sentence() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) = references_in("See `docs/a.md` for an example of `src/missing.rs`.\n");
+    let missing = references
+        .iter()
+        .find(|reference| reference.source_path == "src/missing.rs")
+        .unwrap();
+    assert_eq!(missing.kind, EvidenceKind::Example);
+}
+
+#[test]
+fn a_real_sentence_boundary_still_limits_the_window() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) = references_in("This is an example. The file `src/missing.rs` is live.\n");
+    let missing = references
+        .iter()
+        .find(|reference| reference.source_path == "src/missing.rs")
+        .unwrap();
+    assert_eq!(missing.kind, EvidenceKind::Live);
+}
+
+#[test]
+fn every_path_in_an_e_g_list_is_an_example() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) = references_in("Name them by depth (e.g., `01-a.md`, `02-b.md`).\n");
+    assert_eq!(references[0].kind, EvidenceKind::Example);
+    assert_eq!(references[1].kind, EvidenceKind::Example);
+}
+
+#[test]
+fn a_trailing_marker_after_another_span_still_applies() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) = references_in("Both `src/a.rs` and `src/b.rs` are examples.\n");
+    assert_eq!(references[0].kind, EvidenceKind::Example);
+    assert_eq!(references[1].kind, EvidenceKind::Example);
+}
+
+#[test]
+fn a_marker_inside_a_neighbouring_span_does_not_leak() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) = references_in("See `foo.md` then `src/missing.rs`.\n");
+    let missing = references
+        .iter()
+        .find(|reference| reference.source_path == "src/missing.rs")
+        .unwrap();
+    assert_eq!(missing.kind, EvidenceKind::Live);
+}
+
+#[test]
+fn vs_and_cf_do_not_end_the_sentence() {
+    use crate::fs::knowledge::chunker::references::{references_in, EvidenceKind};
+
+    let (references, _) = references_in("This was removed in v2, cf. `src/old.rs` for details.\n");
+    assert_eq!(references[0].kind, EvidenceKind::Historical);
+
+    let (references, _) = references_in("This was removed in v2, vs. `src/old.rs` which stayed.\n");
+    assert_eq!(references[0].kind, EvidenceKind::Historical);
+}
+
+#[test]
 fn only_live_references_become_source_paths() {
     let chunks = chunk_file(
         Path::new("notes.md"),

@@ -166,5 +166,5 @@ fn ensure(
     graph_store: &crate::context::graph_store::GraphStore,
     policy: crate::context::refresh::SnapshotPolicy,
 ) -> crate::context::refresh::SnapshotOutcome {
-    crate::context::refresh::ensure_snapshot(store, graph_store, root, policy).unwrap()
+    crate::context::refresh::ensure_snapshot(store, graph_store, root, policy)
 }

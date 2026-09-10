@@ -96,7 +96,7 @@ impl<'a> MergeLifecycle<'a> {
                 self.reconcile(self.repo_root, SourceGraphScope::Base { revision }, "base")
             }
             Err(error) => self.degrade(&format!(
-                "could not resolve the merged revision of '{target_branch}': {error}"
+                "could not resolve the merged revision of '{target_branch}': {error:#}"
             )),
         }
     }
@@ -209,11 +209,21 @@ impl<'a> MergeLifecycle<'a> {
     }
 
     /// Run one reconcile, degrading the semantic layer if it fails.
+    ///
+    /// Deliberate exception to the single reuse-or-rebuild decision in
+    /// `ensure_snapshot`: this path's `SourceGraphScope::Base` arm publishes
+    /// an explicit merged revision resolved from the target branch, which
+    /// need not be the checkout's HEAD, and `SnapshotPolicy::BaseOnly` is keyed to
+    /// `working_tree(project_root).head`, so it cannot express it. This path
+    /// makes no reuse decision of its own — it always reconciles; per-file
+    /// reuse happens inside `reconcile_source_graph` via the blob index.
     fn reconcile(&self, project_root: &Path, scope: SourceGraphScope, layer: &str) {
         let (store, graph_store) = match self.stores() {
             Ok(stores) => stores,
             Err(error) => {
-                self.degrade(&format!("no context store for the {layer} layer: {error}"));
+                self.degrade(&format!(
+                    "no context store for the {layer} layer: {error:#}"
+                ));
                 return;
             }
         };
@@ -238,7 +248,9 @@ impl<'a> MergeLifecycle<'a> {
                 stale = outcome.freshness.stale,
                 "Reconciled the source graph"
             ),
-            Err(error) => self.degrade(&format!("{layer} source-graph reconcile failed: {error}")),
+            Err(error) => {
+                self.degrade(&format!("{layer} source-graph reconcile failed: {error:#}"))
+            }
         }
     }
 

@@ -98,7 +98,7 @@ pub fn reconcile_source_graph(
         Err(error) => {
             return Ok(degraded_outcome(
                 store,
-                format!("failed to inspect the working tree: {error}"),
+                format!("failed to inspect the working tree: {error:#}"),
             ));
         }
     };
@@ -118,7 +118,7 @@ pub(super) fn reconcile_with_working_tree(
         Err(error) => {
             return Ok(degraded_outcome(
                 store,
-                format!("failed to enumerate source files: {error}"),
+                format!("failed to enumerate source files: {error:#}"),
             ));
         }
     };

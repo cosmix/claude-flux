@@ -96,17 +96,9 @@ pub(super) fn remove_control_file(work_dir: &Path, relative: &Path) -> Result<()
     let directory = crate::fs::safe_fs::safe_open_dirfd(work_dir)?;
     match crate::fs::safe_fs::safe_remove_in_workdir(directory.as_raw_fd(), relative) {
         Ok(()) => Ok(()),
-        Err(error) if is_not_found(&error) => Ok(()),
+        Err(error) if crate::fs::safe_read::is_not_found(&error) => Ok(()),
         Err(error) => Err(error),
     }
-}
-
-fn is_not_found(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
-    })
 }
 
 #[cfg(test)]

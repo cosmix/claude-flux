@@ -323,8 +323,10 @@ pub struct ContextPack {
     /// Set when this pack was served from a knowingly incomplete index.
     ///
     /// Carries a human-readable reason; `None` is healthy. A missing base
-    /// layer ALONE is not a degradation — a dirty tree can never publish one,
-    /// so the overlay is the designed path. See `retrieve::graph` for why.
+    /// layer ALONE is not a degradation: a base is published from committed
+    /// `HEAD` content even on a dirty tree, so the overlay is the designed
+    /// path. What a base alone cannot represent is the dirty working-tree
+    /// state, which the overlay carries. See `retrieve::graph` for why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub degraded: Option<String>,
 }

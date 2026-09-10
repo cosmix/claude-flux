@@ -223,7 +223,7 @@ fn load_graph(project_root: &Path, work_dir: &WorkDir) -> Result<(ResolvedGraph,
         &graph_store,
         project_root,
         SnapshotPolicy::LocalCurrent,
-    )?;
+    );
     if snapshot.action != SnapshotAction::Reused {
         eprintln!("{}", snapshot.describe());
     }

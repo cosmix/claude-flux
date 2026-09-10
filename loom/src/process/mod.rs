@@ -11,8 +11,10 @@ use anyhow::{Context, Result};
 use nix::errno::Errno;
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
-use std::process::{Command, Output, Stdio};
-use std::time::Duration;
+use std::io::Read;
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
 
 pub use environment::apply_stage_environment;
@@ -97,11 +99,19 @@ impl BoundedOutput {
 ///
 /// # Output size
 ///
-/// stdout/stderr are piped but only drained after the child exits, so a child
-/// that writes more than the OS pipe buffer (~64KB) before exiting will block
-/// on write and be killed at the deadline. That is acceptable here: this
-/// helper is for control commands with negligible output. Use
-/// `verify::criteria::executor` for commands whose output matters.
+/// stdout/stderr are drained concurrently on dedicated threads while the main
+/// thread waits on the child, so output larger than the OS pipe buffer
+/// (~64KB) cannot make the child block on write and stall past the deadline.
+///
+/// # Deadline scope
+///
+/// `timeout` bounds the *whole call*, not just the child's run time: once the
+/// child exits, collecting its buffered stdout/stderr from the reader
+/// threads still has to happen before this function can return, and a
+/// descendant that inherited a pipe and outlived the direct child can hold
+/// that collection open indefinitely. The remaining time budget (`timeout`
+/// minus time already spent) bounds that collection too; running past it is
+/// reported the same way as the child itself running past the deadline.
 pub fn run_bounded(command: &mut Command, timeout: Duration) -> Result<BoundedOutput> {
     #[cfg(unix)]
     {
@@ -109,35 +119,168 @@ pub fn run_bounded(command: &mut Command, timeout: Duration) -> Result<BoundedOu
         command.process_group(0);
     }
 
+    let started = Instant::now();
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("Failed to spawn {:?}", command.get_program()))?;
 
+    let (stdout_reader, stderr_reader) = start_readers(&mut child, command)?;
+
     match child
         .wait_timeout(timeout)
         .with_context(|| format!("Failed to wait for {:?}", command.get_program()))?
     {
-        Some(_) => {
-            let output = child.wait_with_output().with_context(|| {
-                format!("Failed to collect output of {:?}", command.get_program())
-            })?;
-            Ok(BoundedOutput::Completed(output))
+        Some(status) => {
+            let remaining = timeout.saturating_sub(started.elapsed());
+            collect_output(
+                &mut child,
+                status,
+                stdout_reader,
+                stderr_reader,
+                remaining,
+                command,
+            )
         }
         None => {
-            // Kill the whole child process group so a control command cannot
-            // leave descendants behind after its direct child times out.
-            #[cfg(unix)]
-            if let Ok(pid) = i32::try_from(child.id()) {
-                let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
-            }
-            #[cfg(not(unix))]
-            let _ = child.kill();
+            kill_group(&mut child);
             let _ = child.wait();
             Ok(BoundedOutput::TimedOut)
         }
     }
+}
+
+/// A reader thread's eventual result, or `None` if its pipe was never
+/// attached (see [`drain`]).
+type ReaderHandle = Option<Receiver<std::io::Result<Vec<u8>>>>;
+
+/// Grace period given to the reader threads to unblock once the process
+/// group has been killed after a post-exit deadline was already exceeded.
+const READER_GRACE: Duration = Duration::from_secs(1);
+
+/// Kill the whole process group of `child` so a control command cannot leave
+/// descendants behind, whether the deadline expired while it was still
+/// running or a reader thread failed to start after it did.
+fn kill_group(child: &mut Child) {
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        let _ = kill(Pid::from_raw(-pid), Signal::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    let _ = child.kill();
+}
+
+/// Start the stdout/stderr reader threads for an already-spawned `child`.
+///
+/// If the OS refuses to create a reader thread (`RLIMIT_NPROC`, memory
+/// pressure), the child is already running with nothing left to drain its
+/// pipes: kill its process group before returning `Err` so the failure
+/// cannot leave an orphaned, unbounded process behind.
+fn start_readers(child: &mut Child, command: &Command) -> Result<(ReaderHandle, ReaderHandle)> {
+    let stdout = match drain(child.stdout.take()) {
+        Ok(reader) => reader,
+        Err(error) => return Err(reader_spawn_failed(child, "stdout", error, command)),
+    };
+    let stderr = match drain(child.stderr.take()) {
+        Ok(reader) => reader,
+        Err(error) => return Err(reader_spawn_failed(child, "stderr", error, command)),
+    };
+    Ok((stdout, stderr))
+}
+
+fn reader_spawn_failed(
+    child: &mut Child,
+    stream: &str,
+    error: std::io::Error,
+    command: &Command,
+) -> anyhow::Error {
+    kill_group(child);
+    let _ = child.wait();
+    anyhow::Error::new(error).context(format!(
+        "Failed to start {stream} reader for {:?}",
+        command.get_program()
+    ))
+}
+
+/// Spawn a named thread that reads `pipe` to completion and sends the result
+/// down a channel, or return `Ok(None)` if the pipe was never attached.
+/// `Err` only when the OS refuses to create the thread.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::io::Result<ReaderHandle> {
+    let Some(mut pipe) = pipe else {
+        return Ok(None);
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("loom-process-reader".to_string())
+        .spawn(move || {
+            let mut buf = Vec::new();
+            let result = pipe.read_to_end(&mut buf).map(|_| buf);
+            let _ = tx.send(result);
+        })?;
+    Ok(Some(rx))
+}
+
+/// Receive both readers' output within `remaining`. If either hasn't
+/// delivered by then, the direct child has already exited but a descendant
+/// still holds a pipe open: the caller's deadline was exceeded while output
+/// was held open, so this reports [`BoundedOutput::TimedOut`] regardless of
+/// whether the descendant, once the process group is killed, still manages
+/// to unblock the reader. [`READER_GRACE`] only bounds that cleanup attempt
+/// so the reader threads exit promptly instead of lingering past return.
+fn collect_output(
+    child: &mut Child,
+    status: ExitStatus,
+    stdout_reader: ReaderHandle,
+    stderr_reader: ReaderHandle,
+    remaining: Duration,
+    command: &Command,
+) -> Result<BoundedOutput> {
+    let stdout = recv_stream(&stdout_reader, remaining);
+    let stderr = recv_stream(&stderr_reader, remaining);
+    if let (Some(stdout), Some(stderr)) = (stdout, stderr) {
+        return finish_output(status, stdout, stderr, command).map(BoundedOutput::Completed);
+    }
+    kill_group(child);
+    let _ = child.wait();
+    let _ = recv_stream(&stdout_reader, READER_GRACE);
+    let _ = recv_stream(&stderr_reader, READER_GRACE);
+    Ok(BoundedOutput::TimedOut)
+}
+
+/// Receive one reader's result within `deadline`, or `None` if it hasn't
+/// delivered yet. A missing `receiver` (pipe never attached) resolves
+/// immediately to empty output, matching the pre-channel `drain` behavior.
+fn recv_stream(receiver: &ReaderHandle, deadline: Duration) -> Option<std::io::Result<Vec<u8>>> {
+    let Some(receiver) = receiver else {
+        return Some(Ok(Vec::new()));
+    };
+    match receiver.recv_timeout(deadline) {
+        Ok(result) => Some(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => None,
+        Err(mpsc::RecvTimeoutError::Disconnected) => Some(Err(std::io::Error::other(
+            "reader thread exited without sending a result (likely panicked)",
+        ))),
+    }
+}
+
+/// Turn the two receive results into `Output`, converting a reader I/O error
+/// into a contextual error naming `command`'s program and stream.
+fn finish_output(
+    status: ExitStatus,
+    stdout: std::io::Result<Vec<u8>>,
+    stderr: std::io::Result<Vec<u8>>,
+    command: &Command,
+) -> Result<Output> {
+    let stdout =
+        stdout.with_context(|| format!("Failed to read stdout of {:?}", command.get_program()))?;
+    let stderr =
+        stderr.with_context(|| format!("Failed to read stderr of {:?}", command.get_program()))?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Run a command under a deadline and turn expiry into a typed error.
