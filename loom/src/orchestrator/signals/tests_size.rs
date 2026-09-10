@@ -24,10 +24,12 @@ use super::generate::{
 ///
 /// Raised alongside the subagent context-ceiling doctrine (BLOCK-D, Rule 3
 /// and hard stop 4's ceiling-raise wording): the prior ceiling (26,624) left
-/// only ~26 bytes of headroom, too little for the addition. Actual size is
-/// 27,683 bytes, leaving ~1KB of buffer. Trim future doctrine additions
-/// rather than spending down that buffer.
-const CLAUDE_MD_TEMPLATE_MAX_BYTES: usize = 28_672;
+/// only ~26 bytes of headroom, too little for the addition. Raised again
+/// alongside the memory-events doctrine (receipts, `--evidence`): the prior
+/// ceiling (28,672) left only ~18 bytes of headroom by the time that change
+/// landed. Actual size is now 28,813 bytes, leaving ~880 bytes of buffer.
+/// Trim future doctrine additions rather than spending down that buffer.
+const CLAUDE_MD_TEMPLATE_MAX_BYTES: usize = 29_696;
 
 /// The KV-cache-stable prefix pasted into the first message of every fresh
 /// session spawned for a standard stage.

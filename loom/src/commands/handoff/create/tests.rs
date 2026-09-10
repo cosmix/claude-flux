@@ -4,6 +4,27 @@
 use super::*;
 use serial_test::serial;
 
+/// Restores cwd on drop. `execute()` resolves its work dir from the process
+/// cwd, so the test below must mutate process-global state and clean up
+/// after itself even on panic (mirrors `commands/memory/handlers/tests.rs`).
+struct CwdGuard {
+    original_dir: std::path::PathBuf,
+}
+
+impl CwdGuard {
+    fn new() -> Self {
+        Self {
+            original_dir: env::current_dir().unwrap(),
+        }
+    }
+}
+
+impl Drop for CwdGuard {
+    fn drop(&mut self) {
+        env::set_current_dir(&self.original_dir).unwrap();
+    }
+}
+
 #[test]
 fn test_resolve_stage_id_from_arg() {
     let stage_arg = Some("test-stage".to_string());
@@ -138,6 +159,54 @@ fn a_failed_transition_is_an_error_that_says_the_document_stands() {
     assert!(
         rendered.contains("End your turn now"),
         "the message must not read as 'retry the handoff': {rendered}"
+    );
+}
+
+/// The defect: journals are `memory/<stage_id>.md`, but `execute()` used to
+/// read `memory/<session_id>.md`, so a CLI-triggered handoff (the pre-compact
+/// hook, CLAUDE.md Rule 3) always carried an empty memory section even when
+/// the stage journal held real entries.
+#[test]
+#[serial]
+fn a_cli_handoff_for_a_stage_with_a_journal_carries_its_memory() {
+    use crate::fs::memory::{append_entry, MemoryEntry, MemoryEntryType};
+    use crate::verify::transitions::create_stage;
+
+    let _guard = CwdGuard::new();
+    let temp = tempfile::tempdir().unwrap();
+    let work_dir = temp.path().join(".loom").join("work");
+    std::fs::create_dir_all(&work_dir).unwrap();
+    std::fs::write(work_dir.join("config.toml"), "").unwrap();
+
+    let mut stage = Stage::new("journaled".to_string(), None);
+    stage.id = "journaled".to_string();
+    create_stage(&stage, &work_dir).unwrap();
+
+    let entry = MemoryEntry::new(
+        MemoryEntryType::Note,
+        "found: the handoff wiring test itself".to_string(),
+    );
+    append_entry(&work_dir, "journaled", &entry).unwrap();
+
+    env::set_current_dir(temp.path()).unwrap();
+    execute(
+        Some("journaled".to_string()),
+        Some("some-session".to_string()),
+        "manual".to_string(),
+        None,
+    )
+    .unwrap();
+
+    let handoffs_dir = work_dir.join("handoffs");
+    let handoff_file = std::fs::read_dir(&handoffs_dir)
+        .unwrap()
+        .find_map(|entry| entry.ok().map(|e| e.path()))
+        .expect("execute() should have written a handoff file");
+    let handoff_contents = std::fs::read_to_string(&handoff_file).unwrap();
+
+    assert!(
+        handoff_contents.contains("## Stage Memory"),
+        "a CLI handoff for a stage with a journal must carry it: {handoff_contents}"
     );
 }
 
