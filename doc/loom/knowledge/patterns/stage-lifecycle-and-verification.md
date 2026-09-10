@@ -10,7 +10,7 @@ Stage has 13 states: WaitingForDeps -> Queued -> Executing -> Completed (termina
 
 ## File-Based State Pattern
 
-All state persisted to `.work/` as markdown with YAML frontmatter. Benefits: git-friendly diffing, human-readable, crash recovery via file re-read. Stage files named with topological depth prefix (e.g., `01-knowledge-bootstrap.md`).
+All state persisted to `.loom/work/` as markdown with YAML frontmatter. Benefits: git-friendly diffing, human-readable, crash recovery via file re-read. Stage files named with topological depth prefix (e.g., `01-knowledge-bootstrap.md`).
 
 **Concurrency is NOT single-writer.** The orchestrator loop, daemon IPC handlers, and agent-run CLI commands all mutate stage files. Existing-record changes must use the canonical locked `update_stage` transaction; crash-atomic replacement alone does not prevent stale logical writes. See the Locked Stage Read-Modify-Write Pattern below.
 

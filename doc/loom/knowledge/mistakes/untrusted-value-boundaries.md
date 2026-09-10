@@ -145,7 +145,7 @@ distinct keys.
 - **Socket permissions:** Created with default umask (world-accessible). Fix: `umask(0o077)` before bind.
 - **PID handling:** `pid as i32` can overflow; raw `libc::kill` mishandles `EPERM`/`ESRCH`. Fix: use `nix::sys::signal::kill`.
 - **Script injection:** AppleScript/XTerm strings not escaped. Fix: escape backslashes and quotes.
-- **TOML injection:** `config.toml` via string formatting. Fix: use `toml::to_string_pretty`.
+- **TOML injection:** `.loom/work/config.toml` via string formatting. Fix: use `toml::to_string_pretty`.
 - **File locking TOCTOU:** `locked_write` truncated before lock. Fix: extracted `fs/locking.rs` with open-lock-truncate-write-flush.
 - **State machine bypass:** `--force-unsafe` and recovery bypass skip validation. Fix: log all bypasses.
 

@@ -11,7 +11,7 @@
 
 **What happened:** Seven daemon-side code paths wrote `merged: true` to escape an earlier respawn-loop bug without verifying git ancestry. A user lost real work: stage `oauth-hardening` was marked merged but its commits stayed stranded on `loom/oauth-hardening`; a downstream stage then worktreed off main and produced overlapping, incomplete code. Smoking gun log: `Completed stage has no completed_commit, assuming merged stage_id=integration-verify`.
 
-**Misleading signal:** The original respawn-loop bug (commit `1af9827`, see `doc/merge-resolve-bug-notes.md`) was patched by force-writing `merged=true` when stage was already Completed — the rationale "stage's work is done, don't revert to MergeBlocked" looked defensible. Similarly, seven separate sites used "assume already merged" / "legacy stage" / "avoid stuck-in-MergeBlocked loops" as justification for lying about merge state.
+**Misleading signal:** The original respawn-loop bug (commit `1af9827`; the bug notes that described it were never committed) was patched by force-writing `merged=true` when stage was already Completed — the rationale "stage's work is done, don't revert to MergeBlocked" looked defensible. Similarly, seven separate sites used "assume already merged" / "legacy stage" / "avoid stuck-in-MergeBlocked loops" as justification for lying about merge state.
 
 **Why it broke:** `merged=true` is a contract with the dependency scheduler. Dependents satisfy their deps by reading `dep.merged`. Lying about it silently propagates broken state across the DAG: dependents spawn with a wrong base branch, their commits overlap partially with the unmerged dep, progressive merge fails downstream.
 
@@ -76,7 +76,7 @@
 
 - A preflight gate must test the precondition the operation actually has. The probe only does `checkout_branch(target)` + `git merge --no-commit --no-ff`; neither touches untracked paths, so untracked files are irrelevant to it. Use `--untracked-files=no` and let git filter, rather than hand-parsing `??`.
 - Do not exempt a failure class from a retry cap unless it is genuinely transient. If a failure can be permanent, it needs either a cap or an escalation path — otherwise the daemon loops forever and `loom status` shows a stage that looks alive but can never progress.
-- Symptom to recognise: the same `Warning:` line repeating in `.work/orchestrator.log` at the poll interval, with a stage stuck in a non-terminal status and `session: null`.
+- Symptom to recognise: the same `Warning:` line repeating in `.loom/work/orchestrator.log` at the poll interval, with a stage stuck in a non-terminal status and `session: null`.
 - A merge that _would_ overwrite an untracked file is still caught — git refuses and `run_probe` surfaces it as an `Infrastructure` error carrying git's stderr. No extra preflight is needed for that case.
 
 **Fix:** `git/merge/probe.rs` — `require_clean_repository` now uses `--untracked-files=no` and reports "uncommitted tracked changes"; regression test `untracked_files_do_not_block_the_probe` in `git/merge/probe/tests.rs`. The pre-existing test `dirty_repository_is_an_infrastructure_failure_without_mutation` had encoded the bug (it dirtied an _untracked_ `dirty.txt`) and now dirties the tracked `file.txt` instead.
