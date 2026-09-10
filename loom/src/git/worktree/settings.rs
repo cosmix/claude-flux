@@ -17,6 +17,12 @@ use crate::fs::stage_request::SPOOL_RELPATH as REQUEST_SPOOL_RELPATH;
 use crate::fs::work_dir::{Layout, WorkDir};
 use crate::hooks::{setup_hooks_for_worktree, HooksConfig};
 use crate::plan::schema::PermissionMode;
+use crate::telemetry::TELEMETRY_SPOOL_RELPATH;
+const SPOOL_RELPATHS: [&str; 3] = [
+    MEMORY_SPOOL_RELPATH,
+    TELEMETRY_SPOOL_RELPATH,
+    REQUEST_SPOOL_RELPATH,
+];
 
 /// Whether a repo-relative path is worktree scaffolding loom itself creates.
 ///
@@ -28,8 +34,8 @@ use crate::plan::schema::PermissionMode;
 /// them as untracked. Callers reading `git status` to judge whether a
 /// worktree holds *agent work* must discount them either way.
 ///
-/// Also discounted: `.loom/memory-spool.jsonl`, `.loom/stage-request-spool.jsonl`
-/// and `.loom/cache/`, loom's own runtime paths, written lazily during a
+/// Also discounted: the memory, telemetry and stage-request spools, plus
+/// `.loom/cache/`, loom's own runtime paths, written lazily during a
 /// stage's execution rather than planted by `create_worktree` — but just as
 /// much loom's own output, so they discount the same way. The bare `.loom`
 /// entry is discounted too, for a worktree whose whole `.loom/` (holding only
@@ -51,8 +57,7 @@ pub fn is_worktree_scaffold_path(path: &str) -> bool {
         || path == ".loom"
         || path == ".loom/work"
         || path.starts_with(".loom/work/")
-        || path == MEMORY_SPOOL_RELPATH
-        || path == REQUEST_SPOOL_RELPATH
+        || SPOOL_RELPATHS.contains(&path)
         || path == ".loom/cache"
         || path.starts_with(".loom/cache/")
 }
@@ -610,18 +615,13 @@ fn add_to_gitignore_exclude(git_dir: &Path, pattern: &str) -> Result<()> {
 }
 
 /// Patterns loom excludes from git's view of every worktree: the previous
-/// session's `.claude/settings.local.json`, plus the loom runtime paths
-/// [`is_worktree_scaffold_path`] discounts, matching this repo's own `.gitignore`.
-const WORKTREE_EXCLUDE_PATTERNS: &[&str] = &[
-    ".claude/settings.local.json",
-    MEMORY_SPOOL_RELPATH,
-    REQUEST_SPOOL_RELPATH,
-    ".loom/cache/",
-];
+/// session's `.claude/settings.local.json` and loom's `.loom/cache/`, matching
+/// this repo's own `.gitignore`. Spool paths come from [`SPOOL_RELPATHS`].
+const WORKTREE_EXCLUDE_PATTERNS: &[&str] = &[".claude/settings.local.json", ".loom/cache/"];
 
-/// Write [`WORKTREE_EXCLUDE_PATTERNS`] into `git_dir`'s `info/exclude`.
+/// Write [`WORKTREE_EXCLUDE_PATTERNS`] and [`SPOOL_RELPATHS`] into `git_dir`'s `info/exclude`.
 fn add_worktree_exclude_patterns(git_dir: &Path) -> Result<()> {
-    for pattern in WORKTREE_EXCLUDE_PATTERNS {
+    for pattern in WORKTREE_EXCLUDE_PATTERNS.iter().chain(&SPOOL_RELPATHS) {
         add_to_gitignore_exclude(git_dir, pattern)?;
     }
     Ok(())

@@ -6,6 +6,7 @@
 //! environment mutate process state and are therefore `#[serial]`.
 
 use super::*;
+use crate::context::local_overlay::local_overlay_key;
 use crate::models::stage::Stage;
 use chrono::Utc;
 use serial_test::serial;
@@ -137,7 +138,7 @@ fn parse_session_id_fails_open_on_anything_dishonest() {
 
 #[test]
 fn malformed_or_absent_stdin_resets_nothing() {
-    // parse_session_id fails first for all of these, so CompactionTarget
+    // parse_session_id fails first for all of these, so HookTarget
     // resolution (and the filesystem) are never reached — no env mutation
     // needed, safe to run unserialized alongside every other test.
     reset_for_payload("");

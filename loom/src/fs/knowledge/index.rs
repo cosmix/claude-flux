@@ -62,7 +62,7 @@ fn escape_cell(value: &str) -> String {
 }
 
 /// Keeping table entries short makes the generated index inexpensive to pull.
-const MAX_BLURB_CHARS: usize = 100;
+pub(crate) const MAX_BLURB_CHARS: usize = 80;
 
 /// Preserve enough context to identify a topic without letting one description
 /// dominate a retrieved index.
@@ -297,7 +297,7 @@ mod tests {
         let blurb = format!("{}extra", "word, ".repeat(20));
         let truncated = truncate_blurb(&blurb);
 
-        assert_eq!(truncated, format!("{}word…", "word, ".repeat(15)));
+        assert_eq!(truncated, format!("{}word…", "word, ".repeat(12)));
         assert!(truncated.ends_with('…'));
         assert!(truncated.chars().count() <= MAX_BLURB_CHARS + 1);
     }

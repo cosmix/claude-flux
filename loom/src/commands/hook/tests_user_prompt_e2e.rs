@@ -11,7 +11,7 @@
 //! maintainability line limit; wired back in via `#[path =
 //! "tests_user_prompt_e2e.rs"] mod e2e;` at the bottom of that file.
 
-use super::super::retrieve_for_prompt;
+use super::super::{retrieve_for_prompt, Emission};
 use crate::context::graph_store::{FileEntry, GraphLayer, GraphStore};
 use crate::context::local_overlay::local_overlay_key;
 use crate::context::schema::{
@@ -46,19 +46,25 @@ fn mapped_project_without_knowledge() -> TempDir {
 /// `local_overlay_key` computes — the same one `loom map` writes and the same
 /// one a stage-less `StageQuery` reads.
 fn write_local_overlay(root: &Path) {
+    let work_dir = WorkDir::new(root).unwrap();
+    let (plan, stage) = local_overlay_key(work_dir.project_root().unwrap());
+    write_overlay(root, &plan, &stage, DISTINCTIVE_SYMBOL, "src/zorble.rs");
+}
+
+fn write_overlay(root: &Path, plan: &str, stage: &str, symbol: &str, path: &str) {
     let node = SourceNode {
-        id: "src/zorble.rs#function:ZorbleFrobnicator".to_string(),
+        id: format!("{path}#function:{symbol}"),
         kind: SourceNodeKind::Function,
-        path: PathBuf::from("src/zorble.rs"),
-        scope: vec![DISTINCTIVE_SYMBOL.to_string()],
+        path: PathBuf::from(path),
+        scope: vec![symbol.to_string()],
         span: Span {
             start_byte: 40,
             end_byte: 96,
             line_start: 12,
             line_end: 14,
         },
-        signature: "pub fn zorble_frobnicator() -> Widget".to_string(),
-        body_hash: "sha256:zorble".to_string(),
+        signature: format!("pub fn {symbol}() -> Widget"),
+        body_hash: format!("sha256:{symbol}"),
         language: NodeLanguage::Rust,
         parser_version: "test+v1".to_string(),
         coverage: FileCoverage::Full,
@@ -67,7 +73,6 @@ fn write_local_overlay(root: &Path) {
     let work_dir = WorkDir::new(root).unwrap();
     let store = ContextStore::open(&work_dir).unwrap();
     let graph_store = GraphStore::new(store.root(), work_dir.root());
-    let (plan, stage) = local_overlay_key(work_dir.project_root().unwrap());
 
     let mut files = BTreeMap::new();
     files.insert(
@@ -81,8 +86,8 @@ fn write_local_overlay(root: &Path) {
     );
     graph_store
         .save_overlay(
-            &plan,
-            &stage,
+            plan,
+            stage,
             &GraphLayer {
                 revision: "test-revision".to_string(),
                 generation: String::new(),
@@ -104,6 +109,63 @@ fn enter_checkout(root: &Path) {
 fn leave() {
     std::env::remove_var("LOOM_STAGE_ID");
     std::env::remove_var("LOOM_WORK_DIR");
+}
+
+fn assert_only_overlay(emission: &Emission, expected: &str, rejected: &[&str]) {
+    let ids: Vec<&str> = emission
+        .handed_over
+        .items
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect();
+    assert!(
+        ids.iter().any(|id| id.starts_with(expected)),
+        "expected {expected}, got {ids:?}"
+    );
+    for prefix in rejected {
+        assert!(
+            ids.iter().all(|id| !id.starts_with(prefix)),
+            "did not expect {prefix}, got {ids:?}"
+        );
+    }
+}
+
+fn project_with_three_overlays() -> TempDir {
+    let temp = TempDir::new().unwrap();
+    let work_dir = temp.path().join(".loom").join("work");
+    std::fs::create_dir_all(&work_dir).unwrap();
+    for stage_id in ["stage-a", "stage-b"] {
+        let stage = crate::models::stage::Stage {
+            id: stage_id.to_string(),
+            name: stage_id.to_string(),
+            plan_id: Some("test-plan".to_string()),
+            ..crate::models::stage::Stage::default()
+        };
+        crate::verify::transitions::create_stage(&stage, &work_dir).unwrap();
+    }
+    let (local_plan, local_stage) = local_overlay_key(temp.path());
+    write_overlay(
+        temp.path(),
+        &local_plan,
+        &local_stage,
+        "ZorbleLocal",
+        "src/local.rs",
+    );
+    write_overlay(
+        temp.path(),
+        "test-plan",
+        "stage-a",
+        "ZorbleStageA",
+        "src/stage_a.rs",
+    );
+    write_overlay(
+        temp.path(),
+        "test-plan",
+        "stage-b",
+        "ZorbleStageB",
+        "src/stage_b.rs",
+    );
+    temp
 }
 
 #[test]
@@ -215,33 +277,42 @@ fn a_hook_payload_with_no_session_id_still_answers_and_suppresses_a_repeat() {
 
 #[test]
 #[serial]
-fn a_stage_session_is_still_keyed_to_its_stage() {
-    let temp = mapped_project_without_knowledge();
+fn a_stage_session_reads_its_own_stage_overlay_not_the_local_one() {
+    let temp = project_with_three_overlays();
     let work_dir = temp.path().join(".loom").join("work");
-    let stage = crate::models::stage::Stage {
-        id: "prompt-hook-stage".to_string(),
-        name: "Prompt Hook Stage".to_string(),
-        plan_id: Some("test-plan".to_string()),
-        ..crate::models::stage::Stage::default()
-    };
-    crate::verify::transitions::create_stage(&stage, &work_dir).unwrap();
+    let prompt = "Where are ZorbleLocal, ZorbleStageA, and ZorbleStageB defined?".to_string();
 
+    enter_checkout(temp.path());
+    let local = retrieve_for_prompt(prompt.clone(), None).expect("local overlay");
     std::env::set_var("LOOM_WORK_DIR", &work_dir);
-    std::env::set_var("LOOM_STAGE_ID", &stage.id);
-    let emission = retrieve_for_prompt(distinctive_prompt(), None);
+    std::env::set_var("LOOM_STAGE_ID", "stage-a");
+    let stage_a = retrieve_for_prompt(prompt.clone(), None).expect("stage-a overlay");
+    std::env::set_var("LOOM_STAGE_ID", "stage-b");
+    let stage_b = retrieve_for_prompt(prompt, None).expect("stage-b overlay");
     leave();
 
-    let emission = emission.expect("a stage in a mapped checkout is answered too");
-    assert_eq!(emission.target.stage_id, stage.id);
-    assert_eq!(
-        emission.target.plan, "test-plan",
-        "the stage record's plan is the delivery key, not the local overlay's"
+    assert_only_overlay(
+        &local,
+        "src/local.rs",
+        &["src/stage_a.rs", "src/stage_b.rs"],
     );
+    assert_only_overlay(
+        &stage_a,
+        "src/stage_a.rs",
+        &["src/local.rs", "src/stage_b.rs"],
+    );
+    assert_only_overlay(
+        &stage_b,
+        "src/stage_b.rs",
+        &["src/local.rs", "src/stage_a.rs"],
+    );
+    assert_eq!(stage_a.target.plan, "test-plan");
+    assert_eq!(stage_a.target.stage_id, "stage-a");
     assert!(
-        emission
+        stage_a
             .payload
-            .contains(&format!("loom knowledge context --stage {}", stage.id)),
+            .contains("loom knowledge context --stage stage-a"),
         "the brief points back at the stage that asked: {}",
-        emission.payload
+        stage_a.payload
     );
 }

@@ -150,6 +150,9 @@ fn rule_8f_ambiguous_suffix_path_stays_reported() {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("fixture.rs"), "// fixture\n").unwrap();
     }
+    // A real top-level `tests` directory keeps this an ambiguous
+    // `MissingSourceRef` instead of tripping the external-by-resolution note.
+    fs::create_dir_all(project.join("tests")).unwrap();
     fs::write(root.join("notes.md"), "## Topic\n`tests/fixture.rs`\n").unwrap();
 
     let catalog = build(&root).unwrap();
@@ -172,6 +175,11 @@ fn rule_8g_files_under_target_are_never_matched() {
     fs::create_dir_all(&root).unwrap();
     fs::create_dir_all(project.join("target/debug")).unwrap();
     fs::write(project.join("target/debug/build.rs"), "// build script\n").unwrap();
+    // A real top-level `debug` directory (distinct from `target/debug`) keeps
+    // this a plain `MissingSourceRef` instead of tripping the
+    // external-by-resolution note; `target/` exclusion is what this test
+    // actually exercises.
+    fs::create_dir_all(project.join("debug")).unwrap();
     fs::write(root.join("notes.md"), "## Topic\n`debug/build.rs`\n").unwrap();
 
     let catalog = build(&root).unwrap();
@@ -183,5 +191,80 @@ fn rule_8g_files_under_target_are_never_matched() {
             source_path: "debug/build.rs".to_string(),
         }],
         "build output under target/ must never satisfy a source reference"
+    );
+}
+
+#[test]
+fn an_example_path_is_reported_as_a_note_not_a_missing_source() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("notes.md"),
+        "## Topic\nFor example, write `category/slug.md`.\n",
+    )
+    .unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert_eq!(
+        catalog.issues,
+        vec![CatalogIssue::UnverifiableReference {
+            file: PathBuf::from("notes.md"),
+            source_path: "category/slug.md".to_string(),
+            kind: "example".to_string(),
+        }]
+    );
+    assert!(catalog.issues[0].is_review_only());
+}
+
+#[test]
+fn a_path_under_a_foreign_top_level_directory_is_external() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("notes.md"),
+        "## Topic\nSee `rust-analyzer/crates/ide/src/lib.rs` for the equivalent logic.\n",
+    )
+    .unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert_eq!(
+        catalog.issues,
+        vec![CatalogIssue::UnverifiableReference {
+            file: PathBuf::from("notes.md"),
+            source_path: "rust-analyzer/crates/ide/src/lib.rs".to_string(),
+            kind: "external".to_string(),
+        }],
+        "a path with no marker words, resolving under a top-level directory this project does not have, must be an external note, not a MissingSourceRef"
+    );
+}
+
+#[test]
+fn a_missing_file_under_an_existing_top_level_directory_stays_live() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    let root = project.join("doc/loom/knowledge");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(project.join("loom/src")).unwrap();
+    fs::write(
+        root.join("notes.md"),
+        "## Topic\n`loom/src/missing.rs` needs updating.\n",
+    )
+    .unwrap();
+
+    let catalog = build(&root).unwrap();
+
+    assert_eq!(
+        catalog.issues,
+        vec![CatalogIssue::MissingSourceRef {
+            file: PathBuf::from("notes.md"),
+            source_path: "loom/src/missing.rs".to_string(),
+        }],
+        "a missing file under a real top-level directory is still a MissingSourceRef, not external"
     );
 }

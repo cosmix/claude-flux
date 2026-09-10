@@ -8,7 +8,6 @@
 # refactor it back. New violations must be refactored or explicitly recorded.
 
 file src/commands/graph/tests.rs 425
-file src/commands/hook/tests_reconcile_graph.rs 432
 file src/commands/init/tests.rs 570
 file src/commands/plan/verify.rs 599
 file src/commands/review/generate.rs 422
@@ -16,7 +15,6 @@ file src/commands/stage/complete.rs 771
 file src/commands/stage/merge.rs 546
 file src/commands/stage/tests/complete.rs 544
 file src/daemon/server/dispute.rs 510
-file src/fs/knowledge/tests/catalog.rs 402
 file src/fs/locking.rs 499
 file src/fs/permissions/hooks.rs 446
 file src/fs/permissions/settings.rs 460

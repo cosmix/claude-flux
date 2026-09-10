@@ -92,7 +92,7 @@ fn dispatch_knowledge(command: KnowledgeCommands) -> Result<()> {
             heading,
             content,
         } => knowledge::replace_section(file, heading, content),
-        // `budget` is bound short so the context call remains compact.
+        KnowledgeCommands::Annotate(args) => knowledge::annotate::annotate(args),
         KnowledgeCommands::Context {
             stage,
             query,
@@ -103,22 +103,28 @@ fn dispatch_knowledge(command: KnowledgeCommands) -> Result<()> {
             require_compact,
             explain,
             json,
-        } => knowledge::context::context(
-            stage,
-            query,
-            budget,
-            scope,
-            require_id,
-            history,
-            require_compact,
-            explain,
-            json,
-        ),
+        } => {
+            // `budget` is bound short so the context call remains compact.
+            knowledge::context::context(
+                stage,
+                query,
+                budget,
+                scope,
+                require_id,
+                history,
+                require_compact,
+                explain,
+                json,
+            )
+        }
         KnowledgeCommands::Eval {
             cases,
             budget_tokens,
             json,
         } => knowledge::eval::eval(cases, budget_tokens, json),
+        KnowledgeCommands::Telemetry { stage, json } => {
+            knowledge::telemetry::telemetry(stage, json)
+        }
         KnowledgeCommands::Sync {
             structural_only,
             json,

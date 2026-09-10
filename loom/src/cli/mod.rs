@@ -10,3 +10,4 @@ mod types_stage;
 
 pub use dispatch::dispatch;
 pub use types::Cli;
+pub(crate) use types_memory::AnnotateArgs;

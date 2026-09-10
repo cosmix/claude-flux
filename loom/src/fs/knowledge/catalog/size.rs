@@ -12,10 +12,9 @@ use std::path::Path;
 const MAX_TIER_ONE_SECTION_LINES: usize = 40;
 /// Maximum line count for a tier-1 summary file.
 const MAX_TIER_ONE_FILE_LINES: usize = 250;
-/// Maximum byte size for the generated tier-0 index. The index is read in
-/// full at the start of every session, so this is the byte budget for
-/// roughly 3k tokens — the ceiling we accept for that first read.
-pub(crate) const MAX_INDEX_BYTES: u64 = 12_288;
+/// Maximum byte size for the generated tier-0 index: roughly 4k tokens for
+/// the first read of every session — the ceiling the hierarchy repair keeps under.
+pub(crate) const MAX_INDEX_BYTES: u64 = 16_384;
 
 /// Flag a tier-1 section whose line count (its `## ` heading line included,
 /// trailing blank lines excluded) exceeds `MAX_TIER_ONE_SECTION_LINES`. A

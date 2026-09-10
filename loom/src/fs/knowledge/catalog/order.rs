@@ -18,6 +18,8 @@ fn issue_file(issue: &CatalogIssue) -> &Path {
         | CatalogIssue::GenericBlurb { file, .. }
         | CatalogIssue::BrokenLink { file, .. }
         | CatalogIssue::MissingSourceRef { file, .. }
+        | CatalogIssue::EvidenceChanged { file, .. }
+        | CatalogIssue::UnverifiableReference { file, .. }
         | CatalogIssue::OversizedSection { file, .. }
         | CatalogIssue::OversizedFile { file, .. } => file,
         CatalogIssue::OversizedIndex { .. } => Path::new(INDEX_FILENAME),
@@ -30,9 +32,11 @@ fn issue_kind(issue: &CatalogIssue) -> u8 {
         CatalogIssue::GenericBlurb { .. } => 1,
         CatalogIssue::BrokenLink { .. } => 2,
         CatalogIssue::MissingSourceRef { .. } => 3,
-        CatalogIssue::OversizedSection { .. } => 4,
-        CatalogIssue::OversizedFile { .. } => 5,
-        CatalogIssue::OversizedIndex { .. } => 6,
+        CatalogIssue::EvidenceChanged { .. } => 4,
+        CatalogIssue::UnverifiableReference { .. } => 5,
+        CatalogIssue::OversizedSection { .. } => 6,
+        CatalogIssue::OversizedFile { .. } => 7,
+        CatalogIssue::OversizedIndex { .. } => 8,
     }
 }
 
@@ -46,6 +50,14 @@ fn issue_payload(issue: &CatalogIssue) -> String {
         CatalogIssue::GenericBlurb { blurb, .. } => blurb.clone(),
         CatalogIssue::BrokenLink { target, .. } => target.clone(),
         CatalogIssue::MissingSourceRef { source_path, .. } => source_path.clone(),
+        CatalogIssue::EvidenceChanged {
+            source_path,
+            verified,
+            ..
+        } => format!("{source_path}:{verified}"),
+        CatalogIssue::UnverifiableReference {
+            source_path, kind, ..
+        } => format!("{source_path}:{kind}"),
         CatalogIssue::OversizedSection { heading, lines, .. } => format!("{heading}:{lines}"),
         CatalogIssue::OversizedFile { lines, .. } => lines.to_string(),
         CatalogIssue::OversizedIndex { bytes } => bytes.to_string(),

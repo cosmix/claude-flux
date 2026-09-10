@@ -2,7 +2,7 @@
 
 use crate::context::config::MIN_BUDGET_TOKENS;
 use crate::validation::{clap_id_validator, clap_knowledge_content_validator};
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use std::path::PathBuf;
 
 /// Clap value parser for `--budget-tokens`.
@@ -46,6 +46,9 @@ pub enum KnowledgeCommands {
         content: Option<String>,
     },
 
+    /// Annotate a knowledge target with lifecycle, evidence, aliases, verification, or a blurb
+    Annotate(AnnotateArgs),
+
     /// Retrieve a token-budgeted context pack for a query (deterministic, offline)
     ///
     /// Exits with code 3 when a --require-id could not be honored.
@@ -79,7 +82,7 @@ pub enum KnowledgeCommands {
         json: bool,
     },
 
-    /// Score retrieval against a checked-in case file (precision@5 / MRR)
+    /// Score retrieval against a checked-in case file (hit@5, precision@5, MRR, mandatory recall, abstention, rendered cost)
     Eval {
         /// Cases file; defaults to loom/eval/retrieval-cases.yaml under the project root
         #[arg(long)]
@@ -87,6 +90,16 @@ pub enum KnowledgeCommands {
         /// Override the per-case token budget
         #[arg(long, value_parser = clap_budget_tokens_validator)]
         budget_tokens: Option<usize>,
+        /// Machine-readable JSON output (suppresses human text)
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Summarise recorded context delivery, prompt briefs, abstentions and pulls per stage
+    Telemetry {
+        /// Restrict the summary to one stage
+        #[arg(long)]
+        stage: Option<String>,
         /// Machine-readable JSON output (suppresses human text)
         #[arg(long)]
         json: bool,
@@ -104,13 +117,38 @@ pub enum KnowledgeCommands {
 
     /// Report knowledge-base diagnostics (read-only; never opens the context store)
     Check {
-        /// Exit non-zero when any issue is reported
+        /// Exit non-zero when any non-review issue is reported
         #[arg(long)]
         strict: bool,
         /// Machine-readable JSON output (suppresses human text)
         #[arg(long)]
         json: bool,
     },
+}
+
+/// Flags for `loom knowledge annotate`.
+#[derive(Args, Debug)]
+pub struct AnnotateArgs {
+    /// Tier-1 name/alias or tier-2 target (<category>/<slug>)
+    pub target: String,
+    /// Lifecycle state: active, draft, deprecated, superseded, or historical
+    #[arg(long)]
+    pub state: Option<String>,
+    /// Repository source path supporting this knowledge; repeatable
+    #[arg(long = "source")]
+    pub source: Vec<String>,
+    /// Remove all existing source paths before adding --source values
+    #[arg(long)]
+    pub clear_sources: bool,
+    /// Git revision at which the declared sources were verified
+    #[arg(long)]
+    pub verified: Option<String>,
+    /// Retrieval alias to add; repeatable
+    #[arg(long = "alias")]
+    pub alias: Vec<String>,
+    /// One-line index blurb (at most 80 characters)
+    #[arg(long)]
+    pub blurb: Option<String>,
 }
 
 #[derive(Subcommand)]

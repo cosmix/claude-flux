@@ -110,6 +110,12 @@ fn shrink_buffers(stream: &TcpStream, bytes: libc::c_int) {
     }
 }
 
+/// Whether a socket read error is transient and worth retrying rather than failing the test.
+fn is_transient(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{Interrupted, TimedOut, WouldBlock};
+    matches!(error.kind(), WouldBlock | TimedOut | Interrupted)
+}
+
 /// Shared loop behind `wait_for_binary` and `wait_for_binary_progressing`.
 /// Output accumulates across messages because the bridge reads the PTY in
 /// 16 KiB chunks, so any needle can straddle a message boundary. With
@@ -137,11 +143,7 @@ fn read_until(
             }
             Ok(Message::Close(_)) => return false,
             Ok(_) => {}
-            Err(tungstenite::Error::Io(error))
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
+            Err(tungstenite::Error::Io(error)) if is_transient(&error) => {}
             Err(error) => panic!("read bridge output: {error}"),
         }
     }
@@ -193,11 +195,7 @@ fn wait_for_close_frame(
             }
             Ok(Message::Close(None)) => return None,
             Ok(_) => {}
-            Err(tungstenite::Error::Io(error))
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) => {}
+            Err(tungstenite::Error::Io(error)) if is_transient(&error) => {}
             Err(error) => panic!("read bridge close: {error}"),
         }
     }

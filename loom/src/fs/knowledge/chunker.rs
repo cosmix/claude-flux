@@ -2,44 +2,20 @@
 
 use crate::context::schema::LifecycleState;
 use regex::Regex;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
+pub(crate) mod references;
+
 /// Re-export the canonical knowledge chunk type for knowledge callers.
 pub use crate::context::schema::KnowledgeChunk;
 
-static SOURCE_PATH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    match Regex::new(r"[A-Za-z0-9_./-]+\.(rs|tsx|ts|py|go|sh|md|toml|yaml|yml)") {
-        Ok(regex) => regex,
-        Err(error) => panic!("source path regex must be valid: {error}"),
-    }
-});
-static SYMBOL_REGEX: LazyLock<Regex> =
-    LazyLock::new(
-        || match Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$") {
-            Ok(regex) => regex,
-            Err(error) => panic!("symbol regex must be valid: {error}"),
-        },
-    );
 static LINK_REGEX: LazyLock<Regex> =
     LazyLock::new(|| match Regex::new(r"\[([^\]]+)\]\(([^)]+\.md)\)") {
         Ok(regex) => regex,
         Err(error) => panic!("link regex must be valid: {error}"),
     });
-
-#[derive(Debug, Default, Deserialize)]
-struct Frontmatter {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    aliases: Vec<String>,
-    #[serde(default)]
-    state: Option<LifecycleState>,
-    #[serde(default)]
-    sources: Vec<String>,
-}
 
 /// Build one `KnowledgeChunk` from a section at `index`, tracking heading
 /// occurrence counts in `occurrences` (shared across a file's sections) so
@@ -51,7 +27,7 @@ fn build_chunk(
     relative_path: &str,
     category: &Option<String>,
     state: LifecycleState,
-    frontmatter: &Frontmatter,
+    frontmatter: &crate::fs::knowledge::frontmatter::Frontmatter,
     occurrences: &mut std::collections::BTreeMap<String, usize>,
 ) -> KnowledgeChunk {
     let body = trim_trailing_blank_lines(section.body);
@@ -60,10 +36,8 @@ fn build_chunk(
     let derived_id = format!("{relative_path}#{normalized_heading}#{occurrence}");
     *occurrence += 1;
 
-    let (mut source_paths, symbols) = references_in(&body);
-    if index == 0 {
-        source_paths = deduplicate(frontmatter.sources.iter().cloned().chain(source_paths));
-    }
+    let (references, symbols) = references::references_in(&body);
+    let source_paths = live_source_paths(index, references, frontmatter);
     let content_hash = format!("sha256:{}", hex::encode(Sha256::digest(body.as_bytes())));
     // This is an estimate, not a tokenizer count.
     let estimated_tokens = crate::context::schema::estimate_tokens(&body);
@@ -97,7 +71,19 @@ fn build_chunk(
 /// Split a knowledge markdown file into a preamble and its H2 sections.
 pub fn chunk_file(path: &Path, bytes: &[u8]) -> anyhow::Result<Vec<KnowledgeChunk>> {
     let text = String::from_utf8_lossy(bytes);
-    let (frontmatter, content) = split_frontmatter(&text);
+    let (frontmatter, content) = crate::fs::knowledge::frontmatter::split_frontmatter(&text);
+    Ok(chunk_sections(path, content, &frontmatter))
+}
+
+/// [`chunk_file`]'s body, taking already-split frontmatter and content
+/// directly. Exists so a caller that already parsed frontmatter for its own
+/// purposes (`catalog::process_file`'s size/blurb checks) does not have to
+/// parse it a second time just to chunk the file.
+pub(crate) fn chunk_sections(
+    path: &Path,
+    content: &str,
+    frontmatter: &crate::fs::knowledge::frontmatter::Frontmatter,
+) -> Vec<KnowledgeChunk> {
     let sections = split_sections(content);
     let relative_path = display_path(path);
     let category = category_for(path);
@@ -105,7 +91,7 @@ pub fn chunk_file(path: &Path, bytes: &[u8]) -> anyhow::Result<Vec<KnowledgeChun
     let mut occurrences: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
 
-    let chunks = sections
+    sections
         .into_iter()
         .enumerate()
         .map(|(index, section)| {
@@ -115,39 +101,35 @@ pub fn chunk_file(path: &Path, bytes: &[u8]) -> anyhow::Result<Vec<KnowledgeChun
                 &relative_path,
                 &category,
                 state,
-                &frontmatter,
+                frontmatter,
                 &mut occurrences,
             )
         })
-        .collect();
+        .collect()
+}
 
-    Ok(chunks)
+/// Live-classified backticked source references for one section, with the
+/// frontmatter's declared `sources:` folded into the file's first chunk —
+/// mirrors [`build_chunk`]'s `index == 0` special case for `id`/`aliases`.
+fn live_source_paths(
+    index: usize,
+    references: Vec<references::EvidenceReference>,
+    frontmatter: &crate::fs::knowledge::frontmatter::Frontmatter,
+) -> Vec<String> {
+    let live = references
+        .into_iter()
+        .filter(|reference| reference.kind == references::EvidenceKind::Live)
+        .map(|reference| reference.source_path);
+    if index == 0 {
+        deduplicate(frontmatter.sources.iter().cloned().chain(live))
+    } else {
+        live.collect()
+    }
 }
 
 struct Section<'a> {
     body: &'a str,
     heading: &'a str,
-}
-
-fn split_frontmatter(text: &str) -> (Frontmatter, &str) {
-    let Some((first_end, first_line)) = line_at(text, 0) else {
-        return (Frontmatter::default(), text);
-    };
-    if first_line != "---" {
-        return (Frontmatter::default(), text);
-    }
-
-    let mut offset = first_end;
-    while let Some((line_end, line)) = line_at(text, offset) {
-        if line == "---" {
-            // A malformed frontmatter block is not fatal: fall back to defaults
-            // and keep chunking the file.
-            let frontmatter = serde_yaml::from_str(&text[first_end..offset]).unwrap_or_default();
-            return (frontmatter, &text[line_end..]);
-        }
-        offset = line_end;
-    }
-    (Frontmatter::default(), text)
 }
 
 fn split_sections(content: &str) -> Vec<Section<'_>> {
@@ -210,7 +192,7 @@ fn line_at(text: &str, start: usize) -> Option<(usize, &str)> {
     Some((end, line))
 }
 
-fn fence_marker(line: &str) -> Option<char> {
+pub(crate) fn fence_marker(line: &str) -> Option<char> {
     let trimmed = line.trim_start();
     if trimmed.starts_with("```") {
         Some('`')
@@ -248,41 +230,6 @@ fn normalize_heading(heading: &str) -> String {
         }
     }
     normalized
-}
-
-fn references_in(body: &str) -> (Vec<String>, Vec<String>) {
-    let mut source_paths = Vec::new();
-    let mut symbols = Vec::new();
-    let mut span_start = None;
-
-    for (position, character) in body.char_indices() {
-        if character != '`' {
-            continue;
-        }
-        if let Some(start) = span_start.take() {
-            let span = &body[start..position];
-            // The regex crate has no lookahead, so a match like "foo.rs" inside
-            // "foo.rsx" is only ruled out here: reject it when the next
-            // character is still part of an identifier (an extension must end
-            // at a boundary). `matched.end()` is always a valid char boundary,
-            // so slicing from it is safe even next to multi-byte characters.
-            source_paths.extend(SOURCE_PATH_REGEX.find_iter(span).filter_map(|matched| {
-                let followed_by_identifier_char = span[matched.end()..]
-                    .chars()
-                    .next()
-                    .is_some_and(|character| character.is_ascii_alphanumeric());
-                (!followed_by_identifier_char).then(|| matched.as_str().to_string())
-            }));
-            let symbol = span.trim();
-            if SYMBOL_REGEX.is_match(symbol) {
-                symbols.push(symbol.to_string());
-            }
-        } else {
-            span_start = Some(position + character.len_utf8());
-        }
-    }
-
-    (deduplicate(source_paths), deduplicate(symbols))
 }
 
 fn links_in(body: &str) -> Vec<(String, String)> {

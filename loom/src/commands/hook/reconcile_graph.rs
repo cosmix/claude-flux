@@ -20,44 +20,32 @@
 //!
 //! ## Scope resolution
 //!
-//! `ReconcileTarget::from_environment` mirrors
-//! `commands::hook::user_prompt::DeliveryTarget::from_environment` point for
-//! point (stage scope when `LOOM_STAGE_ID`/`LOOM_WORK_DIR` name a real stage,
-//! else the checkout's own working-tree overlay) but is a second, small
-//! implementation rather than a shared one: `DeliveryTarget` is private to
-//! that sibling file, which this module does not own.
-//!
-//! Checkout scope calls
-//! `crate::context::refresh::reconcile_semantic_best_effort` — promoted
-//! from `pub(super)` to `pub(crate)` in `context::refresh::semantic` for
-//! exactly this call site — rather than re-implementing its Base-then-overlay
-//! policy (always ensure the immutable committed base, then add the `_local`
-//! working-tree overlay when the checkout is dirty). One derivation of
-//! that policy, not two: see the promoted function's own doc comment.
+//! `HookTarget` is shared with the prompt and pre-compact delegates, so the
+//! reader and background writer cannot derive different overlay addresses.
+//! [`ensure_snapshot`] owns both the stage-overlay and local-current rebuild
+//! policies; this module only selects the policy carried by that target.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::context::config::RetrievalConfig;
-use crate::context::delivery;
 use crate::context::graph_store::GraphStore;
-use crate::context::refresh::{
-    reconcile_semantic_best_effort, reconcile_source_graph, SourceGraphScope,
-};
+use crate::context::refresh::ensure_snapshot;
 use crate::context::schema::ContextPack;
 use crate::context::store::ContextStore;
 use crate::fs::work_dir::WorkDir;
-use crate::validation::validate_id;
+
+use super::target::{non_empty_env, HookTarget};
 
 mod lock;
 use lock::{claim_lock, decide, reconcile_lock_path, unix_now, LockDecision};
 
 /// The `loom hook reconcile-graph` subcommand body: a best-effort, one-shot
 /// reconcile of the source graph for whatever scope
-/// `ReconcileTarget::from_environment` resolves.
+/// `HookTarget::from_environment` resolves.
 ///
 /// Always exits `Ok(())` and prints nothing: this is an internal maintenance
 /// entry point [`spawn_if_needed`] launches detached from a hook, so nothing
@@ -75,13 +63,14 @@ pub fn reconcile_graph() -> Result<()> {
 /// lock's pid, reconcile, and leave a finished marker on the way out
 /// regardless of the reconcile's own outcome.
 fn try_reconcile() -> Result<()> {
-    let Some(target) = ReconcileTarget::from_environment() else {
+    let Some(target) = HookTarget::from_environment().filter(HookTarget::exists) else {
         // No state directory resolvable from the environment or cwd at all — nothing
         // to reconcile, and not a failure: a bare checkout with no loom
         // project is a legitimate place for this to be invoked from.
         return Ok(());
     };
-    let store = ContextStore::open(&target.work_dir)?;
+    let work_dir = WorkDir::new(&target.work_dir)?;
+    let store = ContextStore::open(&work_dir)?;
     let lock_path = reconcile_lock_path(&store);
 
     // Correct the lock to THIS process's own pid. `spawn_if_needed` claims it
@@ -106,107 +95,15 @@ fn try_reconcile() -> Result<()> {
     outcome
 }
 
-/// Where this session's reconcile is scoped, and the state directory it
-/// resolves against.
-struct ReconcileTarget {
-    work_dir: WorkDir,
-    /// `Some((plan, stage))` for a real stage's own overlay (A.22); `None`
-    /// for the checkout's working-tree overlay — see [`reconcile`].
-    stage: Option<(String, String)>,
-}
-
-impl ReconcileTarget {
-    /// A stage scope whenever the environment really names one; the
-    /// checkout otherwise.
-    ///
-    /// The single existence check on `work_dir.root()` at the end guards
-    /// both `for_stage` and `for_checkout`: `WorkDir::new` never fails
-    /// (`try_reconcile`'s own doc comment promises "no state directory
-    /// resolvable ... nothing to reconcile, and not a failure"), so without this a
-    /// stale `LOOM_STAGE_ID`/`LOOM_WORK_DIR` pin naming a since-deleted
-    /// state directory would resolve to a `ReconcileTarget` anyway, and
-    /// `ContextStore::open` below would recreate that state directory from
-    /// scratch in a checkout that was never `loom init`ed.
-    fn from_environment() -> Option<Self> {
-        Self::for_stage()
-            .or_else(Self::for_checkout)
-            .filter(|target| target.work_dir.root().exists())
-    }
-
-    /// Resolve from `LOOM_STAGE_ID`/`LOOM_WORK_DIR`. `None` when either is
-    /// unset, unusable, or names no stage on disk.
-    ///
-    /// `LOOM_STAGE_ID` becomes a path component (the stage's overlay
-    /// directory under `<state-dir>/context/<plan>/<stage>/`), so it is validated
-    /// HERE, at the boundary, exactly as
-    /// `commands::hook::user_prompt::DeliveryTarget::for_stage` validates
-    /// it — do not weaken this.
-    fn for_stage() -> Option<Self> {
-        let stage_id = non_empty_env("LOOM_STAGE_ID")?;
-        validate_id(&stage_id).ok()?;
-        let work_dir = WorkDir::new(non_empty_env("LOOM_WORK_DIR")?).ok()?;
-        let stage = crate::verify::load_stage(&stage_id, work_dir.root()).ok()?;
-        let plan = delivery::plan_key(&stage).to_string();
-        Some(ReconcileTarget {
-            work_dir,
-            stage: Some((plan, stage_id)),
-        })
-    }
-
-    /// The checkout this process is running in, for no stage at all —
-    /// `LOOM_WORK_DIR` when set, else the current directory, matching
-    /// `DeliveryTarget::for_checkout`'s fallback so a hook invoked with no
-    /// loom stage in scope still resolves to the same state directory retrieval did.
-    fn for_checkout() -> Option<Self> {
-        let hint = non_empty_env("LOOM_WORK_DIR").unwrap_or_else(|| ".".to_string());
-        let work_dir = WorkDir::new(hint).ok()?;
-        Some(ReconcileTarget {
-            work_dir,
-            stage: None,
-        })
-    }
-}
-
-/// A set environment variable with non-blank content.
-fn non_empty_env(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok()?;
-    (!value.trim().is_empty()).then_some(value)
-}
-
-/// Reconcile `target`'s scope: a real stage's own overlay when named, else
-/// the checkout's working-tree overlay.
-fn reconcile(target: &ReconcileTarget, store: &ContextStore) -> Result<()> {
-    let project_root = target
-        .work_dir
-        .project_root()
-        .context("could not resolve a project root for this state directory")?;
-
-    match &target.stage {
-        Some((plan, stage)) => {
-            // A stage's own worktree is always eligible for its own overlay —
-            // unlike the checkout branch below, `Overlay` scope has no
-            // dirty-tree gate, because a stage's tree being dirty (mid-edit)
-            // is the expected, common case this exists to serve (A.22).
-            let graph_store = GraphStore::new(store.root(), target.work_dir.root());
-            let scope = SourceGraphScope::Overlay {
-                plan: plan.clone(),
-                stage: stage.clone(),
-            };
-            reconcile_source_graph(store, &graph_store, project_root, scope)?;
-        }
-        None => {
-            // The checkout's own working-tree scope: always ensure the
-            // committed Base; a dirty tree also gets the `_local` overlay.
-            // `reconcile_semantic_best_effort` is the ONE place that policy
-            // lives (promoted to `pub(crate)` in `context::refresh::semantic`
-            // for exactly this call) — this module must not re-derive it; see
-            // its doc comment. It never returns `Err`, so there is nothing
-            // further to propagate here; the state write it performs (or
-            // does not, on failure) is its own side effect.
-            let current = store.load_state()?.semantic;
-            reconcile_semantic_best_effort(store, project_root, current);
-        }
-    }
+/// Reconcile exactly the graph scope resolved for the other hook delegates.
+fn reconcile(target: &HookTarget, store: &ContextStore) -> Result<()> {
+    let graph_store = GraphStore::new(store.root(), &target.work_dir);
+    ensure_snapshot(
+        store,
+        &graph_store,
+        &target.project_root,
+        target.snapshot_policy(),
+    )?;
     Ok(())
 }
 
@@ -233,10 +130,9 @@ pub fn spawn_if_needed(pack: &ContextPack, project_root: &Path) {
 /// walks every tracked file through tree-sitter and rewrites a
 /// multi-megabyte graph; that is too expensive to launch against a checkout
 /// the caller reached only by an upward directory search from an unrelated
-/// working directory (`WorkDir::new`'s state-directory-search fallback — the same
-/// path `ReconcileTarget::for_checkout` above and
-/// `user_prompt::DeliveryTarget::for_checkout` both take when
-/// `LOOM_WORK_DIR` is unset).
+/// working directory (`WorkDir::new`'s state-directory-search fallback — the
+/// same path [`HookTarget::from_environment`] takes when `LOOM_WORK_DIR` is
+/// unset).
 ///
 /// Allowed when EITHER:
 /// - `LOOM_WORK_DIR` was set in the environment: the caller named its

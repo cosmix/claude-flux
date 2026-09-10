@@ -208,6 +208,39 @@ fn issue_line_names_the_file_and_source_path_for_a_missing_source_ref() {
 }
 
 #[test]
+fn issue_line_formats_evidence_changed_as_review() {
+    let issue = CatalogIssue::EvidenceChanged {
+        file: PathBuf::from("architecture/topic.md"),
+        source_path: "loom/src/context/pack.rs".to_string(),
+        verified: "0123456789abcdef".to_string(),
+    };
+
+    let line = issue_line(&issue);
+
+    assert!(
+        line.starts_with("review: architecture/topic.md:"),
+        "line: {line}"
+    );
+    assert!(line.contains("changed since 01234567"), "line: {line}");
+    assert!(line.contains("--verified HEAD"), "line: {line}");
+}
+
+#[test]
+fn issue_line_formats_unverifiable_reference_as_note() {
+    let issue = CatalogIssue::UnverifiableReference {
+        file: PathBuf::from("patterns.md"),
+        source_path: "category/slug.md".to_string(),
+        kind: "example".to_string(),
+    };
+
+    let line = issue_line(&issue);
+
+    assert!(line.starts_with("note: patterns.md:"), "line: {line}");
+    assert!(line.contains("example"), "line: {line}");
+    assert!(line.contains("category/slug.md"), "line: {line}");
+}
+
+#[test]
 fn issue_line_names_the_file_heading_and_line_count_for_an_oversized_section() {
     let issue = CatalogIssue::OversizedSection {
         file: PathBuf::from("mistakes.md"),
@@ -292,4 +325,35 @@ fn json_payload_count_matches_the_issues_array_length() {
         .as_array()
         .expect("issues must serialize as a JSON array");
     assert_eq!(issues.len(), 2);
+    assert_eq!(payload["review"], serde_json::json!([]));
+}
+
+#[test]
+fn json_payload_separates_review_only_diagnostics() {
+    let catalog = Catalog {
+        revision: String::new(),
+        chunks: Vec::new(),
+        issues: vec![CatalogIssue::UnverifiableReference {
+            file: PathBuf::from("patterns.md"),
+            source_path: "foo.rs".to_string(),
+            kind: "example".to_string(),
+        }],
+    };
+
+    let payload = json_payload(Path::new("doc/loom/knowledge"), &catalog);
+
+    assert_eq!(payload["count"], 0);
+    assert_eq!(payload["issues"], serde_json::json!([]));
+    assert_eq!(payload["review"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn strict_ignores_review_only_issues() {
+    let issues = vec![CatalogIssue::EvidenceChanged {
+        file: PathBuf::from("patterns.md"),
+        source_path: "src/a.rs".to_string(),
+        verified: "0123456789abcdef".to_string(),
+    }];
+
+    assert_eq!(strict_issue_count(&issues), 0);
 }

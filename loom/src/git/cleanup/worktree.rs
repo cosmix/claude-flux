@@ -4,8 +4,9 @@ use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::fs::memory::SPOOL_RELPATH;
+use crate::fs::memory::SPOOL_RELPATH as MEMORY_SPOOL_RELPATH;
 use crate::git::runner::run_git_checked;
+use crate::telemetry::TELEMETRY_SPOOL_RELPATH;
 
 /// Cap on how many blocking paths `refusal_error` lists verbatim. The
 /// message is persisted into stage frontmatter and shipped in every status
@@ -135,8 +136,8 @@ pub(crate) fn worktree_directory_exists(worktree_path: &Path) -> Result<bool> {
 /// Repo-relative `.claude`/`CLAUDE.md`/`.loom` paths git tracks in
 /// `worktree_path`'s repository (`git ls-files -- .claude CLAUDE.md .loom`).
 /// Creation only plants scaffold when the checkout carries none of its own
-/// (`setup_claude_directory`, `setup_root_claude_md`), and the memory spool
-/// (see `remove_drained_spool`) is runtime output creation never commits
+/// (`setup_claude_directory`, `setup_root_claude_md`), and the spool files
+/// (see `remove_drained_spool`) are runtime output creation loom never commits
 /// either — so anything git tracks under these paths was never loom's to
 /// remove. Empty when the query fails — unit tests call
 /// `remove_worktree_scaffold` on plain temp dirs with no git repository at
@@ -169,8 +170,8 @@ fn tracked_scaffold_paths(worktree_path: &Path) -> HashSet<String> {
 /// either path, the worktree checks it out as the repo's own file — not
 /// scaffold — and it is left in place for `git worktree remove` (or `git
 /// status`) to judge, regardless of whether it happens to be a symlink.
-/// Finally, a drained memory spool (`crate::fs::memory::spool`) is removed
-/// the same way: it is loom's own sandboxed-write fallback, not agent work,
+/// Finally, drained memory and telemetry spools are removed the same way:
+/// they are loom's own sandboxed-write fallbacks, not agent work,
 /// and left on disk it is exactly the kind of untracked file that makes
 /// non-forced `git worktree remove` refuse.
 pub(crate) fn remove_worktree_scaffold(worktree_path: &Path) -> Result<()> {
@@ -190,20 +191,21 @@ pub(crate) fn remove_worktree_scaffold(worktree_path: &Path) -> Result<()> {
     if !tracked.contains("CLAUDE.md") {
         remove_if_symlink(&worktree_path.join("CLAUDE.md"))?;
     }
-    remove_drained_spool(worktree_path, &tracked)?;
+    remove_drained_spool(worktree_path, &tracked, MEMORY_SPOOL_RELPATH, "memory")?;
+    remove_drained_spool(
+        worktree_path,
+        &tracked,
+        TELEMETRY_SPOOL_RELPATH,
+        "telemetry",
+    )?;
     Ok(())
 }
 
-/// Remove a drained `.loom/memory-spool.jsonl`, then remove `.loom/` itself
-/// if that leaves it empty.
+/// Remove a drained Loom spool, then remove `.loom/` if that leaves it empty.
 ///
-/// `loom memory note` inside a sandboxed worktree cannot write straight to
-/// `.work/memory/<stage>.md` (`.work` is a symlink outside the write
-/// boundary), so it spools to `.loom/memory-spool.jsonl` instead, and the
-/// daemon drains the spool's contents into the real journal on its poll
-/// loop. Draining empties the file but never deletes it — every stage that
-/// records so much as one memory note therefore leaves an untracked file
-/// behind, which is exactly what makes non-forced `git worktree remove`
+/// Sandboxed stage writes that cannot reach the state-root symlink fall back
+/// to files under `.loom/`. Draining empties a spool but never deletes it, so
+/// it remains an untracked path that makes non-forced `git worktree remove`
 /// refuse. Removal here is conservative in the same way the rest of this
 /// module is: skipped when git tracks the spool path (`tracked`, see
 /// `tracked_scaffold_paths` — an unusual repo could commit it), and the file
@@ -214,16 +216,21 @@ pub(crate) fn remove_worktree_scaffold(worktree_path: &Path) -> Result<()> {
 /// `remove_known_claude_scaffold`'s "directory removed only once empty"
 /// rule — a `.loom/` holding a user's `config.toml` or anything else must
 /// survive.
-fn remove_drained_spool(worktree_path: &Path, tracked: &HashSet<String>) -> Result<()> {
-    if tracked.contains(SPOOL_RELPATH) {
+fn remove_drained_spool(
+    worktree_path: &Path,
+    tracked: &HashSet<String>,
+    spool_relpath: &str,
+    spool_kind: &str,
+) -> Result<()> {
+    if tracked.contains(spool_relpath) {
         return Ok(());
     }
-    let spool_path = worktree_path.join(SPOOL_RELPATH);
+    let spool_path = worktree_path.join(spool_relpath);
     match std::fs::symlink_metadata(&spool_path) {
         Ok(metadata) if metadata.is_file() => {
             std::fs::remove_file(&spool_path).with_context(|| {
                 format!(
-                    "Failed to remove drained memory spool {}",
+                    "Failed to remove drained {spool_kind} spool {}",
                     spool_path.display()
                 )
             })?;

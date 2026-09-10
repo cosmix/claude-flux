@@ -138,10 +138,129 @@ fn a_live_plan_is_indexed() {
 
     let catalog = catalog::build(&knowledge_root).unwrap();
 
-    assert!(catalog
+    let plan = catalog
         .chunks
         .iter()
-        .any(|chunk| chunk.id.starts_with("prose:doc/plans/PLAN-live.md#")));
+        .find(|chunk| chunk.id.starts_with("prose:doc/plans/PLAN-live.md#"))
+        .expect("plan should be indexed");
+    assert_eq!(plan.state, crate::context::schema::LifecycleState::Draft);
+}
+
+#[test]
+fn a_review_document_is_historical() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write_file(root, "doc/loom/knowledge/architecture.md", "## Curated\n");
+    write_file(root, "doc/plans/REVIEW-contract.md", "## Review\n");
+
+    let catalog = catalog::build(&root.join("doc/loom/knowledge")).unwrap();
+
+    let review = catalog
+        .chunks
+        .iter()
+        .find(|chunk| chunk.id.contains("REVIEW-contract"))
+        .unwrap();
+    assert_eq!(
+        review.state,
+        crate::context::schema::LifecycleState::Historical
+    );
+}
+
+#[test]
+fn a_report_or_proposal_is_historical() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write_file(root, "doc/loom/knowledge/architecture.md", "## Curated\n");
+    write_file(root, "doc/REPORT-findings.md", "## Report\n");
+    write_file(root, "doc/design/PROPOSAL-cache.md", "## Proposal\n");
+
+    let catalog = catalog::build(&root.join("doc/loom/knowledge")).unwrap();
+
+    let states: Vec<_> = catalog
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.id.contains("REPORT-") || chunk.id.contains("PROPOSAL-"))
+        .map(|chunk| chunk.state)
+        .collect();
+    assert_eq!(
+        states,
+        vec![crate::context::schema::LifecycleState::Historical; 2]
+    );
+}
+
+#[test]
+fn an_archived_plan_is_not_indexed() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write_file(root, "doc/loom/knowledge/architecture.md", "## Curated\n");
+    write_file(root, "doc/plans/ archive/PLAN-old.md", "## Old\n");
+
+    let catalog = catalog::build(&root.join("doc/loom/knowledge")).unwrap();
+
+    assert!(!catalog
+        .chunks
+        .iter()
+        .any(|chunk| chunk.id.contains("PLAN-old")));
+}
+
+#[test]
+fn a_not_started_plan_and_its_briefs_are_drafts() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write_file(root, "doc/loom/knowledge/architecture.md", "## Curated\n");
+    write_file(root, "doc/plans/PLAN-next.md", "## Plan\n");
+    write_file(root, "doc/plans/briefs/worker.md", "## Brief\n");
+
+    let catalog = catalog::build(&root.join("doc/loom/knowledge")).unwrap();
+
+    let states: Vec<_> = catalog
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.id.contains("PLAN-next") || chunk.id.contains("briefs/worker"))
+        .map(|chunk| chunk.state)
+        .collect();
+    assert_eq!(
+        states,
+        vec![crate::context::schema::LifecycleState::Draft; 2]
+    );
+}
+
+#[test]
+fn a_briefs_directory_outside_plans_is_active() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write_file(root, "doc/loom/knowledge/architecture.md", "## Curated\n");
+    write_file(root, "doc/design/briefs/x.md", "## Brief\n");
+
+    let catalog = catalog::build(&root.join("doc/loom/knowledge")).unwrap();
+
+    let brief = catalog
+        .chunks
+        .iter()
+        .find(|chunk| chunk.id.contains("design/briefs/x"))
+        .unwrap();
+    assert_eq!(brief.state, crate::context::schema::LifecycleState::Active);
+}
+
+#[test]
+fn explicit_frontmatter_state_overrides_the_path_rule() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write_file(root, "doc/loom/knowledge/architecture.md", "## Curated\n");
+    write_file(
+        root,
+        "doc/plans/REVIEW-current.md",
+        "---\nstate: active\n---\n## Review\n",
+    );
+
+    let catalog = catalog::build(&root.join("doc/loom/knowledge")).unwrap();
+
+    let review = catalog
+        .chunks
+        .iter()
+        .find(|chunk| chunk.id.contains("REVIEW-current"))
+        .unwrap();
+    assert_eq!(review.state, crate::context::schema::LifecycleState::Active);
 }
 
 #[test]

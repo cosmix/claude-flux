@@ -1,7 +1,7 @@
 //! Drains the spools a sandboxed worktree writes when it cannot reach the
-//! daemon: memory entries into the canonical journal, and stage-control
-//! requests (`loom stage block`, `loom stage dispute-criteria`) into the
-//! daemon's own handlers.
+//! daemon: memory entries into the canonical journal, telemetry into its
+//! event log, and stage-control requests (`loom stage block`, `loom stage
+//! dispute-criteria`) into the daemon's own handlers.
 //!
 //! `loom memory note` writes directly to `.loom/work/memory/<stage>.md` via
 //! [`crate::fs::memory::append_entry`]. Inside a sandboxed worktree that
@@ -25,13 +25,15 @@ use std::path::Path;
 use crate::fs::memory::{self, DrainOutcome};
 use crate::fs::stage_request;
 use crate::models::worktree::Worktree;
+use crate::telemetry::spool::{self as telemetry_spool, DrainOutcome as TelemetryDrainOutcome};
 
 use super::persistence::Persistence;
 use super::Orchestrator;
 
 impl Orchestrator {
     /// Drain every stage's pending spools: memory entries into the canonical
-    /// journal, queued control requests into the daemon's handlers.
+    /// journal, telemetry into its event log, and queued control requests into
+    /// the daemon's handlers.
     ///
     /// Stages are enumerated by a disk scan of `.loom/work/stages/`, mirroring
     /// `spawn_merge_resolution_sessions` — disk is the source of truth and
@@ -75,6 +77,7 @@ impl Orchestrator {
             // before the block it then queues, and a queued block can change
             // the stage's status out from under a later pass.
             self.drain_one_stage_spool(&stage_id, &worktree_root);
+            self.drain_one_stage_telemetry(&stage_id, &worktree_root);
             self.drain_one_stage_requests(&stage_id, &worktree_root);
         }
     }
@@ -126,6 +129,43 @@ impl Orchestrator {
             Err(e) => {
                 self.report_drain_error(MEMORY_SPOOL, stage_id, worktree_root, &e);
                 DrainOutcome::default()
+            }
+        }
+    }
+
+    /// Drain one stage's telemetry spool into the canonical event log.
+    pub(super) fn drain_one_stage_telemetry(
+        &mut self,
+        stage_id: &str,
+        worktree_root: &Path,
+    ) -> TelemetryDrainOutcome {
+        let work_dir = self.config.work_dir.clone();
+        let result = telemetry_spool::drain_into_events(&work_dir, worktree_root);
+        self.record_telemetry_drain_result(stage_id, worktree_root, result)
+    }
+
+    fn record_telemetry_drain_result(
+        &mut self,
+        stage_id: &str,
+        worktree_root: &Path,
+        result: anyhow::Result<TelemetryDrainOutcome>,
+    ) -> TelemetryDrainOutcome {
+        match result {
+            Ok(outcome) => {
+                if outcome.drained > 0 || outcome.skipped_malformed > 0 {
+                    tracing::info!(
+                        stage_id = %stage_id,
+                        appended = outcome.drained,
+                        skipped_malformed = outcome.skipped_malformed,
+                        "Drained telemetry spool"
+                    );
+                }
+                self.clear_drain_error(TELEMETRY_SPOOL, stage_id);
+                outcome
+            }
+            Err(e) => {
+                self.report_drain_error(TELEMETRY_SPOOL, stage_id, worktree_root, &e);
+                TelemetryDrainOutcome::default()
             }
         }
     }
@@ -204,10 +244,11 @@ impl Orchestrator {
 
 /// Spool kinds, for the log-once bookkeeping below.
 const MEMORY_SPOOL: &str = "memory";
+const TELEMETRY_SPOOL: &str = "telemetry";
 const REQUEST_SPOOL: &str = "stage-request";
 
 /// Key under which a drain failure is remembered. Namespaced by spool kind so
-/// the two spools a single stage can have are tracked independently in the one
+/// the spools a single stage can have are tracked independently in the one
 /// `spool_drain_error_logged` set - a stuck memory spool must not silence the
 /// first report of a stuck request spool.
 fn drain_error_key(kind: &str, stage_id: &str) -> String {

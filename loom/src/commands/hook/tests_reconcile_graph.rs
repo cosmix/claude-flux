@@ -1,19 +1,5 @@
 //! End-to-end tests for [`super::reconcile_graph`] and
 //! [`super::spawn_if_needed`], against real state-directory and git fixtures.
-//!
-//! The debounce DECISION and lock claim mechanics they both depend on are
-//! pure and tested separately, process-free, in
-//! `reconcile_graph/tests_lock.rs`. Everything up to and including the
-//! `claim_lock` call in `try_spawn` — the SKIP path, the inferred-root gate
-//! (`allowed_to_spawn`), and the SPAWN path's lock claim — is safe to drive
-//! end to end here: `spawn_detached`, the one function that would otherwise
-//! launch a real, process-group-leading child, is suppressed for the whole
-//! test build by `SPAWN_ENABLED` (see its doc in `reconcile_graph.rs`), so
-//! reaching the SPAWN decision in a test costs nothing more than a claimed
-//! lock file.
-//!
-//! `reconcile_graph`/`reconcile` mutate process environment
-//! (`LOOM_STAGE_ID`/`LOOM_WORK_DIR`) and are therefore `#[serial]`.
 
 use super::*;
 use crate::context::schema::{Channel, Freshness, OmissionSummary};
@@ -22,16 +8,7 @@ use serial_test::serial;
 use std::sync::atomic::Ordering;
 use tempfile::TempDir;
 
-// `read_lock` is test-only (production code never re-reads its own writes),
-// so it stays out of `reconcile_graph.rs`'s top-level `use lock::{...}` —
-// adding it there would be an unused import outside `#[cfg(test)]`.
 use super::lock::read_lock;
-
-// ---------------------------------------------------------------------------
-// Git fixture — same pattern as `context::refresh::tests_source_graph`
-// (`isolated_git`/`git_ok`/`init_repo`/`head_sha`), duplicated here because
-// that module's fixture helpers are private to its own test module.
-// ---------------------------------------------------------------------------
 
 /// Run one git command with ambient global/system config neutralized, so a
 /// developer's or CI runner's `~/.gitconfig` cannot change test behavior.
@@ -88,10 +65,6 @@ fn leave() {
     std::env::remove_var("LOOM_STAGE_ID");
     std::env::remove_var("LOOM_WORK_DIR");
 }
-
-// ---------------------------------------------------------------------------
-// `reconcile_graph()` — checkout scope
-// ---------------------------------------------------------------------------
 
 #[test]
 #[serial]
@@ -155,7 +128,7 @@ fn reconcile_graph_with_no_resolvable_work_dir_creates_nothing() {
     // A plain directory: no state directory, no `.git` anywhere above it, and
     // `LOOM_WORK_DIR` names a directory that does not exist either —
     // `WorkDir::new`'s upward search finds nothing and falls back to a path
-    // that is not on disk. `ReconcileTarget::from_environment`'s existence
+    // that is not on disk. `HookTarget::from_environment`'s existence
     // check must catch this and yield `None` before `try_reconcile` ever
     // opens a `ContextStore` or claims the debounce lock — this is the
     // guard that keeps a stale `LOOM_WORK_DIR` pin (naming a since-deleted
@@ -225,13 +198,9 @@ fn reconcile_graph_with_a_stale_loom_work_dir_pin_creates_nothing() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// `reconcile_graph()` — stage scope (A.22)
-// ---------------------------------------------------------------------------
-
 #[test]
 #[serial]
-fn reconcile_graph_reconciles_a_named_stages_own_overlay() {
+fn reconcile_graph_in_a_stage_reconciles_that_stages_overlay_through_ensure_snapshot() {
     let temp = init_repo();
     let root = temp.path();
     let work_dir_path = root.join(".loom").join("work");
@@ -259,18 +228,11 @@ fn reconcile_graph_reconciles_a_named_stages_own_overlay() {
         .unwrap()
         .expect("the stage's own overlay must be written");
     assert_eq!(overlay.revision, head_sha(root));
+    assert!(
+        !overlay.generation.is_empty(),
+        "ensure_snapshot must stamp the stage overlay's working-tree generation"
+    );
 }
-
-// The debounce decision (`decide`) and lock claim mechanics (`claim_lock`)
-// are tested in `reconcile_graph/tests_lock.rs`, wired to the `lock`
-// submodule directly rather than here, so both this file and that one stay
-// under the maintainability line limit.
-
-// ---------------------------------------------------------------------------
-// `spawn_if_needed` — the healthy-pack and SKIP-path cases. The SPAWN-path
-// cases (the inferred-root gate, and a genuine claim reaching the suppressed
-// `spawn_detached`) are covered further down, once `degraded_pack` exists.
-// ---------------------------------------------------------------------------
 
 /// A pack that would trip `spawn_if_needed`'s own `stale || degraded` gate.
 fn degraded_pack() -> ContextPack {
