@@ -91,6 +91,7 @@ pub fn context(
         None => Vec::new(),
     };
 
+    let query_chars = query.chars().count();
     let stage_query = build_stage_query(
         query,
         require_id,
@@ -100,6 +101,7 @@ pub fn context(
         require_compact,
     );
     let context_pack = retrieve_for_stage(&stage_query, budget_tokens)?;
+    super::telemetry::emit_context_pulled(&stage, query_chars, budget_tokens, &context_pack);
 
     if json {
         println!("{}", serde_json::to_string_pretty(&context_pack)?);

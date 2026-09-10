@@ -65,6 +65,9 @@ target/
 # per-worktree memory spool (drained into .loom/work/memory/<stage>.md by the daemon)
 .loom/memory-spool.jsonl
 
+# per-worktree telemetry spool (drained into .loom/work/telemetry/events.jsonl)
+.loom/telemetry-spool.jsonl
+
 # per-worktree stage-control spool (block/dispute requests the daemon applies)
 .loom/stage-request-spool.jsonl
 

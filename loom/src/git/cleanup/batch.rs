@@ -53,14 +53,14 @@ pub fn cleanup_after_merge(
     Ok(result)
 }
 
-/// Drain a stage's memory spool one last time before its worktree is
-/// removed - the spool file lives inside the worktree, so anything still
-/// pending when the worktree is deleted is lost for good.
+/// Drain a stage's memory and telemetry spools one last time before its
+/// worktree is removed. The spool files live inside the worktree, so anything
+/// still pending when the worktree is deleted is lost for good.
 ///
-/// Best-effort and NEVER fails the cleanup: a stage whose memory could not
+/// Best-effort and NEVER fails the cleanup: a stage whose spool could not
 /// be drained must still have its worktree and branches removed, otherwise a
 /// spool problem would wedge the merge pipeline, which is far worse than
-/// losing a note. On success with entries drained, log at `info`; on
+/// losing best-effort records. On success with entries drained, log at `info`; on
 /// failure, log at `warn` and continue - the daemon's own per-tick drain
 /// (`orchestrator::core::spool_drain`) will have already caught most
 /// entries, so this is a last-chance sweep, not the primary path.
@@ -75,13 +75,18 @@ fn drain_spool_before_removal(stage_id: &str, repo_root: &Path) {
             tracing::warn!(
                 stage_id = %stage_id,
                 error = %e,
-                "Failed to resolve state directory before draining memory spool; any pending \
+                "Failed to resolve state directory before draining worktree spools; any pending \
                  entries will be lost with the worktree"
             );
             return;
         }
     };
-    match crate::fs::memory::drain_into_journal(&work_dir, stage_id, &worktree_root) {
+    drain_memory_spool(stage_id, &work_dir, &worktree_root);
+    drain_telemetry_spool(stage_id, &work_dir, &worktree_root);
+}
+
+fn drain_memory_spool(stage_id: &str, work_dir: &Path, worktree_root: &Path) {
+    match crate::fs::memory::drain_into_journal(work_dir, stage_id, worktree_root) {
         Ok(outcome) if outcome.drained > 0 || outcome.skipped_malformed > 0 => {
             tracing::info!(
                 stage_id = %stage_id,
@@ -98,6 +103,28 @@ fn drain_spool_before_removal(stage_id: &str, repo_root: &Path) {
                 error = %e,
                 "Failed to drain memory spool before worktree removal; any pending \
                  entries will be lost with the worktree"
+            );
+        }
+    }
+}
+
+fn drain_telemetry_spool(stage_id: &str, work_dir: &Path, worktree_root: &Path) {
+    match crate::telemetry::spool::drain_into_events(work_dir, worktree_root) {
+        Ok(outcome) if outcome.drained > 0 || outcome.skipped_malformed > 0 => {
+            tracing::info!(
+                stage_id = %stage_id,
+                drained = outcome.drained,
+                skipped_malformed = outcome.skipped_malformed,
+                "Drained telemetry spool before worktree removal"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(
+                stage_id = %stage_id,
+                worktree_root = %worktree_root.display(),
+                error = %e,
+                "Failed to drain telemetry spool before worktree removal; any pending entries will be lost with the worktree"
             );
         }
     }

@@ -8,6 +8,7 @@ use crate::models::stage::{Stage, StageStatus};
 use crate::models::worktree::Worktree;
 use crate::orchestrator::core::OrchestratorConfig;
 use crate::plan::ExecutionGraph;
+use crate::telemetry::{self, TelemetryEvent, TelemetryRecord};
 use crate::verify::transitions::save_stage;
 
 use super::Orchestrator;
@@ -67,6 +68,17 @@ fn spool_note(worktree_root: &Path, content: &str) {
     memory::append_to_spool(worktree_root, &entry).unwrap();
 }
 
+fn spool_telemetry(worktree_root: &Path, event: TelemetryEvent) {
+    telemetry::spool::append_to_spool(
+        worktree_root,
+        &TelemetryRecord {
+            at: chrono::Utc::now(),
+            event,
+        },
+    )
+    .unwrap();
+}
+
 #[test]
 #[serial]
 fn pending_entry_lands_in_journal_and_spool_is_emptied() {
@@ -92,6 +104,40 @@ fn pending_entry_lands_in_journal_and_spool_is_emptied() {
         pending.is_empty(),
         "spool must be emptied after a successful drain"
     );
+}
+
+#[test]
+#[serial]
+fn telemetry_spool_is_drained_with_the_memory_spool() {
+    let temp = tempfile::tempdir().unwrap();
+    let work_dir = temp.path().join(".loom").join("work");
+    let stage_id = "memory-and-telemetry";
+    save_stage_with_status(&work_dir, stage_id, StageStatus::Executing);
+    let worktree_root = worktree_dir(temp.path(), stage_id);
+    spool_note(&worktree_root, "a final memory note");
+    let event = TelemetryEvent::PromptAbstained {
+        stage_id: Some(stage_id.to_string()),
+        session_id: Some("session-1".to_string()),
+        reason: "floor".to_string(),
+    };
+    spool_telemetry(&worktree_root, event.clone());
+
+    let mut orchestrator = orchestrator_for(&work_dir, temp.path());
+    orchestrator.drain_stage_spools();
+
+    assert_eq!(
+        memory::read_journal(&work_dir, stage_id)
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+    let records = telemetry::read_events(&work_dir).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].event, event);
+    assert!(telemetry::spool::read_pending(&worktree_root)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
