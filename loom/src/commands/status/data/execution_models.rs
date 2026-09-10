@@ -117,12 +117,7 @@ fn json_lines(path: &Path) -> Vec<Value> {
 
 fn normalize_model(model: &str) -> String {
     let display_name = model.strip_prefix("claude-").unwrap_or(model);
-    let display_name = strip_date_suffix(display_name);
-
-    match display_name.strip_prefix("gpt-5.6-") {
-        Some(name) => format!("gpt-{name}"),
-        None => display_name.to_string(),
-    }
+    strip_date_suffix(display_name).to_string()
 }
 
 /// Strip a trailing `-YYYYMMDD` date stamp. `rsplit_once` splits on a char,
@@ -182,7 +177,31 @@ mod tests {
 
         assert_eq!(
             execution_models_for_stage(&work_dir, "s1"),
-            ["sonnet", "opus", "gpt-terra", "gpt-luna"]
+            ["sonnet", "opus", "gpt-5.6-terra", "gpt-5.6-luna"]
+        );
+    }
+
+    #[test]
+    fn codex_model_family_and_future_names_are_preserved() {
+        let (_temp, work_dir) = test_work_dir();
+        let stage_dir = work_dir.root().join("subagents").join("s1");
+        std::fs::create_dir_all(&stage_dir).unwrap();
+        std::fs::write(
+            stage_dir.join("codex.jsonl"),
+            concat!(
+                r#"{"model":"gpt-5.6-sol"}"#,
+                "\n",
+                r#"{"model":"gpt-6-astra"}"#,
+                "\n",
+                r#"{"model":"gpt-7-orbit"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            execution_models_for_stage(&work_dir, "s1"),
+            ["gpt-5.6-sol", "gpt-6-astra", "gpt-7-orbit"]
         );
     }
 
@@ -211,7 +230,7 @@ mod tests {
 
         assert_eq!(
             execution_models_for_stage(&work_dir, "s1"),
-            ["haiku-4-5", "sonnet", "gpt-terra"]
+            ["haiku-4-5", "sonnet", "gpt-5.6-terra"]
         );
     }
 

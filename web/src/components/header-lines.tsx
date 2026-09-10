@@ -6,13 +6,21 @@ import { useNow } from "@/components/hooks/use-now";
 import { StageStrip } from "@/components/stage-strip";
 import { StateGlyph, toneClass } from "@/components/state-badge";
 import { daemonLine, progressPercent, summaryCounts } from "@/lib/format";
-import { connectionAtom } from "@/state/atoms";
+import { connectionAtom, type ConnectionPhase } from "@/state/atoms";
 
-/// "● daemon running · tick 4s ago", toned by `daemonLine`. Once the feed
-/// drops, the daemon's real state is unknown regardless of the frozen
-/// snapshot, so staleness (derived from the connection phase, not frame age -
-/// the server suppresses unchanged frames) overrides it.
-export function DaemonLine({ snapshot }: { snapshot: Snapshot }) {
+const CONNECTION_LINE: Record<ConnectionPhase, ReturnType<typeof daemonLine>> = {
+  connecting: { text: "connecting", tone: "dimmed" },
+  live: { text: "awaiting data", tone: "dimmed" },
+  reconnecting: { text: "reconnecting", tone: "warning" },
+  offline: { text: "connection offline", tone: "blocked" },
+  error: { text: "connection error", tone: "blocked" },
+};
+
+/// "● daemon running · tick 4s ago", toned by `daemonLine`. Before a valid
+/// frame arrives it shows transport state. Once the feed drops, daemon state
+/// is unknown regardless of the frozen snapshot, so connection staleness
+/// overrides it.
+export function DaemonLine({ snapshot }: { snapshot: Snapshot | null }) {
   const connection = useAtomValue(connectionAtom);
   const now = useNow();
   const stale =
@@ -20,9 +28,15 @@ export function DaemonLine({ snapshot }: { snapshot: Snapshot }) {
     connection.phase === "offline" ||
     connection.phase === "error";
   const staleSecs = stale ? Math.max(0, Math.round((now - connection.since) / 1000)) : null;
-  const line = daemonLine(snapshot.daemon, snapshot.tick_age_secs, staleSecs);
+  const line = snapshot
+    ? daemonLine(snapshot.daemon, snapshot.tick_age_secs, staleSecs)
+    : CONNECTION_LINE[connection.phase];
+  const diagnostics = [connection.message, snapshot?.notice].filter(Boolean).join("\n");
   return (
-    <span className={cn("inline-flex items-center gap-1.5 text-xs", toneClass(line.tone))}>
+    <span
+      className={cn("inline-flex items-center gap-1.5 text-xs", toneClass(line.tone))}
+      title={diagnostics || undefined}
+    >
       <span aria-hidden="true" className="size-2 rounded-full bg-(--tone)" />
       <span>{line.text}</span>
       {line.detail && <span className="text-muted-foreground">· {line.detail}</span>}

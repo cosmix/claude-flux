@@ -39,7 +39,7 @@ const HINT = {
     "Working: a tool ran recently. Idle: no live session, or the stage is finished. Stale: no heartbeat for 5 min. Orphaned: executing with no session record. Error: the process died.",
   lastTool: "The tool the session used most recently, from its heartbeat.",
   lastActivity:
-    "The heartbeat's description of what the session last did. Usually names the last tool, but session start and a subagent finishing are recorded here with no tool.",
+    "The last heartbeat event that is not already stated by last tool, such as session start or a subagent finishing.",
   staleness: "Time since the last heartbeat.",
   retries: "Automatic retries so far, of the stage's limit.",
   disputes: "Acceptance criteria the stage's agent disputed. A judge session settles them.",
@@ -91,6 +91,13 @@ function contextRows(stage: StageSummary) {
   ]);
 }
 
+function lastActivityDetail(stage: StageSummary): string | null {
+  if (stage.last_tool !== null && stage.last_activity === `Tool executed: ${stage.last_tool}`) {
+    return null;
+  }
+  return stage.last_activity;
+}
+
 function sessionRows(stage: StageSummary) {
   const hasSession =
     stage.pid !== null ||
@@ -105,7 +112,7 @@ function sessionRows(stage: StageSummary) {
     row("session type", HINT.sessionType, stage.session_type, true),
     row("activity", HINT.activity, stage.activity_status, true),
     row("last tool", HINT.lastTool, stage.last_tool, true),
-    row("last activity", HINT.lastActivity, stage.last_activity, true),
+    row("last activity", HINT.lastActivity, lastActivityDetail(stage), true),
     row("staleness", HINT.staleness, secs(stage.staleness_secs), true),
   ]);
 }

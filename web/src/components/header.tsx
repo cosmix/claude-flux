@@ -4,7 +4,6 @@ import { CircleHelpIcon, SlidersHorizontalIcon } from "lucide-react";
 
 import { ThemeToggle } from "@/aurora-ui/theme/ThemeToggle";
 import { WorkRoundel } from "@/components/activity-roundel";
-import { ConnectionBadge } from "@/components/connection-badge";
 import { DaemonLine, MergeLine, ProgressLine, SummaryLine } from "@/components/header-lines";
 import { Logo } from "@/components/logo";
 import { useOpenSettings } from "@/components/settings-dialog";
@@ -15,8 +14,8 @@ import { ViewSwitch } from "@/components/view-switch";
 import { attentionAtom, snapshotAtom } from "@/state/atoms";
 
 /// The TUI's header block: the logo on the left spanning four lines, the plan
-/// name and loom version, progress, counts and merge lines beside it, daemon
-/// and socket state on the right.
+/// name and loom version, progress, counts and merge lines beside it, and the
+/// current daemon/feed state on the right.
 export function Header({ onOpenLegend }: { onOpenLegend: () => void }) {
   const snapshot = useAtomValue(snapshotAtom);
   const attention = useAtomValue(attentionAtom);
@@ -37,8 +36,7 @@ export function Header({ onOpenLegend }: { onOpenLegend: () => void }) {
           )}
           <div className="ml-auto flex items-center gap-2">
             {snapshot && <WorkRoundel />}
-            {snapshot && <DaemonLine snapshot={snapshot} />}
-            <ConnectionBadge />
+            <DaemonLine snapshot={snapshot} />
             <ViewSwitch />
             <ThemeToggle />
             <Button
