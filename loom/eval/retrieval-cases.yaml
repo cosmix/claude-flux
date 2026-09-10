@@ -1,6 +1,6 @@
 # Ground-truth cases for `loom knowledge eval` (doc/PROPOSAL-retrieval-precision.md
-# section 5, Appendix A.20). Every `expect`/`forbid` id below was observed in
-# real `loom knowledge context --query "<text>" --budget-tokens <n> --json |
+# section 5, Appendix A.20). Every `expect`/`relevant`/`forbid` id below was
+# observed in real `loom knowledge context --query "<text>" --budget-tokens <n> --json |
 # jq -r '.items[].id'` output from THIS checkout, re-verified immediately
 # before this file was committed - none is invented, and `expect`/`forbid`
 # never name an id that did not actually come back for its query.
@@ -17,10 +17,11 @@
 # The `expect` cases are wins that must NOT regress: a hit within the top 5,
 # most of them ranked 1st.
 #
-# pass_floor is Appendix A.20's initial value; raise it once precision
-# improves so the gate keeps tracking the state of the art instead of a
-# floor sized for day one.
+# pass_floor keeps Appendix A.20's original hit-rate meaning. True precision
+# starts as an observed metric with a zero floor; tune precision_floor only
+# after the checked-in judgments have established a useful baseline.
 pass_floor: 0.5
+precision_floor: 0.0
 
 cases:
   # --- Failure shape 1: prose words collide with symbol names (A.1) -------
@@ -44,6 +45,7 @@ cases:
   - name: prose-symbol-collision-remaining-knowledge-files
     query: "read the remaining knowledge files that are relevant"
     budget_tokens: 800
+    max_rendered_tokens: 1600
     forbid:
       - "loom/src/daemon/server/admission.rs#function:remaining"
 
@@ -74,10 +76,21 @@ cases:
       - "loom/src/orchestrator/terminal/native/window_ops.rs#function:window_exists_by_title"
       - "loom/src/orchestrator/core/spool_drain_tests.rs#function:entry_is_attributed_to_the_worktree_it_was_spooled_in_not_a_sibling_stage"
 
+  # --- Prompts for which unsolicited retrieval should stay silent --------
+  - name: conversational-correction-abstains
+    query: "no, use the repository version of those files, not the installed copies"
+    abstain: true
+
+  - name: farewell-abstains
+    query: "thanks, that is all for now, nothing else to do here"
+    abstain: true
+
   # --- Genuine wins: must not regress -------------------------------------
   - name: genuine-win-phantom-merges
     query: "phantom merge lesson stage marked merged but branch never actually merged"
     expect:
+      - "mistakes/phantom-merges.md#phantom-merges-from-defensive-assume-merged-branches-2026-04-15#0"
+    relevant:
       - "mistakes/phantom-merges.md#phantom-merges-from-defensive-assume-merged-branches-2026-04-15#0"
 
   # Second expect id observed at rank 4 on 2026-09-03, at this case's 1500-token
@@ -88,20 +101,29 @@ cases:
     expect:
       - "mistakes/sandbox-and-settings.md#worktree-settings-are-a-whole-object-rebuild-unemitted-keys-vanish-2026-08-07#0"
       - "mistakes/sandbox-and-settings.md#sandbox-contradictory-path-rules#0"
+    relevant:
+      - "mistakes/sandbox-and-settings.md#worktree-settings-are-a-whole-object-rebuild-unemitted-keys-vanish-2026-08-07#0"
+      - "mistakes/sandbox-and-settings.md#sandbox-contradictory-path-rules#0"
 
   - name: genuine-win-source-graph-honesty-contract
     query: "Honesty Contract"
     expect:
+      - "architecture/source-graph.md#the-honesty-contract#0"
+    relevant:
       - "architecture/source-graph.md#the-honesty-contract#0"
 
   - name: genuine-win-delivery-epoch-suppression
     query: "Delivery Records and Epoch Suppression"
     expect:
       - "architecture/context-retrieval.md#delivery-records-and-epoch-suppression#0"
+    relevant:
+      - "architecture/context-retrieval.md#delivery-records-and-epoch-suppression#0"
 
   - name: genuine-win-session-identity-env-staleness
     query: "per session identity persisted in settings env blocks goes stale"
     expect:
+      - "mistakes.md#per-session-identity-persisted-in-settings-env-blocks-goes-stale-and-shadows-the-wrapper-env-2026-07-22#0"
+    relevant:
       - "mistakes.md#per-session-identity-persisted-in-settings-env-blocks-goes-stale-and-shadows-the-wrapper-env-2026-07-22#0"
 
   # A tier-1 summary and the tier-2 topic it spilled share a heading verbatim
@@ -114,6 +136,8 @@ cases:
     query: "Sandbox: Contradictory Path Rules"
     expect:
       - "mistakes/sandbox-and-settings.md#sandbox-contradictory-path-rules#0"
+    relevant:
+      - "mistakes/sandbox-and-settings.md#sandbox-contradictory-path-rules#0"
     forbid:
       - "mistakes.md#sandbox-contradictory-path-rules#0"
 
@@ -122,10 +146,14 @@ cases:
     query: "what does `plan_key` do"
     expect:
       - "loom/src/context/delivery.rs#function:plan_key"
+    relevant:
+      - "loom/src/context/delivery.rs#function:plan_key"
 
   - name: symbol-query-snake-case-reconcile-source-graph
     query: "where is reconcile_source_graph called"
     expect:
+      - "loom/src/context/refresh/source_graph.rs#function:reconcile_source_graph"
+    relevant:
       - "loom/src/context/refresh/source_graph.rs#function:reconcile_source_graph"
 
   # --- mode: stage exercise --------------------------------------------
@@ -143,4 +171,6 @@ cases:
       - "loom/src/context/refresh/source_graph.rs"
       - "cargo test -p loom"
     expect:
+      - "loom/src/context/refresh/source_graph.rs#function:reconcile_source_graph"
+    relevant:
       - "loom/src/context/refresh/source_graph.rs#function:reconcile_source_graph"
