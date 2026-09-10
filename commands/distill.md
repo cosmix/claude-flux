@@ -3,7 +3,7 @@ description: Distill important session insights into doc/loom/knowledge
 ---
 Add any information that is deemed important for a future agent or human engineer working on this project to `doc/loom/knowledge`, focusing on architectural insights, conventions, and mistakes made (and their resolution if available).
 
-**Corrections first.** Sweep `loom memory show --all` for entries starting `stale-knowledge:` and apply EVERY one. Correct files IN PLACE with `loom knowledge replace-section <file> "<heading>" "<corrected body>"` (body WITHOUT its `## ` heading line) — never `loom knowledge update` for an existing claim, which only adds to a file rather than fixing what is already there.
+**Corrections first.** Sweep `loom memory show --all` for entries starting `stale-knowledge:` and apply EVERY one. Correct files IN PLACE with `loom knowledge replace-section <file> "<heading>" "<corrected body>"` (body WITHOUT its `##` heading line) — never `loom knowledge update` for an existing claim, which only adds to a file rather than fixing what is already there.
 
 Route each new insight to the right file:
 
