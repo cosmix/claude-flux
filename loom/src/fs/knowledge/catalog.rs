@@ -1,6 +1,6 @@
 //! Build a deterministic catalog over the whole knowledge tree.
 
-use crate::fs::knowledge::chunker::{chunk_file, KnowledgeChunk};
+use crate::fs::knowledge::chunker::{self, KnowledgeChunk};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,6 +9,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
+mod evidence;
+mod issue;
 mod order;
 pub(crate) mod prose;
 pub(crate) mod size;
@@ -16,66 +18,9 @@ mod source_roots;
 #[cfg(test)]
 mod tests_prose;
 
+pub use issue::CatalogIssue;
 use order::compare_issues;
 use source_roots::{cargo_package_source_roots, ProjectFileIndex, SourceRefContext};
-
-/// A problem found in the knowledge base. REPORTED, never repaired: this
-/// subsystem does not modify one byte of the knowledge tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CatalogIssue {
-    /// A normalized H2 heading occurs more than once in one file.
-    DuplicateHeading {
-        /// The relative knowledge file containing the duplicate.
-        file: PathBuf,
-        /// The duplicated normalized heading.
-        heading: String,
-        /// Number of occurrences in the file.
-        occurrences: usize,
-    },
-    /// A topic still has the generated scaffold blurb.
-    GenericBlurb {
-        /// The relative knowledge file containing the blurb.
-        file: PathBuf,
-        /// The unmodified offending blurb.
-        blurb: String,
-    },
-    /// A markdown link points at no file within the knowledge root.
-    BrokenLink {
-        /// The relative knowledge file containing the link.
-        file: PathBuf,
-        /// The unresolved markdown target.
-        target: String,
-    },
-    /// A backticked repository source path does not exist.
-    MissingSourceRef {
-        /// The relative knowledge file containing the source reference.
-        file: PathBuf,
-        /// The missing source path, relative to the project root.
-        source_path: String,
-    },
-    /// A tier-1 section exceeds the limit before it should spill into a topic.
-    OversizedSection {
-        /// The relative tier-1 knowledge file containing the section.
-        file: PathBuf,
-        /// The section heading.
-        heading: String,
-        /// The section's line count, its `## ` heading line included and
-        /// trailing blank lines excluded.
-        lines: usize,
-    },
-    /// A tier-1 summary exceeds its maximum line count.
-    OversizedFile {
-        /// The relative tier-1 knowledge file.
-        file: PathBuf,
-        /// The file's line count.
-        lines: usize,
-    },
-    /// The generated tier-0 index exceeds its maximum byte size.
-    OversizedIndex {
-        /// The index's size in bytes.
-        bytes: u64,
-    },
-}
 
 /// Deterministic retrieval data and non-mutating knowledge-base diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,14 +69,13 @@ fn collect_chunk_issues(
     }
     if let Some(project_root) = source_refs.project_root {
         for source_path in &chunk.source_paths {
-            if looks_like_repository_path(source_path)
-                && !source_refs.path_exists(project_root, source_path)
-            {
-                issues.push(CatalogIssue::MissingSourceRef {
-                    file: relative_path.to_path_buf(),
-                    source_path: source_path.clone(),
-                });
-            }
+            source_roots::push_source_ref_issue(
+                project_root,
+                source_refs,
+                relative_path,
+                source_path,
+                issues,
+            );
         }
     }
     Ok(())
@@ -152,7 +96,9 @@ fn process_file(
     let bytes = fs::read(&absolute_path)
         .with_context(|| format!("Failed to read knowledge file: {}", absolute_path.display()))?;
     let content = String::from_utf8_lossy(&bytes);
-    let file_chunks = chunk_file(relative_path, &bytes)?;
+    let (frontmatter, body_content) =
+        crate::fs::knowledge::frontmatter::split_frontmatter(&content);
+    let file_chunks = chunker::chunk_sections(relative_path, body_content, &frontmatter);
 
     if let Some(issue) = size::oversized_file(relative_path, &content) {
         issues.push(issue);
@@ -175,8 +121,43 @@ fn process_file(
             issues,
         )?;
     }
+    collect_unverifiable_references(relative_path, source_refs, &file_chunks, issues);
+    issues.extend(evidence::changed_since_verified(
+        source_refs.project_root,
+        relative_path,
+        &frontmatter,
+    ));
 
     Ok(file_chunks)
+}
+
+fn collect_unverifiable_references(
+    relative_path: &Path,
+    source_refs: &SourceRefContext,
+    chunks: &[KnowledgeChunk],
+    issues: &mut Vec<CatalogIssue>,
+) {
+    let Some(project_root) = source_refs.project_root else {
+        return;
+    };
+    let references: std::collections::BTreeSet<_> = chunks
+        .iter()
+        .flat_map(|chunk| crate::fs::knowledge::chunker::references::references_in(&chunk.body).0)
+        .filter(|reference| {
+            reference.kind != crate::fs::knowledge::chunker::references::EvidenceKind::Live
+        })
+        .collect();
+    for reference in references {
+        let resolves = source_roots::looks_like_repository_path(&reference.source_path)
+            && source_refs.path_exists(project_root, &reference.source_path);
+        if !resolves {
+            issues.push(CatalogIssue::UnverifiableReference {
+                file: relative_path.to_path_buf(),
+                source_path: reference.source_path,
+                kind: reference.kind.as_str().to_string(),
+            });
+        }
+    }
 }
 
 /// Turn the per-file heading tallies [`process_file`] accumulated into one
@@ -377,15 +358,6 @@ fn contained_link_target(root: &Path, relative_path: &Path, target: &str) -> Opt
     }
 
     Some(root.join(normalized))
-}
-
-fn looks_like_repository_path(source_path: &str) -> bool {
-    let path = Path::new(source_path);
-    !source_path.starts_with("//")
-        && !path.is_absolute()
-        && !path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
 }
 
 fn display_path(path: &Path) -> String {

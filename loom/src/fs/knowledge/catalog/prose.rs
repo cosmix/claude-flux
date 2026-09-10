@@ -178,24 +178,21 @@ impl ProseSources {
                 &mut collected,
             );
         }
+        collected.retain(|relative| prose_lifecycle(relative, None).is_some());
         collected.sort();
         collected.dedup();
         collected
     }
 
     /// Chunks for every file in [`ProseSources::files`], ids already
-    /// prefixed with [`PROSE_ID_PREFIX`] and lifecycle forced to
-    /// [`LifecycleState::Active`].
+    /// prefixed with [`PROSE_ID_PREFIX`] and lifecycle derived from its path
+    /// plus an explicit frontmatter `state:` override.
     ///
     /// The rest of the id shape is identical to a curated chunk's
     /// (`prose:doc/design.md#appendix-a#0`) so nothing downstream has to
     /// special-case it: `--require-id` accepts it as-is, and
     /// `split_once('#')` on it still yields the same `(file#anchor,
-    /// occurrence)` split a curated id yields. Lifecycle is forced Active
-    /// because prose has no frontmatter lifecycle convention and must never
-    /// go stale/superseded on its own, and because it stops a stray
-    /// `state:` key that a design doc happens to contain (frontmatter is
-    /// generic YAML, not knowledge-specific) from silently demoting it.
+    /// occurrence)` split a curated id yields.
     ///
     /// `chunk.file` ends up PROJECT-relative (`doc/design.md`) here, where a
     /// curated chunk's `file` is knowledge-root-relative (`architecture.md`).
@@ -214,6 +211,10 @@ impl ProseSources {
                     continue;
                 }
             };
+            let explicit = crate::fs::knowledge::frontmatter::file_state(&bytes);
+            let Some(lifecycle) = prose_lifecycle(&relative, explicit) else {
+                continue;
+            };
             let file_chunks = match chunk_file(&relative, &bytes) {
                 Ok(file_chunks) => file_chunks,
                 Err(error) => {
@@ -223,7 +224,7 @@ impl ProseSources {
             };
             for mut chunk in file_chunks {
                 chunk.id = format!("{PROSE_ID_PREFIX}{}", chunk.id);
-                chunk.state = LifecycleState::Active;
+                chunk.state = lifecycle;
                 chunks.push(chunk);
             }
         }
@@ -304,7 +305,7 @@ fn visit_prose_entry(
     }
 }
 
-/// Apply the file-level filters (`*.md`, size cap, completed-plan exclusion)
+/// Apply the file-level filters (`*.md`, size cap, lifecycle path exclusions)
 /// to one candidate file and push its project-relative path onto `out` when
 /// it survives all of them.
 fn push_prose_file(
@@ -330,21 +331,54 @@ fn push_prose_file(
     let Ok(relative) = path.strip_prefix(project_root) else {
         return;
     };
-    // Completed plans are history, not live intent: indexing them floods the
-    // corpus with stale designs competing against whatever replaced them. In
-    // this repository that is 20 files and 1.24 MB — 49% of all prose bytes.
-    //
-    // The `plans` segment is tested on the PROJECT-relative path, never the
-    // absolute one: a checkout that happens to sit under a directory named
-    // `plans` would otherwise have every `DONE-` file anywhere in it excluded.
-    let is_done_plan = name.starts_with("DONE-")
-        && relative
-            .components()
-            .any(|component| component.as_os_str() == "plans");
-    if is_done_plan {
+    if prose_lifecycle(relative, None).is_none() {
         return;
     }
     out.push(normalize_relative(relative));
+}
+
+/// Derive prose authority from a PROJECT-relative path. `None` means the file
+/// is excluded from both chunking and fingerprinting.
+pub(crate) fn prose_lifecycle(
+    relative: &Path,
+    explicit: Option<LifecycleState>,
+) -> Option<LifecycleState> {
+    let components: Vec<String> = relative
+        .components()
+        .map(|component| {
+            component
+                .as_os_str()
+                .to_string_lossy()
+                .trim()
+                .to_lowercase()
+        })
+        .collect();
+    let file_name = components.last().map(String::as_str).unwrap_or_default();
+    let under_plans = components.iter().any(|component| component == "plans");
+
+    if components.iter().any(|component| component == "archive") {
+        return None;
+    }
+    if under_plans && file_name.starts_with("done-") {
+        return None;
+    }
+    if let Some(explicit) = explicit {
+        return Some(explicit);
+    }
+    if under_plans && file_name.starts_with("review-") {
+        return Some(LifecycleState::Historical);
+    }
+    if under_plans && (file_name.starts_with("plan-") || file_name.starts_with("in_progress-plan-"))
+    {
+        return Some(LifecycleState::Draft);
+    }
+    if under_plans && components.iter().any(|component| component == "briefs") {
+        return Some(LifecycleState::Draft);
+    }
+    if file_name.starts_with("report-") || file_name.starts_with("proposal-") {
+        return Some(LifecycleState::Historical);
+    }
+    Some(LifecycleState::Active)
 }
 
 /// Rejoin `relative`'s components with `/`, matching the normalization idiom

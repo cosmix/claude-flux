@@ -12,6 +12,7 @@
 pub mod catalog;
 pub mod chunker;
 pub mod dir;
+pub(crate) mod frontmatter;
 pub mod index;
 mod scaffold;
 pub mod splice;

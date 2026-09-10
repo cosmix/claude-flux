@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+mod evidence;
 mod source_refs;
 fn section(heading: &str, body_lines: usize) -> String {
     format!("## {heading}\n{}", "detail\n".repeat(body_lines))
@@ -16,7 +17,7 @@ fn small_sections(count: usize) -> String {
 
 fn write_ordering_fixture(root: &Path) {
     fs::create_dir_all(root.join("topics")).unwrap();
-    fs::write(root.join("INDEX.md"), "x".repeat(12_289)).unwrap();
+    fs::write(root.join("INDEX.md"), "x".repeat(16_385)).unwrap();
     fs::write(
         root.join("a.md"),
         format!(
@@ -26,7 +27,7 @@ fn write_ordering_fixture(root: &Path) {
     )
     .unwrap();
     fs::write(root.join("b.md"), small_sections(63)).unwrap();
-    fs::write(root.join("d.md"), "## Source\n`src/missing.rs`\n").unwrap();
+    fs::write(root.join("d.md"), "## Source\n`missing.rs`\n").unwrap();
     fs::write(
         root.join("topics/generic.md"),
         "> Topic notes for the topics knowledge area.\n## Topic\n",
@@ -156,13 +157,13 @@ fn rule_8_reports_missing_repository_source_paths_when_project_root_is_known() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("project/doc/loom/knowledge");
     fs::create_dir_all(&root).unwrap();
-    fs::write(root.join("notes.md"), "## Topic\n`src/missing.rs`\n").unwrap();
+    fs::write(root.join("notes.md"), "## Topic\n`missing.rs`\n").unwrap();
     let catalog = build(&root).unwrap();
     assert_eq!(
         catalog.issues,
         vec![CatalogIssue::MissingSourceRef {
             file: PathBuf::from("notes.md"),
-            source_path: "src/missing.rs".to_string(),
+            source_path: "missing.rs".to_string(),
         }]
     );
 }
@@ -175,7 +176,7 @@ fn rule_9_sorts_issues_by_file_kind_and_payload() {
     assert_eq!(
         build(&root).unwrap().issues,
         vec![
-            CatalogIssue::OversizedIndex { bytes: 12_289 },
+            CatalogIssue::OversizedIndex { bytes: 16_385 },
             CatalogIssue::DuplicateHeading {
                 file: PathBuf::from("a.md"),
                 heading: "repeat".to_string(),
@@ -196,7 +197,7 @@ fn rule_9_sorts_issues_by_file_kind_and_payload() {
             },
             CatalogIssue::MissingSourceRef {
                 file: PathBuf::from("d.md"),
-                source_path: "src/missing.rs".to_string(),
+                source_path: "missing.rs".to_string(),
             },
             CatalogIssue::GenericBlurb {
                 file: PathBuf::from("topics/generic.md"),
@@ -236,9 +237,7 @@ fn rule_11_parent_relative_link_from_a_tier2_file_still_resolves() {
 #[test]
 fn rule_12_absolute_link_target_is_reported_broken_not_probed() {
     let temp = TempDir::new().unwrap();
-    // `elsewhere.md` genuinely exists, right next to the knowledge root:
-    // `Path::join` with an absolute second argument DISCARDS the base
-    // entirely (this is exactly the S2 vulnerability), so the OLD code
+    // `Path::join` with an absolute second argument discards the base, so old code
     // would resolve this straight to the real file and never flag it. The
     // fix must reject the absolute target outright, before that join even
     // happens.
@@ -264,11 +263,9 @@ fn rule_13_link_target_escaping_the_knowledge_root_is_reported_broken_not_probed
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("root");
     fs::create_dir_all(root.join("architecture")).unwrap();
-    // A real file OUTSIDE the knowledge root, reachable via `..` if the OS
-    // resolved the joined path rather than the target being contained
+    // A real file outside the root, reachable if the OS resolved the joined
     // lexically first - `root/architecture/../../outside.md` normalizes to
-    // this file, which is exactly why the OLD code (plain `Path::join`,
-    // then `fs::metadata`) would have resolved it and never flagged it.
+    // this file; a plain join plus metadata would have resolved it.
     fs::write(temp.path().join("outside.md"), "## Outside\n").unwrap();
     fs::write(
         root.join("architecture/topic.md"),
@@ -345,10 +342,10 @@ fn rule_17_does_not_report_oversized_tier2_topics() {
 #[test]
 fn rule_18_reports_only_indexes_over_the_byte_limit() {
     let oversized = TempDir::new().unwrap();
-    fs::write(oversized.path().join("INDEX.md"), "x".repeat(12_289)).unwrap();
+    fs::write(oversized.path().join("INDEX.md"), "x".repeat(16_385)).unwrap();
     assert_eq!(
         build(oversized.path()).unwrap().issues,
-        vec![CatalogIssue::OversizedIndex { bytes: 12_289 }]
+        vec![CatalogIssue::OversizedIndex { bytes: 16_385 }]
     );
 
     let small = TempDir::new().unwrap();
@@ -360,8 +357,7 @@ fn rule_18_reports_only_indexes_over_the_byte_limit() {
         .any(|issue| matches!(issue, CatalogIssue::OversizedIndex { .. })));
 }
 
-/// Write an `INDEX.md` of exactly `bytes` bytes, asserting the size actually
-/// landed so the boundary test cannot rot into testing a different size.
+/// Write an `INDEX.md` of exactly `bytes` bytes and assert its size.
 fn index_of_exactly(root: &Path, bytes: usize) {
     let path = root.join("INDEX.md");
     fs::write(&path, "x".repeat(bytes)).unwrap();
@@ -371,14 +367,14 @@ fn index_of_exactly(root: &Path, bytes: usize) {
 #[test]
 fn rule_19_reports_index_only_strictly_over_the_byte_boundary() {
     let at = TempDir::new().unwrap();
-    index_of_exactly(at.path(), 12_288);
+    index_of_exactly(at.path(), 16_384);
     assert!(build(at.path()).unwrap().issues.is_empty());
 
     let over = TempDir::new().unwrap();
-    index_of_exactly(over.path(), 12_289);
+    index_of_exactly(over.path(), 16_385);
     assert_eq!(
         build(over.path()).unwrap().issues,
-        vec![CatalogIssue::OversizedIndex { bytes: 12_289 }]
+        vec![CatalogIssue::OversizedIndex { bytes: 16_385 }]
     );
 }
 

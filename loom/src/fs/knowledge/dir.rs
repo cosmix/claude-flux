@@ -283,7 +283,7 @@ impl KnowledgeDir {
     /// re-running the command — would append the same block twice. The index is
     /// derived state; the next knowledge write, or `loom knowledge sync`,
     /// rebuilds it.
-    fn refresh_index_if_hierarchical(&self) {
+    pub(crate) fn refresh_index_if_hierarchical(&self) {
         if self.layout() == KnowledgeLayout::Hierarchical {
             if let Err(e) = self.write_index() {
                 eprintln!("warning: failed to refresh {INDEX_FILENAME}: {e:#}");

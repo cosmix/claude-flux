@@ -1,8 +1,10 @@
 //! Knowledge command - manage curated codebase knowledge.
+pub mod annotate;
 pub mod check;
 pub mod context;
 pub mod eval;
 pub mod sync;
+pub mod telemetry;
 
 use crate::fs::knowledge::{KnowledgeDir, KnowledgeTarget, SectionOutcome};
 use crate::fs::work_dir::WorkDir;
@@ -161,3 +163,7 @@ mod tests_legacy;
 #[cfg(test)]
 #[path = "tests_replace_section_levels.rs"]
 mod tests_replace_section_levels;
+
+#[cfg(test)]
+#[path = "tests_annotate.rs"]
+mod tests_annotate;

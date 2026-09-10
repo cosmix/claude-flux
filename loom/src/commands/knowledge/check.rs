@@ -33,9 +33,8 @@ use std::path::Path;
 /// Report the knowledge base's diagnostics. Resolves the knowledge root
 /// read-only (see the module doc) and never initializes or mutates it.
 ///
-/// Always exits 0, except `strict` combined with at least one reported issue,
-/// which exits 1 — after all printing, so a caller piping stdout still sees
-/// the full report.
+/// Always exits 0, except `strict` combined with at least one non-review issue,
+/// which exits 1 after all printing.
 pub fn check(strict: bool, json: bool) -> Result<()> {
     let root = knowledge_root()?;
     if !root.exists() {
@@ -50,10 +49,11 @@ pub fn check(strict: bool, json: bool) -> Result<()> {
         print_human(&root, &catalog);
     }
 
-    if strict && !catalog.issues.is_empty() {
+    let strict_count = strict_issue_count(&catalog.issues);
+    if strict && strict_count > 0 {
         eprintln!(
             "loom knowledge check: FAIL - {} issue(s) found under {}",
-            catalog.issues.len(),
+            strict_count,
             root.display()
         );
         std::process::exit(1);
@@ -103,11 +103,29 @@ fn report_missing_root(root: &Path, json: bool) -> Result<()> {
 /// unlike [`issue_line`] this must NOT route any field through
 /// [`inline_safe`] — flattening is for the human-readable stdout line only.
 fn json_payload(root: &Path, catalog: &Catalog) -> serde_json::Value {
+    let issues: Vec<_> = catalog
+        .issues
+        .iter()
+        .filter(|issue| !issue.is_review_only())
+        .collect();
+    let review: Vec<_> = catalog
+        .issues
+        .iter()
+        .filter(|issue| issue.is_review_only())
+        .collect();
     serde_json::json!({
         "root": root,
-        "issues": catalog.issues,
-        "count": catalog.issues.len(),
+        "issues": issues,
+        "review": review,
+        "count": strict_issue_count(&catalog.issues),
     })
+}
+
+fn strict_issue_count(issues: &[CatalogIssue]) -> usize {
+    issues
+        .iter()
+        .filter(|issue| !issue.is_review_only())
+        .count()
 }
 
 fn print_json(root: &Path, catalog: &Catalog) -> Result<()> {
@@ -134,26 +152,33 @@ fn human_report(root: &Path, catalog: &Catalog) -> String {
             root.display()
         );
     }
-    let mut lines: Vec<String> = catalog
-        .issues
-        .iter()
-        .map(|issue| format!("{} {}", "!".yellow().bold(), issue_line(issue)))
-        .collect();
+    let mut lines: Vec<String> = catalog.issues.iter().map(decorated_issue_line).collect();
+    let strict_count = strict_issue_count(&catalog.issues);
+    let review_count = catalog.issues.len() - strict_count;
     lines.push(format!(
-        "{} {} issue(s) found under {}",
+        "{} {strict_count} issue(s), {review_count} review note(s) found under {}",
         "!".yellow().bold(),
-        catalog.issues.len(),
         root.display()
     ));
     lines.join("\n")
+}
+
+fn decorated_issue_line(issue: &CatalogIssue) -> String {
+    match issue {
+        CatalogIssue::EvidenceChanged { .. } | CatalogIssue::UnverifiableReference { .. } => {
+            issue_line(issue)
+        }
+        _ => format!("{} {}", "!".yellow().bold(), issue_line(issue)),
+    }
 }
 
 /// One human-readable line per issue. Matched EXHAUSTIVELY — no `_ =>`
 /// catch-all — so a future `CatalogIssue` variant fails to compile here
 /// instead of silently printing nothing for it.
 ///
-/// Every untrusted field — `heading`, `blurb`, `target`, `source_path`, and
-/// the file path itself — is routed through [`inline_safe`] before it
+/// Every untrusted field — `heading`, `blurb`, `target`, `source_path`,
+/// `verified`, `kind`, and the file path itself — is routed through
+/// [`inline_safe`] before it
 /// reaches this line. These values come straight from unvalidated knowledge
 /// files: `validate_knowledge_content` (`validation.rs:129`) checks only
 /// emptiness and length, not control characters, so a heading or blurb can
@@ -187,6 +212,9 @@ fn issue_line(issue: &CatalogIssue) -> String {
             safe_path(file),
             inline_safe(source_path)
         ),
+        CatalogIssue::EvidenceChanged { .. } | CatalogIssue::UnverifiableReference { .. } => {
+            review_issue_line(issue)
+        }
         CatalogIssue::OversizedSection {
             file,
             heading,
@@ -198,6 +226,33 @@ fn issue_line(issue: &CatalogIssue) -> String {
         CatalogIssue::OversizedIndex { bytes } => format!(
             "{INDEX_FILENAME} is {bytes} bytes, over the {MAX_INDEX_BYTES}-byte budget - trim it"
         ),
+    }
+}
+
+fn review_issue_line(issue: &CatalogIssue) -> String {
+    match issue {
+        CatalogIssue::EvidenceChanged {
+            file,
+            source_path,
+            verified,
+        } => format!(
+            "review: {}: {} changed since {} — re-verify or `loom knowledge annotate {} --verified HEAD`",
+            safe_path(file),
+            inline_safe(source_path),
+            inline_safe(&verified.chars().take(8).collect::<String>()),
+            safe_path(file)
+        ),
+        CatalogIssue::UnverifiableReference {
+            file,
+            source_path,
+            kind,
+        } => format!(
+            "note: {}: unresolved {} reference \"{}\"",
+            safe_path(file),
+            inline_safe(kind),
+            inline_safe(source_path)
+        ),
+        _ => unreachable!("review_issue_line only accepts review-only issues"),
     }
 }
 

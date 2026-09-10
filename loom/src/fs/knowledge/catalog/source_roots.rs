@@ -1,5 +1,6 @@
 //! Cargo-package source-root discovery for catalog source references.
 
+use super::CatalogIssue;
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::fs;
@@ -37,6 +38,25 @@ impl<'a> SourceRefContext<'a> {
             self.project_files,
             source_path,
         )
+    }
+
+    /// True when `source_path`'s first path component names something that
+    /// exists at the project root or under a declared cargo source root —
+    /// even though `source_path` in full did not resolve.
+    ///
+    /// This is what separates a reference into a part of THIS project (a
+    /// real file under a known top-level directory, just misspelled or
+    /// deleted — still a [`super::CatalogIssue::MissingSourceRef`]) from a
+    /// reference into a project this repository does not contain at all (an
+    /// external reference the chunker cannot see, since it never touches the
+    /// filesystem).
+    pub(super) fn first_component_resolves(&self, project_root: &Path, source_path: &str) -> bool {
+        let first_component = source_path.split('/').next().unwrap_or(source_path);
+        fs::metadata(project_root.join(first_component)).is_ok()
+            || self
+                .cargo_source_roots
+                .iter()
+                .any(|source_root| fs::metadata(source_root.join(first_component)).is_ok())
     }
 }
 
@@ -260,4 +280,55 @@ fn cargo_manifest_has_package(manifest: &Path) -> bool {
         .ok()
         .and_then(|content| toml::from_str::<toml::Value>(&content).ok())
         .is_some_and(|manifest| manifest.get("package").is_some_and(toml::Value::is_table))
+}
+
+/// A backticked span worth probing on disk at all: not an absolute path, not
+/// a `//`-prefixed value, and not one that climbs above its root with `..`.
+pub(super) fn looks_like_repository_path(source_path: &str) -> bool {
+    let path = Path::new(source_path);
+    !source_path.starts_with("//")
+        && !path.is_absolute()
+        && !path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+/// A `MissingSourceRef` or `UnverifiableReference` note for one `Live`
+/// backticked source path that does not resolve, or nothing when it does.
+///
+/// A path whose first component names nothing this project has — neither at
+/// the project root nor under a declared cargo source root — is reported as
+/// an external note instead of a missing reference: the chunker cannot make
+/// that call itself, since it never sees the filesystem (see
+/// [`SourceRefContext::first_component_resolves`]).
+pub(super) fn push_source_ref_issue(
+    project_root: &Path,
+    source_refs: &SourceRefContext,
+    relative_path: &Path,
+    source_path: &str,
+    issues: &mut Vec<CatalogIssue>,
+) {
+    if !looks_like_repository_path(source_path)
+        || source_refs.path_exists(project_root, source_path)
+    {
+        return;
+    }
+    // A bare basename (no `/`) has no first path component distinct from the
+    // leaf itself, so "external by resolution" cannot say anything about it
+    // — it always stays a plain missing reference, resolved or not against
+    // `ProjectFileIndex::has_basename`.
+    let external = source_path.contains('/')
+        && !source_refs.first_component_resolves(project_root, source_path);
+    if external {
+        issues.push(CatalogIssue::UnverifiableReference {
+            file: relative_path.to_path_buf(),
+            source_path: source_path.to_string(),
+            kind: "external".to_string(),
+        });
+    } else {
+        issues.push(CatalogIssue::MissingSourceRef {
+            file: relative_path.to_path_buf(),
+            source_path: source_path.to_string(),
+        });
+    }
 }

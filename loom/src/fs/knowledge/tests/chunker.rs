@@ -185,3 +185,90 @@ fn rule_16_applies_aliases_sources_and_state_as_specified() {
     assert_eq!(chunks[0].source_paths, vec!["src/a.rs", "src/b.rs"]);
     assert_eq!(chunks[1].source_paths, vec!["src/c.rs"]);
 }
+
+#[test]
+fn a_live_reference_is_classified_as_live() {
+    use crate::fs::knowledge::chunker::references::{classify_reference, EvidenceKind};
+
+    assert_eq!(
+        classify_reference(
+            "loom/src/context/pack.rs",
+            "See `loom/src/context/pack.rs` for packing.",
+        ),
+        EvidenceKind::Live
+    );
+}
+
+#[test]
+fn example_references_are_classified_as_examples() {
+    use crate::fs::knowledge::chunker::references::{classify_reference, EvidenceKind};
+
+    assert_eq!(
+        classify_reference("category/slug.md", "Use `category/slug.md` as an example."),
+        EvidenceKind::Example
+    );
+    assert_eq!(
+        classify_reference("doc/plans/PLAN-foo.md", "Write `doc/plans/PLAN-foo.md`."),
+        EvidenceKind::Example
+    );
+}
+
+#[test]
+fn a_runtime_reference_is_classified_as_runtime() {
+    use crate::fs::knowledge::chunker::references::{classify_reference, EvidenceKind};
+
+    assert_eq!(
+        classify_reference(
+            ".work/config.toml",
+            "Runtime state is in `.work/config.toml`."
+        ),
+        EvidenceKind::Runtime
+    );
+}
+
+#[test]
+fn an_external_reference_is_classified_as_external() {
+    use crate::fs::knowledge::chunker::references::{classify_reference, EvidenceKind};
+
+    assert_eq!(
+        classify_reference(
+            "codex-rs/linux-sandbox/src/bwrap.rs",
+            "OpenAI's codex-rs uses `codex-rs/linux-sandbox/src/bwrap.rs`."
+        ),
+        EvidenceKind::External
+    );
+}
+
+#[test]
+fn a_historical_reference_is_classified_as_historical() {
+    use crate::fs::knowledge::chunker::references::{classify_reference, EvidenceKind};
+
+    assert_eq!(
+        classify_reference("gc.rs", "There is no `gc.rs` in this version."),
+        EvidenceKind::Historical
+    );
+}
+
+#[test]
+fn there_is_no_followed_by_other_words_stays_live() {
+    use crate::fs::knowledge::chunker::references::{classify_reference, EvidenceKind};
+
+    assert_eq!(
+        classify_reference(
+            "loom/src/x.rs",
+            "There is no reason to change `loom/src/x.rs`.",
+        ),
+        EvidenceKind::Live
+    );
+}
+
+#[test]
+fn only_live_references_become_source_paths() {
+    let chunks = chunk_file(
+        Path::new("notes.md"),
+        b"## T\nUse `category/slug.md` as an example. Runtime is `.work/config.toml`. The live code is `loom/src/context/pack.rs`.\n",
+    )
+    .unwrap();
+
+    assert_eq!(chunks[0].source_paths, vec!["loom/src/context/pack.rs"]);
+}
