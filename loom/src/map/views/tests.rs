@@ -5,6 +5,16 @@ use serial_test::serial;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
 
+pub(super) fn impact_args(kinds: Vec<SourceEdgeKind>) -> ImpactArgs {
+    ImpactArgs {
+        depth: 3,
+        kinds,
+        limit: 0,
+        path_prefix: None,
+        min_confidence: 0.0,
+    }
+}
+
 fn node(
     id: &str,
     path: &str,
@@ -104,6 +114,7 @@ fn outline_of_a_lexical_only_file_states_status_and_detail() {
 
     assert!(rendered.contains("lexical-only"));
     assert!(rendered.contains("no grammar for .toml"));
+    assert!(!rendered.contains("coverage: 1 files"));
 }
 
 #[test]
@@ -140,6 +151,7 @@ fn find_all_still_lists_a_parse_error_file_and_reports_its_status() {
     let rendered = render_find_all(&graph, "broken.rs");
     assert!(rendered.contains("1 matches"));
     assert!(rendered.contains("[parse-error]"));
+    assert!(!rendered.contains("coverage: 1 files"));
 }
 
 /// A three-hop chain (`baz -> bar -> foo`) with a strong parser-derived edge
@@ -147,7 +159,7 @@ fn find_all_still_lists_a_parse_error_file_and_reports_its_status() {
 /// [`impact_row_shows_provenance_and_the_weakest_confidence_on_the_path`] to
 /// assert the impact view reports each edge's provenance and the WEAKEST
 /// confidence along the path, not just the nearest hop's.
-fn impact_chain_graph() -> ResolvedGraph {
+pub(super) fn impact_chain_graph() -> ResolvedGraph {
     let foo = node(
         "src/a.rs#function:foo",
         "src/a.rs",
@@ -197,7 +209,13 @@ fn impact_row_shows_provenance_and_the_weakest_confidence_on_the_path() {
     let graph = impact_chain_graph();
 
     let root = TempDir::new().unwrap();
-    let rendered = render_impact(&graph, root.path(), "foo", &ResolutionStats::default());
+    let rendered = render_impact(
+        &graph,
+        root.path(),
+        "foo",
+        &ResolutionStats::default(),
+        &impact_args(Vec::new()),
+    );
 
     assert!(rendered.contains("parser"));
     assert!(rendered.contains("inferred"));
@@ -206,6 +224,8 @@ fn impact_row_shows_provenance_and_the_weakest_confidence_on_the_path() {
         !rendered.contains("d2  1.00"),
         "the second hop's weakest link is 0.5, not the first hop's 1.0: {rendered}"
     );
+    assert!(!rendered.contains("coverage:"));
+    assert!(!rendered.contains("resolution:"));
 }
 
 #[test]
@@ -225,9 +245,64 @@ fn empty_impact_names_what_was_not_traversed() {
     };
 
     let root = TempDir::new().unwrap();
-    let rendered = render_impact(&graph, root.path(), "lonely", &stats);
+    let rendered = render_impact(
+        &graph,
+        root.path(),
+        "lonely",
+        &stats,
+        &impact_args(Vec::new()),
+    );
 
     assert!(rendered.contains("no resolved edge reaches this node"));
     assert!(rendered.contains("3 unresolved edges"));
     assert!(!rendered.contains("nothing in the graph reaches this node"));
+}
+
+#[test]
+fn impact_heading_names_the_kind_filter() {
+    let graph = impact_chain_graph();
+    let root = TempDir::new().unwrap();
+    let mut args = impact_args(vec![SourceEdgeKind::Calls, SourceEdgeKind::References]);
+    args.depth = 2;
+
+    let rendered = render_impact(
+        &graph,
+        root.path(),
+        "foo",
+        &ResolutionStats::default(),
+        &args,
+    );
+
+    assert!(rendered.contains(
+        "Impact of src/a.rs#function:foo (depth <= 2, kinds: calls,references, reverse edges)"
+    ));
+}
+
+#[test]
+fn callers_view_lists_direct_callers_with_provenance() {
+    let graph = impact_chain_graph();
+    let root = TempDir::new().unwrap();
+
+    let rendered = render_callers(&graph, root.path(), "foo", 0);
+
+    assert!(rendered.contains("Callers of src/a.rs#function:foo"));
+    assert!(rendered.contains("  1.00  parser  calls  src/b.rs#function:bar  (src/b.rs:0)"));
+    assert!(!rendered.contains("src/c.rs#function:baz"));
+}
+
+#[test]
+fn render_footer_prints_coverage_once() {
+    let graph = impact_chain_graph();
+    let stats = ResolutionStats {
+        retargeted: 2,
+        ambiguous: 1,
+        unresolved: 3,
+    };
+
+    let rendered = render_footer(&graph, &stats);
+
+    assert_eq!(rendered.matches("coverage:").count(), 1);
+    assert!(
+        rendered.contains("resolution: 2 retargeted, 1 ambiguous (left unresolved), 3 unresolved")
+    );
 }

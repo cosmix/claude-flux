@@ -46,10 +46,12 @@ use crate::context::graph_store::ResolvedGraph;
 use crate::context::source_graph::{EdgeProvenance, SourceEdge, SourceEdgeKind};
 
 mod impact;
+mod neighbors;
 mod paths;
 mod symbols;
 
-pub use impact::{impact, ImpactHit};
+pub use impact::{impact, impact_with, ImpactHit, ImpactOptions, ImpactResult};
+pub use neighbors::{direct_callees, direct_callers, Neighbor};
 pub(crate) use symbols::node_names;
 pub use symbols::SymbolIndex;
 

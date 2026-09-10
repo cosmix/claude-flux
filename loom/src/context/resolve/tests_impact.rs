@@ -177,3 +177,167 @@ fn impact_ignores_unresolved_edges_and_absent_origins() {
         "an edge from a node the graph does not contain reaches nothing"
     );
 }
+
+#[test]
+fn default_options_skip_contains_and_imports_edges() {
+    let target = func_id("src/target.rs", "target");
+    let called = func_id("src/called.rs", "called");
+    let contained = func_id("src/contained.rs", "contained");
+    let imported = func_id("src/imported.rs", "imported");
+    let graph = graph_from(vec![
+        (
+            "src/called.rs",
+            &["called"],
+            vec![edge_at(
+                &called,
+                &target,
+                SourceEdgeKind::Calls,
+                EdgeProvenance::Parser,
+                1.0,
+            )],
+        ),
+        (
+            "src/contained.rs",
+            &["contained"],
+            vec![edge_at(
+                &contained,
+                &target,
+                SourceEdgeKind::Contains,
+                EdgeProvenance::Parser,
+                1.0,
+            )],
+        ),
+        (
+            "src/imported.rs",
+            &["imported"],
+            vec![edge_at(
+                &imported,
+                &target,
+                SourceEdgeKind::Imports,
+                EdgeProvenance::Parser,
+                1.0,
+            )],
+        ),
+        ("src/target.rs", &["target"], vec![]),
+    ]);
+
+    let result = impact_with(&graph, &target, &ImpactOptions::default());
+
+    assert_eq!(ids(&result.hits), vec![called.as_str()]);
+}
+
+#[test]
+fn a_kind_filter_is_applied_while_traversing_not_after() {
+    let target = func_id("src/target.rs", "target");
+    let bridge = func_id("src/bridge.rs", "bridge");
+    let far = func_id("src/far.rs", "far");
+    let graph = graph_from(vec![
+        (
+            "src/far.rs",
+            &["far"],
+            vec![edge_at(
+                &far,
+                &bridge,
+                SourceEdgeKind::Calls,
+                EdgeProvenance::Inferred,
+                0.5,
+            )],
+        ),
+        (
+            "src/bridge.rs",
+            &["bridge"],
+            vec![edge_at(
+                &bridge,
+                &target,
+                SourceEdgeKind::References,
+                EdgeProvenance::Parser,
+                1.0,
+            )],
+        ),
+        ("src/target.rs", &["target"], vec![]),
+    ]);
+    let options = ImpactOptions {
+        kinds: vec![SourceEdgeKind::Calls],
+        ..ImpactOptions::default()
+    };
+
+    let result = impact_with(&graph, &target, &options);
+
+    assert!(result.hits.is_empty());
+}
+
+#[test]
+fn a_limit_reports_how_many_hits_it_suppressed() {
+    let target = func_id("src/target.rs", "target");
+    let graph = graph_from(vec![
+        ("src/a.rs", &["a"], call(&func_id("src/a.rs", "a"), &target)),
+        ("src/b.rs", &["b"], call(&func_id("src/b.rs", "b"), &target)),
+        ("src/c.rs", &["c"], call(&func_id("src/c.rs", "c"), &target)),
+        ("src/target.rs", &["target"], vec![]),
+    ]);
+    let options = ImpactOptions {
+        limit: 2,
+        ..ImpactOptions::default()
+    };
+
+    let result = impact_with(&graph, &target, &options);
+
+    assert_eq!(
+        ids(&result.hits),
+        vec!["src/a.rs#function:a", "src/b.rs#function:b"]
+    );
+    assert_eq!(result.suppressed, 1);
+}
+
+#[test]
+fn a_path_prefix_keeps_only_matching_hits() {
+    let target = func_id("src/target.rs", "target");
+    let graph = graph_from(vec![
+        ("src/a.rs", &["a"], call(&func_id("src/a.rs", "a"), &target)),
+        (
+            "tests/b.rs",
+            &["b"],
+            call(&func_id("tests/b.rs", "b"), &target),
+        ),
+        ("src/target.rs", &["target"], vec![]),
+    ]);
+    let options = ImpactOptions {
+        path_prefix: Some("tests/".to_string()),
+        ..ImpactOptions::default()
+    };
+
+    let result = impact_with(&graph, &target, &options);
+
+    assert_eq!(ids(&result.hits), vec!["tests/b.rs#function:b"]);
+    assert_eq!(result.suppressed, 0);
+}
+
+#[test]
+fn a_min_confidence_stops_traversal_through_weak_edges() {
+    let target = func_id("src/target.rs", "target");
+    let bridge = func_id("src/bridge.rs", "bridge");
+    let far = func_id("src/far.rs", "far");
+    let graph = graph_from(vec![
+        ("src/far.rs", &["far"], call(&far, &bridge)),
+        (
+            "src/bridge.rs",
+            &["bridge"],
+            vec![edge_at(
+                &bridge,
+                &target,
+                SourceEdgeKind::Calls,
+                EdgeProvenance::Inferred,
+                0.4,
+            )],
+        ),
+        ("src/target.rs", &["target"], vec![]),
+    ]);
+    let options = ImpactOptions {
+        min_confidence: 0.5,
+        ..ImpactOptions::default()
+    };
+
+    let result = impact_with(&graph, &target, &options);
+
+    assert!(result.hits.is_empty());
+}
