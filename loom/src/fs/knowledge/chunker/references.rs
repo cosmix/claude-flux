@@ -169,7 +169,7 @@ fn references_in_line(
                 if !followed_by_identifier {
                     let source_path = matched.as_str().to_string();
                     references.push(EvidenceReference {
-                        kind: classify_reference(&source_path, sentence),
+                        kind: classify_reference(&source_path, &sentence),
                         source_path,
                     });
                 }
@@ -184,14 +184,92 @@ fn references_in_line(
     }
 }
 
-fn sentence_window(line: &str, opening: usize, after_closing: usize) -> &str {
-    let start = line[..opening]
-        .rfind('.')
-        .map_or(0, |position| position + 1);
-    let end = line[after_closing..]
-        .find('.')
-        .map_or(line.len(), |position| after_closing + position + 1);
-    &line[start..end]
+/// The sentence-local window around a reference: bounded by real sentence
+/// ends (see `is_sentence_end`) on either side, with every OTHER backtick
+/// span's contents blanked out so a marker word in a neighbouring code span
+/// never leaks in. The current span, including its backticks, stays
+/// verbatim so `is_there_is_no_this_path` still sees it.
+fn sentence_window(line: &str, current_open: usize, after_closing: usize) -> String {
+    let current_close = after_closing.saturating_sub(1);
+    let start = last_sentence_boundary(line, current_open).map_or(0, |position| position + 1);
+    let end =
+        next_sentence_boundary(line, after_closing).map_or(line.len(), |position| position + 1);
+    mask_other_spans(line, start, end, current_open, current_close)
+}
+
+fn last_sentence_boundary(line: &str, before: usize) -> Option<usize> {
+    line[..before]
+        .char_indices()
+        .rev()
+        .find(|&(index, character)| character == '.' && is_sentence_end(line, index))
+        .map(|(index, _)| index)
+}
+
+fn next_sentence_boundary(line: &str, from: usize) -> Option<usize> {
+    line[from..]
+        .char_indices()
+        .find(|&(offset, character)| character == '.' && is_sentence_end(line, from + offset))
+        .map(|(offset, _)| from + offset)
+}
+
+/// Blank out the contents of every backtick span in `line[start..end]` other
+/// than the current reference's own (`current_open`/`current_close` are the
+/// absolute indices of its opening and closing backticks).
+fn mask_other_spans(
+    line: &str,
+    start: usize,
+    end: usize,
+    current_open: usize,
+    current_close: usize,
+) -> String {
+    let mut window = String::with_capacity(end - start);
+    let mut inside_other = false;
+    for (offset, character) in line[start..end].char_indices() {
+        let absolute = start + offset;
+        if character == '`' {
+            if absolute != current_open && absolute != current_close {
+                inside_other = !inside_other;
+            }
+            window.push(character);
+        } else if !inside_other {
+            window.push(character);
+        }
+    }
+    window
+}
+
+/// A `.` ends a sentence only when it is followed by whitespace or the end of
+/// the line, sits outside any backtick span, and does not close one of
+/// [`ABBREVIATIONS`] (checked case-insensitively): `e.g.`, `i.e.`, `vs.`, and
+/// `cf.` never end a sentence in this corpus. `etc.` is deliberately left out
+/// — it does end a sentence here.
+fn is_sentence_end(line: &str, dot: usize) -> bool {
+    let next = dot + 1;
+    let followed_by_boundary =
+        next >= line.len() || line[next..].chars().next().is_some_and(char::is_whitespace);
+    if !followed_by_boundary || is_inside_backticks(line, dot) {
+        return false;
+    }
+    !ends_with_abbreviation(&line[..next])
+}
+
+fn is_inside_backticks(line: &str, position: usize) -> bool {
+    line[..position].matches('`').count() % 2 == 1
+}
+
+const ABBREVIATIONS: &[&str] = &["e.g.", "i.e.", "vs.", "cf."];
+
+/// True when `prefix` ends with one of [`ABBREVIATIONS`], comparing only the
+/// matching tail (not the whole prefix) so this stays cheap on long lines.
+/// `get` avoids a char-boundary panic when `prefix` is shorter than the
+/// abbreviation.
+fn ends_with_abbreviation(prefix: &str) -> bool {
+    ABBREVIATIONS.iter().any(|abbreviation| {
+        prefix.len() >= abbreviation.len()
+            && prefix
+                .get(prefix.len() - abbreviation.len()..)
+                .is_some_and(|tail| tail.eq_ignore_ascii_case(abbreviation))
+    })
 }
 
 fn deduplicate<T>(values: Vec<T>) -> Vec<T>
