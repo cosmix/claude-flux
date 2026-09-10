@@ -107,12 +107,12 @@ bypassable. The working shape:
 
 ## Fail-Safe Direction for Destructive Sweeps (2026-08-08)
 
-Any sweep that kills or deletes must resolve _uncertainty_ toward inaction:
+Any sweep that kills or deletes must resolve *uncertainty* toward inaction:
 
 - **Cannot read the evidence ⇒ do not destroy.** `tmux/socket.rs`'s `socket_session_is_alive` returns
   `false` for an absent session file but **`true`** for one that exists and cannot be parsed — a file
   caught mid-write must not be read as "dead".
-- **Cannot positively attribute ⇒ do not destroy.** Reap only resources provably owned by _this_ work
+- **Cannot positively attribute ⇒ do not destroy.** Reap only resources provably owned by *this* work
   dir. Shared per-user namespaces (the tmux socket dir) make "no matching state file" match other
   checkouts' live resources.
 - **Report what you skipped.** Unattributable resources are surfaced to the user, never silently

@@ -84,8 +84,8 @@ Table cells escape `|`.
 
 `scan_topics` is **non-recursive** — it reads each category directory's direct
 `*.md` children only, skipping dotfiles and non-`.md` entries. Nested
-subdirectories under a category are ignored completely. Title is the first `# `
-line, blurb the first `> ` line (`extract_title_and_blurb`), falling back to the
+subdirectories under a category are ignored completely. Title is the first `#`
+line, blurb the first `>` line (`extract_title_and_blurb`), falling back to the
 slug and an empty string.
 
 Regeneration is idempotent and does a full atomic overwrite, so hand edits to
@@ -109,7 +109,7 @@ deterministically by `catalog/order.rs`:
 
 - **`DuplicateHeading`** — the same normalized H2+ anchor occurs more than once in
   one file.
-- **`GenericBlurb`** — a topic's first `> ` line still equals
+- **`GenericBlurb`** — a topic's first `>` line still equals
   `templates::scaffold_blurb` for its category.
 - **`BrokenLink`** — a markdown link target does not resolve to a real file, by
   lexical path resolution (`.` and `..` folded relative to the linking file,

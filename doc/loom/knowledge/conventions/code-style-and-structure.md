@@ -125,7 +125,7 @@ When a pattern appears 3+ times, extract to a canonical location:
 
 ## Map Module Conventions
 
-Detectors skip: .git, .work, .worktrees, node_modules, target, .venv, __pycache__. Deep=3-level depth + concerns, Normal=2-level. Source extensions: .rs, .ts, .js, .py, .go, .java, .rb.
+Detectors skip: .git, .work, .worktrees, node_modules, target, .venv, **pycache**. Deep=3-level depth + concerns, Normal=2-level. Source extensions: .rs, .ts, .js, .py, .go, .java, .rb.
 
 ## Dependency Pins for Native-Grammar Crates
 
