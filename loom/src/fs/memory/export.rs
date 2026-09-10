@@ -2,7 +2,7 @@
 
 use super::query::get_recent_entries;
 use super::storage::read_journal;
-use super::types::MemoryEntryType;
+use super::types::{MemoryEntry, MemoryEntryType};
 use crate::utils::truncate_for_display;
 use std::path::Path;
 
@@ -103,8 +103,13 @@ pub fn format_memory_for_signal(
 /// Format memory for inclusion in handoff file
 pub fn format_memory_for_handoff(work_dir: &Path, stage_id: &str) -> Option<String> {
     let journal = read_journal(work_dir, stage_id).ok()?;
+    let entries: Vec<_> = journal
+        .entries
+        .iter()
+        .filter(|entry| entry.entry_type != MemoryEntryType::Receipt)
+        .collect();
 
-    if journal.entries.is_empty() {
+    if entries.is_empty() {
         return None;
     }
 
@@ -113,23 +118,23 @@ pub fn format_memory_for_handoff(work_dir: &Path, stage_id: &str) -> Option<Stri
     output.push_str(&format!(
         "Memory journal from stage {} ({} entries).\n\n",
         stage_id,
-        journal.entries.len()
+        entries.len()
     ));
 
     // Include all decisions, questions, and changes (they're important for handoffs)
-    let decisions: Vec<_> = journal
-        .entries
+    let decisions: Vec<_> = entries
         .iter()
+        .copied()
         .filter(|e| e.entry_type == MemoryEntryType::Decision)
         .collect();
-    let questions: Vec<_> = journal
-        .entries
+    let questions: Vec<_> = entries
         .iter()
+        .copied()
         .filter(|e| e.entry_type == MemoryEntryType::Question)
         .collect();
-    let changes: Vec<_> = journal
-        .entries
+    let changes: Vec<_> = entries
         .iter()
+        .copied()
         .filter(|e| e.entry_type == MemoryEntryType::Change)
         .collect();
 
@@ -172,10 +177,16 @@ pub fn format_memory_for_handoff(work_dir: &Path, stage_id: &str) -> Option<Stri
         output.push('\n');
     }
 
-    // Recent notes (last 5)
-    let notes: Vec<_> = journal
-        .entries
+    append_recent_notes(&mut output, &entries);
+
+    Some(output)
+}
+
+/// Append the "Recent Notes" section: the last 5 note entries, most recent first.
+fn append_recent_notes(output: &mut String, entries: &[&MemoryEntry]) {
+    let notes: Vec<_> = entries
         .iter()
+        .copied()
         .filter(|e| e.entry_type == MemoryEntryType::Note)
         .collect();
     if !notes.is_empty() {
@@ -189,8 +200,6 @@ pub fn format_memory_for_handoff(work_dir: &Path, stage_id: &str) -> Option<Stri
         }
         output.push('\n');
     }
-
-    Some(output)
 }
 
 #[cfg(test)]

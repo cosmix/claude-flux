@@ -91,3 +91,38 @@ pub fn validate_content(content: &str) -> Result<()> {
 
     Ok(())
 }
+
+/// Validate evidence references attached to a memory entry.
+pub fn validate_evidence(evidence: &[String]) -> Result<()> {
+    if evidence.len() > 16 {
+        bail!(
+            "Too many memory evidence references: {} (max 16)",
+            evidence.len()
+        );
+    }
+
+    for reference in evidence {
+        if reference.is_empty() {
+            bail!("Memory evidence reference cannot be empty");
+        }
+        let char_count = reference.chars().count();
+        if char_count > 256 {
+            bail!(
+                "Memory evidence reference too long: {} characters (max 256)",
+                char_count
+            );
+        }
+        if reference.contains('`') {
+            bail!("Memory evidence reference cannot contain a backtick (`): {reference}");
+        }
+        if reference.contains('\n') {
+            bail!("Memory evidence reference cannot contain a newline: {reference}");
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "tests/persistence.rs"]
+mod tests;

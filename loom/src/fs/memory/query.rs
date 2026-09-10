@@ -5,11 +5,16 @@ use crate::utils::truncate_for_display;
 
 /// Get recent entries from a journal (for recitation in signals)
 pub fn get_recent_entries(journal: &MemoryJournal, max_entries: usize) -> Vec<&MemoryEntry> {
-    let len = journal.entries.len();
+    let entries: Vec<_> = journal
+        .entries
+        .iter()
+        .filter(|entry| entry.entry_type != MemoryEntryType::Receipt)
+        .collect();
+    let len = entries.len();
     if len <= max_entries {
-        journal.entries.iter().collect()
+        entries
     } else {
-        journal.entries[(len - max_entries)..].iter().collect()
+        entries[(len - max_entries)..].to_vec()
     }
 }
 
