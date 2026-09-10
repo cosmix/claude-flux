@@ -291,6 +291,14 @@ loom stage output remove <stage-id> <key>
 ### Knowledge / Memory
 
 ```bash
+loom map [--outline <path>] [--find-all <symbol>] [--impact <symbol|path>] [--callers <symbol>] [--callees <symbol>] [--json]
+                                                                # Query the derived source graph: file outlines, symbol lookup, impact/caller/callee analysis
+loom knowledge context --query <text> [--stage <id>] [--budget-tokens <n>] [--explain] [--json]  # Token-budgeted context pack for a question
+loom knowledge update <file> [content]                        # Append a section to a tier-1 file or tier-2 topic (<category>/<slug>)
+loom knowledge replace-section <file> <heading> [content]      # Rewrite one section's body in place, at whatever level it's found
+loom knowledge annotate <target> [--state <s>] [--source <path>]... [--verified <rev|HEAD>] [--alias <name>]... [--blurb <text>]
+                                                                # Set lifecycle state, evidence sources, verified revision, aliases, or a topic's blurb
+loom knowledge telemetry [--stage <id>] [--json]                # Summarise recorded context delivery, prompt briefs, abstentions and pulls
 loom knowledge sync [--structural-only] [--json]              # Rebuild derived retrieval artifacts after editing knowledge
 loom knowledge check [--strict] [--json]                      # Report knowledge-base diagnostics (read-only; never opens the context store)
 
@@ -301,7 +309,12 @@ loom memory question <text> [--stage <id>]
 loom memory query <search> [--stage <id>]
 loom memory list [--stage <id>] [--entry-type <type>]
 loom memory show [--stage <id>] [--all]
+loom memory resolve <event-id> --outcome <promoted|merged|discarded|deferred> [--target <file#heading>] [--reason <text>]
+                                                                # Record how a captured note/decision/question was processed
+loom memory pending [--stage <id>] [--strict] [--json]          # List notes, decisions, and questions that have no receipt
 ```
+
+A plan's `.loom/work/` state is archived to `<main>/.loom/memory/archive/<plan-id>-<timestamp>/` when the plan completes; `loom clean`/`loom init --clean` are what actually delete it.
 
 See [Knowledge System](#knowledge-system) for how these fit together.
 
