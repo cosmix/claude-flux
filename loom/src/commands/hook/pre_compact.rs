@@ -22,12 +22,10 @@
 //! may treat as load-bearing (`crate::context::delivery`'s own module doc).
 
 use crate::context::delivery;
-use crate::context::local_overlay::local_overlay_key;
-use crate::fs::work_dir::WorkDir;
-use crate::validation::validate_id;
 use anyhow::Result;
 use std::io::Read;
-use std::path::PathBuf;
+
+use super::target::HookTarget;
 
 /// Longest stdin payload worth parsing — the same reasoning as
 /// `super::user_prompt::MAX_STDIN_BYTES`: the shell side owns the timeout,
@@ -57,7 +55,7 @@ fn reset_for_payload(raw: &str) {
     let Some(session_id) = parse_session_id(raw) else {
         return;
     };
-    let Some(target) = CompactionTarget::from_environment() else {
+    let Some(target) = HookTarget::from_environment() else {
         return;
     };
     target.reset(&session_id);
@@ -72,55 +70,7 @@ fn parse_session_id(raw: &str) -> Option<String> {
     (!session_id.is_empty()).then(|| session_id.to_string())
 }
 
-/// Where a compaction resets suppression: the same `(work_dir, plan,
-/// stage_id)` address a prompt hook resolves in this same environment
-/// (`super::user_prompt::DeliveryTarget`). Re-derived here rather than
-/// imported — that type is private to its own module, and neither module has
-/// a shared resolver to import from today (worth lifting into one later; see
-/// this stage's report).
-struct CompactionTarget {
-    work_dir: PathBuf,
-    plan: String,
-    stage_id: String,
-}
-
-impl CompactionTarget {
-    fn from_environment() -> Option<Self> {
-        Self::for_stage().or_else(Self::for_checkout)
-    }
-
-    /// `LOOM_STAGE_ID` + `LOOM_WORK_DIR`, when both are set and name a real
-    /// stage — the same preference and the same validate-at-the-boundary
-    /// discipline `super::user_prompt::DeliveryTarget::for_stage` uses,
-    /// because the stage id here becomes a path component by way of
-    /// [`delivery::hook_recipient_id`].
-    fn for_stage() -> Option<Self> {
-        let stage_id = non_empty_env("LOOM_STAGE_ID")?;
-        validate_id(&stage_id).ok()?;
-        let work_dir = WorkDir::new(non_empty_env("LOOM_WORK_DIR")?).ok()?;
-        let stage = crate::verify::load_stage(&stage_id, work_dir.root()).ok()?;
-        Some(CompactionTarget {
-            work_dir: work_dir.root().to_path_buf(),
-            plan: delivery::plan_key(&stage).to_string(),
-            stage_id,
-        })
-    }
-
-    /// The checkout this session is running in, for a compaction no stage
-    /// claims — the same address [`local_overlay_key`] resolves for an
-    /// ordinary Claude Code session.
-    fn for_checkout() -> Option<Self> {
-        let hint = non_empty_env("LOOM_WORK_DIR").unwrap_or_else(|| ".".to_string());
-        let work_dir = WorkDir::new(hint).ok()?;
-        let project_root = work_dir.project_root()?.to_path_buf();
-        let (plan, stage_id) = local_overlay_key(&project_root);
-        Some(CompactionTarget {
-            work_dir: work_dir.root().to_path_buf(),
-            plan,
-            stage_id,
-        })
-    }
-
+impl HookTarget {
     /// Delete this session's own delivery record. A failure here is not
     /// reported anywhere beyond a debug log: the whole point of this call is
     /// best-effort cleanup, and a hook that surfaces its own bookkeeping
@@ -136,14 +86,6 @@ impl CompactionTarget {
             tracing::debug!(%error, "Could not reset a compacted session's delivery record");
         }
     }
-}
-
-/// A set environment variable with non-blank content — the same helper
-/// `super::user_prompt` keeps for itself; three lines duplicated rather than
-/// shared, since neither hook delegate otherwise imports from the other.
-fn non_empty_env(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok()?;
-    (!value.trim().is_empty()).then_some(value)
 }
 
 #[cfg(test)]

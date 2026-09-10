@@ -28,13 +28,6 @@ pub use source_graph::{
     SourceGraphScope,
 };
 
-// Crate-visible only: `commands::hook::reconcile_graph` (A.12/A.22's
-// checkout-scope background reconcile) needs the exact same "always ensure a
-// Base, and add a `_local` overlay when dirty" policy this implements, and must call
-// it rather than re-derive it. See the function's own doc comment for the
-// full reasoning; no other item in `semantic` was widened for this.
-pub(crate) use semantic::reconcile_semantic_best_effort;
-
 /// One entry of the extractor registry the semantic refresh drives.
 ///
 /// Named here rather than in `context::extract` because the boxing is the

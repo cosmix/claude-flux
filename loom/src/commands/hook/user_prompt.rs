@@ -16,8 +16,8 @@
 //! runs (task-notification XML, stopped-agent notices — see
 //! `is_machine_generated`) and strips the `@` file attachments whose paths
 //! would otherwise steer retrieval (`user_prompt_attachments.rs`);
-//! `user_prompt_compose.rs`'s emit floor drops a retrieval too weak to be
-//! worth saying anything about; and `DeliveryTarget::already_delivered` drops
+//! `user_prompt_compose.rs`'s admission floor drops retrieval items too weak
+//! to be worth saying anything about; and `HookTarget::already_delivered` drops
 //! whatever THIS session — not some other session that happens to share the
 //! stage — has already been handed this epoch.
 //!
@@ -32,18 +32,19 @@
 
 use crate::context::config::RetrievalConfig;
 use crate::context::delivery::{self, DeliveryRecord};
-use crate::context::local_overlay::local_overlay_key;
 use crate::context::retrieve::{context_epoch, retrieve_for_stage, StageQuery};
 use crate::context::schema::ContextPack;
 use crate::fs::work_dir::WorkDir;
-use crate::validation::validate_id;
 use anyhow::Result;
 use std::collections::BTreeSet;
 use std::io::Read;
-use std::path::PathBuf;
+
+use super::target::{non_empty_env, HookTarget};
 
 #[path = "user_prompt_compose.rs"]
 mod compose;
+
+pub(crate) use compose::would_emit;
 
 #[path = "user_prompt_attachments.rs"]
 mod attachments;
@@ -56,30 +57,12 @@ const MAX_STDIN_BYTES: u64 = 1024 * 1024;
 /// nothing, so it earns nothing.
 const MIN_PROMPT_CHARS: usize = 24;
 
-/// Where a prompt-hook delivery is filed, and what it is filed against.
-struct DeliveryTarget {
-    /// The state directory root a delivery record is filed under. It may not exist:
-    /// a session outside any loom project still retrieves, it just has nowhere
-    /// to record what it was handed.
-    work_dir: PathBuf,
-    /// Directory retrieval resolves the knowledge tree, the context cache and
-    /// the overlay address from — the parent of [`Self::work_dir`].
-    project_root: PathBuf,
-    plan: String,
-    stage_id: String,
-    /// The stage the brief's "Pull more with" footer may name, or `None` for
-    /// a checkout. `stage_id` stays the delivery-record key on every target,
-    /// including a checkout's local-overlay address; naming that address in
-    /// `--stage` would point at a command that fails with "Stage file not found".
-    pull_stage: Option<String>,
-}
-
 /// One prompt's brief: the line to print, and what filing it commits to.
 struct Emission {
-    target: DeliveryTarget,
+    target: HookTarget,
     /// The session-scoped delivery key this brief was composed against,
     /// computed once in [`retrieve_for_prompt`] so
-    /// [`DeliveryTarget::already_delivered`] and [`DeliveryTarget::record`]
+    /// [`HookTarget::already_delivered`] and [`HookTarget::record`]
     /// can never disagree about it.
     recipient: String,
     /// The exact payload just printed to stdout. Nothing in production reads
@@ -120,142 +103,117 @@ pub fn user_prompt() -> Result<()> {
 /// `None` wherever there is nothing honest to print, but the reconcile nudge
 /// runs regardless: see the comment above that call.
 fn retrieve_for_prompt(prompt: String, session_id: Option<&str>) -> Option<Emission> {
-    let target = DeliveryTarget::from_environment()?;
+    let target = match HookTarget::from_environment() {
+        Some(target) => target,
+        None => {
+            emit_no_target(session_id);
+            return None;
+        }
+    };
     let config = target.retrieval_config();
     let recipient = delivery::hook_recipient_id(&target.stage_id, session_id);
 
-    let query = StageQuery::new(&target.project_root, prompt);
-    let pack = match retrieve_for_stage(&query, config.prompt_budget_tokens) {
-        Ok(pack) => pack,
-        Err(error) => {
-            tracing::debug!(%error, "No retrieval available for this prompt");
+    let pack = retrieve_pack(&target, prompt, session_id, &config)?;
+
+    let delivered = target.already_delivered(&pack, &recipient);
+    let composed =
+        compose::compose_with_reason(target.pull_stage.as_deref(), &pack, &delivered, &config);
+
+    let (payload, handed_over) = match composed {
+        compose::ComposeOutcome::Emitted(payload, handed_over) => (payload, *handed_over),
+        compose::ComposeOutcome::Abstained(reason) => {
+            emit_abstention(&target, session_id, reason);
+            crate::commands::hook::reconcile_graph::spawn_if_needed(&pack, &target.project_root);
             return None;
         }
     };
 
-    let delivered = target.already_delivered(&pack, &recipient);
-    let composed = compose::compose(target.pull_stage.as_deref(), &pack, &delivered, &config);
+    // Print before telemetry, reconcile, or delivery state can imply the
+    // session saw a brief that stdout never received.
+    println!("{payload}");
 
-    // Printed before anything else below, and deliberately so: a reconcile
-    // nudge or a delivery record (filed by the caller, only after this
-    // function returns) that ran ahead of this line could, on a crash between
-    // the two, leave state on disk that implies a brief the session never
-    // actually saw.
-    if let Some((payload, _)) = &composed {
-        println!("{payload}");
-    }
+    emit_brief(&target, session_id, &handed_over);
 
-    // Runs whether or not there was anything to print above. A pack that
-    // composed to nothing — no exact-rung hit, no strong knowledge match, or
-    // everything already delivered this epoch — is exactly the state a stale
-    // graph produces, so it is the case that most needs the background
-    // repair.
     crate::commands::hook::reconcile_graph::spawn_if_needed(&pack, &target.project_root);
 
-    // Kept as a tuple rather than destructured: in a non-test build the
-    // `payload` half has no reader (the `Emission` field it would feed is
-    // `#[cfg(test)]`-only), and a named binding left unused there would just
-    // trade one warning for another.
-    let composed = composed?;
     Some(Emission {
         target,
         recipient,
         #[cfg(test)]
-        payload: composed.0,
-        handed_over: composed.1,
+        payload,
+        handed_over,
     })
 }
 
-impl DeliveryTarget {
-    /// The stage this session is executing, or the checkout it is sitting in.
-    ///
-    /// A stage target is preferred whenever the environment really names one:
-    /// its delivery record is the one the spawn brief already wrote to, so
-    /// falling back to the local target there would re-deliver everything that
-    /// brief carried.
-    fn from_environment() -> Option<Self> {
-        Self::for_stage().or_else(Self::for_checkout)
+fn retrieve_pack(
+    target: &HookTarget,
+    prompt: String,
+    session_id: Option<&str>,
+    config: &RetrievalConfig,
+) -> Option<ContextPack> {
+    let mut query = StageQuery::new(&target.project_root, prompt);
+    query.overlay = target.overlay.clone();
+    match retrieve_for_stage(&query, config.prompt_budget_tokens) {
+        Ok(pack) => Some(pack),
+        Err(error) => {
+            tracing::debug!(%error, "No retrieval available for this prompt");
+            emit_abstention(target, session_id, "no-retrieval");
+            None
+        }
     }
+}
 
-    /// Resolve from `LOOM_STAGE_ID` and `LOOM_WORK_DIR`. `None` when either is
-    /// unset or unusable, or when the id names no stage on disk — all of which
-    /// mean there is no stage to deliver anything to, and the caller falls back
-    /// to [`Self::for_checkout`].
-    ///
-    /// The stage id arrives from the environment and becomes a path component,
-    /// so it is validated HERE, at the boundary, exactly as
-    /// `commands::context::record_edit` validates its own `--stage`. Relying on
-    /// `record_delivery`'s recipient check to catch a traversal would be relying
-    /// on an accident: that check runs against a *different* string, the
-    /// composed `prompt-<scope>-<session8>` key, and changing the key's shape
-    /// would open the traversal back up silently.
-    ///
-    /// The plan component comes from the stage record rather than from
-    /// `config.toml`, because the spawn path keys its own delivery record on
-    /// exactly that (`delivery::plan_key`). Reading a different derivation here
-    /// would look in a directory the writer never wrote to, and re-deliver
-    /// everything the spawn brief already carried.
-    fn for_stage() -> Option<Self> {
-        let stage_id = non_empty_env("LOOM_STAGE_ID")?;
-        validate_id(&stage_id).ok()?;
-        let work_dir = WorkDir::new(non_empty_env("LOOM_WORK_DIR")?).ok()?;
-        let stage = crate::verify::load_stage(&stage_id, work_dir.root()).ok()?;
-        Some(DeliveryTarget {
-            project_root: work_dir.project_root()?.to_path_buf(),
-            work_dir: work_dir.root().to_path_buf(),
-            plan: delivery::plan_key(&stage).to_string(),
-            pull_stage: Some(stage_id.clone()),
-            stage_id,
-        })
+fn emit_brief(target: &HookTarget, session_id: Option<&str>, handed_over: &ContextPack) {
+    if !target.exists() {
+        return;
     }
+    let _ = crate::telemetry::emit(
+        &target.work_dir,
+        &crate::telemetry::TelemetryEvent::PromptBrief {
+            stage_id: target.pull_stage.clone(),
+            session_id: session_id.map(str::to_string),
+            items: handed_over.items.len(),
+            estimated_tokens: handed_over.estimated_tokens,
+            omitted: handed_over.omitted.omitted,
+        },
+    );
+}
 
-    /// The checkout this session is running in, for a prompt that no stage
-    /// claims — an ordinary Claude Code session in a mapped repository.
-    ///
-    /// The address is [`local_overlay_key`]'s, so this reads exactly the
-    /// working-tree overlay `loom map` and `loom knowledge sync` write, which is
-    /// also what [`StageQuery::new`]'s default `OverlayScope::Local` resolves
-    /// to. Deriving a second address here would read an overlay nothing writes.
-    ///
-    /// No `validate_id` call guards the derived stage name, unlike
-    /// [`Self::for_stage`]: this one is not environment input. It is
-    /// `map-<canonical directory name>`, a single path component by
-    /// construction — a `file_name` can hold no separator, and the `map-` prefix
-    /// means it can never be `.` or `..`. Its recipient key is still checked by
-    /// `delivery::record_delivery`, which refuses anything outside
-    /// `[A-Za-z0-9._-]` and so simply files nothing for a directory named with
-    /// something exotic.
-    fn for_checkout() -> Option<Self> {
-        let hint = non_empty_env("LOOM_WORK_DIR").unwrap_or_else(|| ".".to_string());
-        let work_dir = WorkDir::new(hint).ok()?;
-        let project_root = work_dir.project_root()?.to_path_buf();
-        let (plan, stage_id) = local_overlay_key(&project_root);
-        Some(DeliveryTarget {
-            work_dir: work_dir.root().to_path_buf(),
-            project_root,
-            plan,
-            stage_id,
-            pull_stage: None,
-        })
+fn emit_abstention(target: &HookTarget, session_id: Option<&str>, reason: &str) {
+    if !target.exists() {
+        return;
     }
+    let _ = crate::telemetry::emit(
+        &target.work_dir,
+        &crate::telemetry::TelemetryEvent::PromptAbstained {
+            stage_id: target.pull_stage.clone(),
+            session_id: session_id.map(str::to_string),
+            reason: reason.to_string(),
+        },
+    );
+}
 
-    /// Retrieval's tunables for this recipient's project.
-    ///
-    /// Resolved the same way [`retrieve_for_stage`] resolves its own copy
-    /// internally — from the MAIN project root, following a worktree's
-    /// state directory symlink back to the host repository — because
-    /// `retrieve_for_stage` does not hand its config back to its caller, and
-    /// this hook needs the SAME values it retrieved against for its own
-    /// budget and byte ceiling. [`RetrievalConfig::load`] never errors, so
-    /// neither does this.
-    fn retrieval_config(&self) -> RetrievalConfig {
-        let main_root = WorkDir::new(&self.project_root)
-            .ok()
-            .and_then(|work_dir| work_dir.main_project_root())
-            .unwrap_or_else(|| self.project_root.clone());
-        RetrievalConfig::load(&main_root)
+/// Record target-resolution failure only when an existing state root can be
+/// resolved safely. Telemetry must not create a phantom `.loom/work` tree.
+fn emit_no_target(session_id: Option<&str>) {
+    let hint = non_empty_env("LOOM_WORK_DIR").unwrap_or_else(|| ".".to_string());
+    let Ok(work_dir) = WorkDir::new(hint) else {
+        return;
+    };
+    if !work_dir.root().exists() {
+        return;
     }
+    let _ = crate::telemetry::emit(
+        work_dir.root(),
+        &crate::telemetry::TelemetryEvent::PromptAbstained {
+            stage_id: non_empty_env("LOOM_STAGE_ID"),
+            session_id: session_id.map(str::to_string),
+            reason: "no-target".to_string(),
+        },
+    );
+}
 
+impl HookTarget {
     /// The `(node_id, content_hash)` pairs THIS session already holds under
     /// the pack's epoch: its own prior deliveries this epoch under
     /// `recipient`, plus — when this process IS the session the stage
@@ -314,7 +272,7 @@ impl DeliveryTarget {
     /// re-delivers what the last one was given — which is the same "nothing
     /// delivered" the unreadable-record path already accepts.
     fn record(&self, recipient: &str, handed_over: &ContextPack) {
-        if !self.work_dir.exists() {
+        if !self.exists() {
             tracing::debug!("No state directory to file a prompt-hook delivery record in");
             return;
         }
@@ -325,12 +283,6 @@ impl DeliveryTarget {
             tracing::debug!(%error, "Could not file a prompt-hook delivery record");
         }
     }
-}
-
-/// A set environment variable with non-blank content.
-fn non_empty_env(name: &str) -> Option<String> {
-    let value = std::env::var(name).ok()?;
-    (!value.trim().is_empty()).then_some(value)
 }
 
 /// The prompt and session id from the hook payload on stdin, or `None` when

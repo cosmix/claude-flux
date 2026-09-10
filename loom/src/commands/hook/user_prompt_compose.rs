@@ -4,11 +4,8 @@
 //! Split out of `user_prompt.rs` to keep that file under the maintainability
 //! line limit: recipient resolution and delivery filing are one concern,
 //! composing a pack into a payload is another, and this file owns only the
-//! second. Three things stand between a pack and a printed line, in order:
-//! [`clears_emit_floor`] (is this retrieval worth saying anything about at
-//! all?), the per-epoch dedupe already applied by the caller before
-//! [`compose`] is even called, and the serialized byte ceiling this file
-//! enforces by shedding the weakest surviving units.
+//! second. Items must first earn admission individually, then survive the
+//! recipient's per-epoch dedupe, and finally fit the serialized byte ceiling.
 
 use crate::context::config::RetrievalConfig;
 use crate::context::schema::{ContextItem, ContextPack, SelectionReason};
@@ -18,6 +15,11 @@ use std::collections::BTreeSet;
 /// retrieves against the one question that was just typed, not against the
 /// stage's whole query surface.
 const QUERY_INPUTS: &str = "this prompt";
+
+pub(super) enum ComposeOutcome {
+    Emitted(String, Box<ContextPack>),
+    Abstained(&'static str),
+}
 
 /// Compose the hook's single stdout line, together with the pack that line
 /// actually delivers.
@@ -35,27 +37,85 @@ const QUERY_INPUTS: &str = "this prompt";
 /// throw away the same pack on every prompt for the rest of the epoch, and would
 /// file no record — so the strongest matches, which do fit, would never arrive.
 ///
-/// `None` — emit nothing — in three cases, all of them "there is no honest
-/// payload to send": `pack` does not clear [`clears_emit_floor`]; every unit
-/// this epoch already delivered to this recipient; or a single surviving unit
-/// is over the ceiling by itself and so cannot be trimmed into fitting.
+/// `None` means there is no honest payload to send. [`compose_with_reason`]
+/// retains the reason for the telemetry-producing caller.
+#[cfg(test)]
 pub(super) fn compose(
     pull_stage: Option<&str>,
     pack: &ContextPack,
     delivered: &BTreeSet<(String, String)>,
     config: &RetrievalConfig,
 ) -> Option<(String, ContextPack)> {
-    if !clears_emit_floor(pack, config) {
-        return None;
+    match compose_with_reason(pull_stage, pack, delivered, config) {
+        ComposeOutcome::Emitted(payload, handed_over) => Some((payload, *handed_over)),
+        ComposeOutcome::Abstained(_) => None,
     }
-    let mut handed_over = undelivered(pack, delivered)?;
+}
+
+pub(super) fn compose_with_reason(
+    pull_stage: Option<&str>,
+    pack: &ContextPack,
+    delivered: &BTreeSet<(String, String)>,
+    config: &RetrievalConfig,
+) -> ComposeOutcome {
+    let Some(admitted) = admitted(pack, config) else {
+        return ComposeOutcome::Abstained("floor");
+    };
+    let Some(mut handed_over) = undelivered(&admitted, delivered) else {
+        return ComposeOutcome::Abstained("all-delivered");
+    };
+    // `undelivered` already dropped every repeat; what survives here is fresh,
+    // just too weak on its own — that is the emit floor's call, not a repeat,
+    // so it gets the same reason a first-time pull that never cleared the
+    // floor would get.
+    if !clears_emit_floor(&handed_over, config) {
+        return ComposeOutcome::Abstained("floor");
+    }
+
     loop {
-        let line = render_payload(pull_stage, &handed_over)?;
+        let Some(line) = render_payload(pull_stage, &handed_over) else {
+            return ComposeOutcome::Abstained("over-ceiling");
+        };
         if line.len() <= config.max_payload_bytes {
-            return Some((line, handed_over));
+            return ComposeOutcome::Emitted(line, Box::new(handed_over));
         }
-        handed_over = without_weakest(&handed_over)?;
+        let Some(narrowed) = without_weakest(&handed_over) else {
+            return ComposeOutcome::Abstained("over-ceiling");
+        };
+        handed_over = narrowed;
+        if !clears_emit_floor(&handed_over, config) {
+            return ComposeOutcome::Abstained("over-ceiling");
+        }
     }
+}
+
+/// Would a fresh session receive a hook payload for this pack?
+pub(crate) fn would_emit(pack: &ContextPack, config: &RetrievalConfig) -> bool {
+    matches!(
+        compose_with_reason(None, pack, &BTreeSet::new(), config),
+        ComposeOutcome::Emitted(_, _)
+    )
+}
+
+/// True when `item` earns admission on its own, or is a graph neighbour of
+/// an exact-rung item that remains in this retrieved pack.
+fn admits(item: &ContextItem, pack: &ContextPack, config: &RetrievalConfig) -> bool {
+    clears_item_floor(item, config)
+        || (item.reasons.contains(&SelectionReason::GraphNeighbor)
+            && pack
+                .items
+                .iter()
+                .any(|item| item.reasons.iter().any(is_exact_rung)))
+}
+
+/// Narrow `pack` to individually admitted items and account for every drop.
+fn admitted(pack: &ContextPack, config: &RetrievalConfig) -> Option<ContextPack> {
+    let (kept, dropped): (Vec<ContextItem>, Vec<ContextItem>) = pack
+        .items
+        .iter()
+        .cloned()
+        .partition(|item| admits(item, pack, config));
+    carrying_after_drop(pack, kept, dropped.len())
 }
 
 /// True when `pack` is worth emitting at all.
@@ -102,10 +162,13 @@ pub(super) fn compose(
 /// oversight: do not "unify" the three paths by adding this floor to the
 /// other two.
 fn clears_emit_floor(pack: &ContextPack, config: &RetrievalConfig) -> bool {
-    pack.items.iter().any(|item| {
-        item.reasons.iter().any(is_exact_rung)
-            || item.matched_term_count >= config.min_knowledge_terms
-    })
+    pack.items
+        .iter()
+        .any(|item| clears_item_floor(item, config))
+}
+
+fn clears_item_floor(item: &ContextItem, config: &RetrievalConfig) -> bool {
+    item.reasons.iter().any(is_exact_rung) || item.matched_term_count >= config.min_knowledge_terms
 }
 
 /// A [`SelectionReason`] strong enough to justify emitting on its own — every
@@ -149,12 +212,20 @@ fn undelivered(pack: &ContextPack, delivered: &BTreeSet<(String, String)>) -> Op
             let key = (item.id.as_str().to_string(), item.content_hash.clone());
             !delivered.contains(&key)
         });
+    carrying_after_drop(pack, kept, dropped.len())
+}
+
+fn carrying_after_drop(
+    pack: &ContextPack,
+    kept: Vec<ContextItem>,
+    dropped: usize,
+) -> Option<ContextPack> {
     if kept.is_empty() {
         return None;
     }
     let mut narrowed = carrying(pack, kept);
-    if !dropped.is_empty() {
-        narrowed.omitted.omitted += dropped.len();
+    narrowed.omitted.omitted += dropped;
+    if dropped > 0 {
         narrowed.omitted.weakest_included_score = narrowed
             .items
             .iter()

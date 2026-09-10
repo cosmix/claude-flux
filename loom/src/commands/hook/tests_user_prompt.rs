@@ -11,6 +11,7 @@ use crate::context::schema::{
     Channel, ChunkId, Confidence, ContextItem, Coverage, Freshness, ItemKind, LifecycleState,
     OmissionSummary, SelectionReason, SourcePointer, BRIEF_FRAME_TOKENS,
 };
+use std::path::PathBuf;
 
 /// The untrusted-data sentence the shared renderer must put in front of every
 /// quoted excerpt. Asserted here against the composed payload, not against a
@@ -193,7 +194,7 @@ fn a_fresh_pack_composes_exactly_one_json_object() {
     assert_eq!(handed_over.items.len(), 1);
 }
 
-/// A checkout-scope target (`DeliveryTarget::for_checkout`) names no stage on
+/// A checkout-scope [`HookTarget`] names no stage on
 /// disk, so its footer must not point the reader at a `--stage` flag that
 /// would fail with "Stage file not found".
 #[test]

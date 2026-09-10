@@ -8,4 +8,5 @@ pub mod context_ceilings;
 pub mod pre_compact;
 pub mod project_types;
 pub mod reconcile_graph;
+mod target;
 pub mod user_prompt;
