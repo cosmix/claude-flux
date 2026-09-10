@@ -2,7 +2,7 @@
 sources:
 - loom/src/context/refresh/source_graph.rs
 - loom/src/context/graph_store/mod.rs
-verified: 054528e508d51ede343e254590cdb73ae00f7df6
+verified: e0baec38ddf35df499ac7eca828baed878ac671e
 ---
 # Source Graph
 
@@ -310,3 +310,20 @@ that did not reconcile first would hand the agent a stale overlay (`skip_retry.r
 `start_knowledge_stage` deliberately has no reconcile call — it runs in the main
 repo with no worktree, and `reconcile_overlay` returns early when the stage has no
 worktree directory.
+
+## Stage Worktree Cache Is Read-Only — `ensure_snapshot` Needs a Host-Published Base (2026-09-10)
+
+Inside a sandboxed stage worktree the shared context cache (`<main>/.loom/cache/context-v1`)
+is read-only to the stage session. If the host has not yet published a base for the
+worktree's `HEAD` — e.g. a commit made directly in the main checkout with the daemon
+stopped, no merge lifecycle run — `ensure_snapshot` cannot create one: `loom map` used to
+fail outright with `Failed to write source graph ... Read-only file system` before this path
+was made to degrade to `SnapshotAction::Unavailable` instead. Consequence: a stage agent's
+`loom map`/`loom knowledge context` only answers fully when the host has already published a
+base for the exact `HEAD` the stage worktree carries; otherwise both degrade to an
+in-memory, base-less catalog (the same "DEGRADED: source graph base ... missing" state a
+Knowledge Brief can show at stage start).
+
+A from-scratch base build of this repo (1681 files parsed; 15063 nodes, 72540 edges as of
+2026-09-10) took ~35s — comfortably over the 15s `GIT_READ_TIMEOUT` for a single git call, but
+that bound is per git invocation, not per refresh, so a cold build still completes.

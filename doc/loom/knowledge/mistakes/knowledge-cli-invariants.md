@@ -103,3 +103,28 @@ full content.)
 **Why:** `main_project_root()` was designed to always find the true main repo root, which was correct for `.work/` state but wrong for knowledge files that should be worktree-local.
 **Prevention:** Use `project_root()` (cwd-relative) for file writes that should respect worktree isolation. Use `main_project_root()` only for accessing shared state (`.work/`). Always run `loom knowledge update` from the worktree root, not a subdirectory.
 **Fix:** Replaced all `main_project_root()` calls in knowledge commands and map.rs with `project_root()`. Updated signal content to require commits for knowledge stages. Removed commit-guard.sh bypass for knowledge stages.
+
+## A Historical/Example Marker Must Share Its Physical Markdown Line With the Backtick It Classifies (2026-09-10)
+
+`classify_reference` (`loom/src/fs/knowledge/chunker/references.rs:44-60`) judges a backticked
+path from its `sentence_window`, and that window is built per physical source line
+(`references_in` iterates `body.split_inclusive('\n')`) — a marker on the wrapped PREVIOUS line
+is invisible even though the prose reads as one sentence. Two specific traps:
+
+- The historical marker `is_there_is_no_this_path` (references.rs:110-112) only fires on the
+  exact substring `` there is no `<path>` `` — a sentence like "there is no top-level module and
+  no `path/to/file.rs` either" does not qualify; the backtick must follow "there is no"
+  immediately.
+- Wrapping a sentence so the marker phrase and the backtick land on different source lines
+  drops the reference to `Live`/`MissingSourceRef` even though it reads correctly across the
+  wrap.
+
+Already fixed (verify before re-reporting either as a bug): `is_sentence_end`
+(references.rs:246-253) now excludes dots that are inside backticks or end an
+`e.g./i.e./vs./cf.` abbreviation, and `sentence_window`'s `mask_other_spans` blanks OTHER
+backtick spans' contents within the window instead of cutting the window at them — a sentence
+citing several example paths (e.g., `01-a.md`, `02-b.md`) classifies every one of them
+correctly now.
+
+Prevention: keep a historical or example marker phrase and its backticked path on the same
+source line, and phrase "there is no" immediately before the backtick.

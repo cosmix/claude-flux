@@ -241,3 +241,17 @@ commit.
 `loom run`. A stage that discovers its briefs missing mid-session must reconstruct them inline from
 the signal's spec plus the tree rather than guessing, and should not commit the plan/briefs itself if
 they fall outside its own `files` scope — flag it so whoever owns the plan commits it on `main`.
+
+## "Pre-Existing" Must Be Checked Against the Committed Tree, Not the Worktree You're Standing In (2026-09-10)
+
+A fix unit inside an integration-verify stage reported a maintainability-gate failure on
+`context/refresh/snapshot.rs` (405 lines) as "unrelated, pre-existing on this tree" — it was
+that stage's OWN growth (392 → 405 lines) from an `ensure_snapshot` degrade path and new
+signature units added earlier in the same stage. Every unit judges "pre-existing" against the
+tree it can see, which already carries every sibling unit's uncommitted edits from the same
+stage.
+
+Prevention: before accepting a "pre-existing" claim, compare against the committed file
+(`git show HEAD:<path> | wc -l`, or `git diff HEAD -- <path>`). Inside an integration-verify
+stage specifically, nothing is pre-existing — the whole plan's diff is in scope, so the claim
+should never be accepted there at all.

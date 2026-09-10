@@ -74,3 +74,21 @@ resolves through the state-root symlink to the main repo's real file). A shared 
 callers that disagree on that behavior would need a mode flag threading through every call site.
 When two near-duplicate pieces of logic differ only on the safety-relevant branch, duplicating the
 few lines that matter is clearer than parameterizing a shared function to hide the disagreement.
+
+## Every Host-Side Open of an Agent-Writable Worktree Path Must Use `fs::safe_read::open_regular_no_follow` (2026-09-10)
+
+The host daemon runs trusted and outside the sandbox, but polls several paths a sandboxed
+stage session can write: `fs/memory/spool.rs` (`drain_spool`), `telemetry/spool.rs`
+(`drain_into_events`), and `fs/stage_request/spool.rs` (`drain_spool`) all open a
+`<worktree>/*-spool.jsonl` file the sandboxed agent controls, read it, then `set_len(0)` to
+truncate it. Opening with plain `OpenOptions` follows symlinks: a stage that plants the spool
+path as a symlink gets the trusted daemon to truncate any file its own user can write, every
+poll cycle (~5s). All three now open via `fs::safe_read::open_regular_no_follow(worktree_root,
+relpath, flags)`, which refuses a planted symlink instead of following it (`fs/safe_fs.rs`'s
+`O_NOFOLLOW`-at-every-component primitives back it). `context/refresh/source_graph/enumerate.rs`
+and `generation.rs` were fixed the same way, so a tracked or untracked symlink can no longer
+make the host read a file outside the worktree into the graph.
+
+Prevention: any new host-side read or write of a worktree-writable path goes through
+`fs::safe_read`/`fs::safe_fs`, never `std::fs`/`OpenOptions` directly — the daemon trusts its
+own code, not the worktree's contents.

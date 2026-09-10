@@ -219,3 +219,28 @@ swallowed error into a propagated one.
 The corollary is the failure budget rule: **the durable result and the derived artifact have
 different budgets — never let the cheaper one veto the expensive one.** A reconcile failure
 marks derived state stale and leaves a good merge intact.
+
+## Bounded Process Output Must Be Drained Concurrently With `wait()` (2026-09-10)
+
+`process::run_bounded` (`loom/src/process/mod.rs:115-152`) spawns stdout/stderr reader
+threads (`start_readers`/`drain`) BEFORE calling `child.wait_timeout`, and `collect_output`
+only ever receives from those threads' channels — it never reads the pipes itself. A helper
+that instead pipes a child's output and reads it only AFTER the child exits deadlocks once
+that output exceeds the OS pipe buffer (~64KB): `git ls-tree -r -z HEAD` on a repo with 157KB
+of tree output filled the pipe, `git` blocked on write, and the caller's own timeout
+(`GIT_READ_TIMEOUT`, 15s) fired and SIGKILLed it — reported as `Failed to execute: git
+ls-tree -r -z HEAD` with the source graph falling back to "unavailable", coverage 0, exit 0.
+Every test passed beforehand because fixture repos are tiny.
+
+Prevention: any helper that captures a child's stdout/stderr must drain both pipes
+concurrently with the wait, never after it; a timeout-bounded runner needs at least one test
+whose child emits more than the pipe buffer (~64KB) before exiting.
+
+A related trap in the same fix: once `collect_output`'s `recv_stream(remaining)` fails for
+either stream, the deadline was already exceeded — return `BoundedOutput::TimedOut`
+unconditionally. An earlier draft let a fast-closing pipe (`SIGKILL` closes descendant fds in
+milliseconds, well inside the 1s `READER_GRACE`) flip a `TimedOut` back to `Completed` during
+the post-kill grace period, because the reader thread delivered its buffered output before
+the grace timer expired. The grace-period `recv_stream` calls exist only to let reader
+threads exit promptly; their results are discarded (`let _ = ...`), never fed back into the
+Completed/TimedOut decision.

@@ -2,7 +2,7 @@
 sources:
 - loom/src/fs/memory/types.rs
 - loom/src/fs/memory/spool.rs
-verified: 054528e508d51ede343e254590cdb73ae00f7df6
+verified: e0baec38ddf35df499ac7eca828baed878ac671e
 ---
 # Memory Spool and Drain
 
