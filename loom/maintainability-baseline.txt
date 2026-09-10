@@ -12,11 +12,9 @@ file src/commands/hook/tests_reconcile_graph.rs 432
 file src/commands/init/tests.rs 570
 file src/commands/plan/verify.rs 599
 file src/commands/review/generate.rs 439
-file src/commands/run/tests.rs 463
 file src/commands/stage/complete.rs 771
 file src/commands/stage/merge.rs 546
 file src/commands/stage/tests/complete.rs 544
-file src/context/refresh/tests_source_graph.rs 679
 file src/daemon/server/dispute.rs 510
 file src/fs/knowledge/tests/catalog.rs 402
 file src/fs/locking.rs 499
@@ -121,7 +119,7 @@ function src/commands/usage/transcript_tests.rs ephemeral_split_always_reconcile
 function src/commands/verify.rs execute 89
 function src/completions/dynamic/mod.rs complete_after_subcommand 56
 function src/completions/install.rs install 52
-function src/context/refresh/tests_source_graph.rs an_unreadable_file_survives_as_a_reported_lexical_only_entry 62
+function src/context/refresh/tests_source_graph/enumeration.rs an_unreadable_file_survives_as_a_reported_lexical_only_entry 62
 function src/daemon/server/broadcast.rs run_status_broadcaster 80
 function src/daemon/server/client.rs handle_client_connection 112
 function src/daemon/server/dispute.rs handle_dispute_criteria 176
