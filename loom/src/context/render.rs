@@ -1,9 +1,10 @@
 //! Shared per-item rendering for context consumers.
 
 use crate::context::schema::{
-    estimate_tokens, Confidence, ContextItem, ItemKind, UnmetRequirement,
+    estimate_tokens, Confidence, ContextItem, ItemKind, UnmetRequirement, BRIEF_FRAME_TOKENS,
 };
 use crate::context::untrusted::inline_safe;
+use std::ops::Range;
 
 /// One knowledge item's full rendering: its list entry, plus its fenced
 /// excerpt block when it carries one, plus a trailing blank line separating
@@ -175,6 +176,25 @@ pub(crate) fn render_source_group_prefix(path: &std::path::Path) -> String {
     format!("- `{}` — ", inline_safe(&path.display().to_string()))
 }
 
+/// The index ranges of `items` that `render_source_group` collapses onto one
+/// bullet each: one per CONSECUTIVE run sharing a pointer path, never a
+/// reorder (see `format::brief::render_source_group`'s doc comment). Shared
+/// between that renderer and [`rendered_chrome_tokens`] so the runs one merges
+/// and the runs the other charges for can never be different runs.
+pub(crate) fn source_groups(items: &[&ContextItem]) -> Vec<Range<usize>> {
+    let mut groups = Vec::new();
+    let mut start = 0;
+    while start < items.len() {
+        let mut end = start + 1;
+        while end < items.len() && items[end].pointer.path == items[start].pointer.path {
+            end += 1;
+        }
+        groups.push(start..end);
+        start = end;
+    }
+    groups
+}
+
 /// One `Required but unmet: ...` line, shared between the actual brief
 /// renderer (`orchestrator::signals::format::brief::render_unmet_requirements`)
 /// and [`rendered_chrome_tokens`] for the same reason as
@@ -188,13 +208,28 @@ pub(crate) fn render_unmet_line(requirement: &UnmetRequirement) -> String {
     )
 }
 
+/// Estimated tokens of the whole brief `items` and `unmet` would render to:
+/// the frame ([`BRIEF_FRAME_TOKENS`]), every item's own rendered cost, and the
+/// chrome around them. The same sum `ContextPack::recompute_estimate`
+/// publishes, so a packer pass that weighs this against a budget weighs the
+/// number the finished pack will report.
+pub(crate) fn rendered_brief_tokens<'a>(
+    items: impl IntoIterator<Item = &'a ContextItem>,
+    unmet: &[UnmetRequirement],
+) -> usize {
+    let items: Vec<&ContextItem> = items.into_iter().collect();
+    BRIEF_FRAME_TOKENS
+        + items.iter().map(|item| item.token_count).sum::<usize>()
+        + rendered_chrome_tokens(items.iter().copied(), unmet)
+}
+
 /// Estimated tokens of the brief's markdown chrome around `items` and
 /// `unmet`: the section headings, the per-path bullet prefixes and
 /// inter-entry joiners `render_source_group` collapses a run of same-path
-/// source items onto (see its doc comment — this walks the identical
-/// CONSECUTIVE-run rule so it never charges different groups than what
-/// actually renders), and one line per unmet requirement. Every item's own
-/// text is [`rendered_item_tokens`]'s job, not this function's.
+/// source items onto (both split that run with the shared [`source_groups`],
+/// so neither can charge for groups the other would not render), and one line
+/// per unmet requirement. Every item's own text is [`rendered_item_tokens`]'s
+/// job, not this function's.
 ///
 /// Called from both `ContextPack::recompute_estimate` and the packer's
 /// candidate-by-candidate selection loop (`context::pack::select_optional`,
@@ -225,20 +260,12 @@ pub(crate) fn rendered_chrome_tokens<'a>(
         .collect();
     if !source_items.is_empty() {
         chrome.push_str(SOURCE_HEADING);
-        let mut start = 0;
-        while start < source_items.len() {
-            let mut end = start + 1;
-            while end < source_items.len()
-                && source_items[end].pointer.path == source_items[start].pointer.path
-            {
-                end += 1;
-            }
+        for group in source_groups(&source_items) {
             chrome.push_str(&render_source_group_prefix(
-                &source_items[start].pointer.path,
+                &source_items[group.start].pointer.path,
             ));
-            chrome.push_str(&" — ".repeat(end - start - 1));
+            chrome.push_str(&" — ".repeat(group.len() - 1));
             chrome.push('\n');
-            start = end;
         }
         chrome.push('\n');
     }

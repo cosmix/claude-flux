@@ -50,11 +50,24 @@ pub(super) fn prior(value: &Value, key: &str, default: f32) -> f32 {
 /// Clamped in `i64` before the cast: `-1 as usize` is `usize::MAX`, which would
 /// clamp to the *maximum* budget and turn a nonsense value into the most
 /// expensive possible setting.
+///
+/// A clamp is logged like a wrong TYPE is: `prompt_budget_tokens = 150` is a
+/// legal integer that silently becomes something else, and an operator who
+/// tuned a budget down and saw no effect has no other way to find out why.
 pub(super) fn budget(value: &Value, key: &str, default: usize, min: usize) -> usize {
     let Some(raw) = integer(value, key) else {
         return default;
     };
-    raw.clamp(min as i64, MAX_BUDGET as i64) as usize
+    let clamped = raw.clamp(min as i64, MAX_BUDGET as i64);
+    if clamped != raw {
+        tracing::warn!(
+            key,
+            raw,
+            clamped,
+            "clamping an out-of-range [retrieval] value"
+        );
+    }
+    clamped as usize
 }
 
 /// Read a count, clamped to at least 1. A zero count would make its rule

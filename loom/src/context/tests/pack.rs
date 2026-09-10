@@ -267,6 +267,16 @@ fn assert_budget_invariant_holds(mut seed: u32) {
     // padded helper could never generate.
     let packed = pack(&request_with_raw_budget(budget), &ranked, &chunks, None);
 
+    assert_estimated_tokens_match_rendering(&packed);
+    assert_every_item_renders_its_token_count(&packed);
+    assert_coverage_partitions_all_candidates(&packed);
+    assert_pack_never_overshoots_budget(&packed, budget);
+}
+
+/// `estimated_tokens` must equal what actually renders: the frame plus every
+/// admitted item's own count plus whatever chrome the unmet-required lines
+/// cost. Split out of `assert_budget_invariant_holds` (pack.rs:263).
+fn assert_estimated_tokens_match_rendering(packed: &ContextPack) {
     assert_eq!(
         packed.estimated_tokens,
         BRIEF_FRAME_TOKENS
@@ -277,20 +287,51 @@ fn assert_budget_invariant_holds(mut seed: u32) {
                 .sum::<usize>()
             + rendered_chrome_tokens(packed.items.iter(), &packed.unmet_required)
     );
+}
+
+/// Every admitted item's stored `token_count` must match what it actually
+/// renders to. Split out of `assert_budget_invariant_holds` (pack.rs:263).
+fn assert_every_item_renders_its_token_count(packed: &ContextPack) {
     assert!(packed
         .items
         .iter()
         .all(|item| item.token_count == rendered_item_tokens(item)));
+}
+
+/// Every ranked candidate is accounted for exactly once: included or
+/// omitted, never both, never neither. Split out of
+/// `assert_budget_invariant_holds` (pack.rs:263).
+fn assert_coverage_partitions_all_candidates(packed: &ContextPack) {
     assert_eq!(
         packed.omitted.coverage.included + packed.omitted.omitted,
         packed.omitted.coverage.candidates
     );
+}
 
+/// The core budget invariant: the pack never reports itself within budget
+/// while actually overshooting it, in either of the two regimes a budget can
+/// fall into relative to the frame's own cost. Split out of
+/// `assert_budget_invariant_holds` (pack.rs:263).
+fn assert_pack_never_overshoots_budget(packed: &ContextPack, budget: usize) {
     if budget >= BRIEF_FRAME_TOKENS {
-        // The frame alone fits, and every item taken was checked against
-        // what remained of the budget, so the pack can never overshoot.
-        assert!(packed.estimated_tokens <= packed.budget_tokens);
-        assert!(packed.within_budget());
+        // The frame alone fits, and every item taken was checked against what
+        // remained of the budget once the unmet lines reporting the required
+        // ids it could not fit were paid for, so the pack can never overshoot.
+        //
+        // The one exception is a budget those lines alone cannot fit: they
+        // report required ids the caller named and the brief must carry them
+        // whatever they cost, so the pack reports itself over budget rather
+        // than dropping them — with nothing admitted alongside them, since
+        // `reserve_within_budget` reaches that state only by holding the whole
+        // budget back.
+        let unmet_floor =
+            BRIEF_FRAME_TOKENS + rendered_chrome_tokens(std::iter::empty(), &packed.unmet_required);
+        if unmet_floor <= budget {
+            assert!(packed.within_budget());
+        } else {
+            assert!(packed.items.is_empty(), "{:?}", packed.items);
+            assert_eq!(packed.estimated_tokens, unmet_floor);
+        }
     } else {
         // Below the frame's own cost, the packer cannot lie its way into
         // `within_budget()`: it charges the frame regardless, so this pack is
@@ -304,6 +345,13 @@ fn assert_budget_invariant_holds(mut seed: u32) {
 
 /// A pseudo-random `(budget, chunks, candidates)` corpus derived from `seed`,
 /// advancing it in place with the same LCG the property test has always used.
+///
+/// Roughly one candidate in four is explicitly REQUIRED. Without them the fuzz
+/// never reaches `pack::required::reserve`, whose unmet lines are the only
+/// chrome a pack can grow after an item was already admitted — the one way the
+/// budget invariant above can be broken — so a corpus of purely optional
+/// candidates leaves exactly the code this property is here to police
+/// untested.
 fn random_pack_corpus(seed: &mut u32) -> (usize, Vec<KnowledgeChunk>, Vec<RankedCandidate>) {
     fn next(seed: &mut u32) -> u32 {
         *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -319,12 +367,11 @@ fn random_pack_corpus(seed: &mut u32) -> (usize, Vec<KnowledgeChunk>, Vec<Ranked
         let id = format!("chunk-{index}");
         let body = "x".repeat(tokens.saturating_mul(BYTES_PER_TOKEN_ESTIMATE));
         chunks.push(chunk(&id, &body, tokens));
-        ranked.push(candidate(
-            &id,
-            Channel::Knowledge,
-            next(seed) as f32,
-            tokens,
-        ));
+        let mut fuzzed = candidate(&id, Channel::Knowledge, next(seed) as f32, tokens);
+        if next(seed).is_multiple_of(4) {
+            fuzzed.reasons = vec![SelectionReason::ExplicitId];
+        }
+        ranked.push(fuzzed);
     }
     (budget, chunks, ranked)
 }

@@ -1,6 +1,7 @@
 //! Tests for [`super::format_knowledge_brief`] and its rendering helpers.
 
 use super::*;
+use crate::context::render::rendered_item_tokens;
 use crate::context::schema::{
     estimate_tokens, Channel, ChunkId, Confidence, Coverage, ItemKind, LifecycleState,
     OmissionSummary, SelectionReason, SourcePointer, UnmetRequirement, BRIEF_FRAME_TOKENS,
@@ -8,9 +9,18 @@ use crate::context::schema::{
 use crate::orchestrator::signals::retrieval::STAGE_QUERY_INPUTS;
 use std::path::PathBuf;
 
+/// Charge an item what its own rendering costs, the way the packer does
+/// (`context::pack::finalize_item`). A fixture carrying a constant instead
+/// would let these budget assertions pass against renderings the real packer
+/// could never have priced.
+fn with_rendered_cost(mut item: ContextItem) -> ContextItem {
+    item.token_count = rendered_item_tokens(&item);
+    item
+}
+
 /// A knowledge-chunk item at a fixed anchor, optionally carrying an excerpt.
 fn item(id: &str, excerpt: Option<&str>) -> ContextItem {
-    ContextItem {
+    with_rendered_cost(ContextItem {
         id: ChunkId::from(id),
         kind: ItemKind::KnowledgeChunk,
         pointer: SourcePointer {
@@ -21,7 +31,7 @@ fn item(id: &str, excerpt: Option<&str>) -> ContextItem {
         },
         summary: "Architecture overview".to_string(),
         source: Channel::Knowledge,
-        token_count: 12,
+        token_count: 0,
         score: 2.0,
         reasons: vec![SelectionReason::Lexical, SelectionReason::ExactPath],
         confidence: Confidence::High,
@@ -30,7 +40,7 @@ fn item(id: &str, excerpt: Option<&str>) -> ContextItem {
         excerpt: excerpt.map(str::to_string),
         truncated: false,
         matched_term_count: 0,
-    }
+    })
 }
 
 /// A source-node item at `id`/`path`, the id realistically shaped
@@ -42,7 +52,9 @@ fn source_item(
     line_start: Option<usize>,
     line_end: Option<usize>,
 ) -> ContextItem {
-    ContextItem {
+    // Re-priced after the override: a source item renders as a grouped bullet,
+    // not as `item`'s knowledge entry, so it costs something else entirely.
+    with_rendered_cost(ContextItem {
         kind: ItemKind::SourceNode,
         source: Channel::Source,
         truncated: false,
@@ -53,7 +65,7 @@ fn source_item(
             line_end,
         },
         ..item(id, None)
-    }
+    })
 }
 
 /// The default fixture used by the ported single-item tests: a well-formed

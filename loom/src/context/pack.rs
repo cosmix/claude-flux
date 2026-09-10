@@ -11,14 +11,14 @@ pub(crate) mod twins;
 
 use crate::context::graph_store::ResolvedGraph;
 use crate::context::rank::RankedCandidate;
-use crate::context::render::{rendered_chrome_tokens, rendered_item_tokens};
+use crate::context::render::{rendered_brief_tokens, rendered_item_tokens};
 use crate::context::schema::{
     Channel, ChunkId, ContextItem, ContextPack, Coverage, Freshness, ItemKind, KnowledgeChunk,
     LifecycleState, OmissionSummary, RequiredRepresentation, SourceNode, SourcePointer,
-    UnmetRequirement, BRIEF_FRAME_TOKENS,
+    UnmetRequirement,
 };
 use excerpt::bounded_excerpt;
-use required::reserve;
+use required::reserve_within_budget;
 use twins::{details_before_summaries, explicitly_required, knowledge_twin};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -242,9 +242,14 @@ fn build_item(
 }
 
 /// What one budget-constrained walk of the fused list produced.
+///
+/// Carries no running token total: every fit decision recomputes one from the
+/// items and unmet lines it would land with (see [`tentative_total`]), and the
+/// number the pack publishes is [`ContextPack::recompute_estimate`]'s. A
+/// second definition of "the total so far" is exactly what a later change
+/// would wire back into a budget decision.
 struct Selection {
     items: Vec<ContextItem>,
-    estimated_tokens: usize,
     omitted: usize,
     unmet_required: Vec<UnmetRequirement>,
     superseded: BTreeSet<String>,
@@ -266,10 +271,9 @@ fn select(
     chunks: &BTreeMap<&str, &KnowledgeChunk>,
     nodes: &BTreeMap<&str, &SourceNode>,
 ) -> Selection {
-    let reservation = reserve(request, BRIEF_FRAME_TOKENS, ranked, chunks, nodes);
+    let reservation = reserve_within_budget(request, ranked, chunks, nodes);
     let mut selection = Selection {
         items: reservation.items,
-        estimated_tokens: reservation.estimated_tokens,
         omitted: reservation.omitted,
         unmet_required: reservation.unmet,
         superseded: reservation.superseded,
@@ -307,12 +311,14 @@ fn select_optional(
             selection.omitted += 1;
             continue;
         };
-        let total = tentative_total(&selection.items, &selection.unmet_required, &item);
-        if total > request.budget_tokens {
+        // The unmet list is final by now — `reserve_within_budget` has run —
+        // so this prices against the same chrome the finished pack renders.
+        if tentative_total(&selection.items, &selection.unmet_required, &item)
+            > request.budget_tokens
+        {
             selection.omitted += 1;
             continue;
         }
-        selection.estimated_tokens = total;
         if let Some(twin) = knowledge_twin(candidate) {
             selection.superseded.insert(twin);
         }
@@ -323,7 +329,7 @@ fn select_optional(
 /// The frame-plus-items-plus-chrome total if `candidate` were appended to
 /// `items` (already-committed pack order) alongside `unmet`.
 ///
-/// Delegates to [`rendered_chrome_tokens`] rather than tracking chrome
+/// Delegates to [`rendered_brief_tokens`] rather than tracking chrome
 /// incrementally, so this and [`ContextPack::recompute_estimate`] can never
 /// charge different bytes for the same brief — both apply the identical rule
 /// for what counts as chrome to the identical item list. Item counts are in
@@ -339,10 +345,7 @@ pub(super) fn tentative_total(
     unmet: &[UnmetRequirement],
     candidate: &ContextItem,
 ) -> usize {
-    let item_tokens: usize =
-        items.iter().map(|item| item.token_count).sum::<usize>() + candidate.token_count;
-    let chrome = rendered_chrome_tokens(items.iter().chain(std::iter::once(candidate)), unmet);
-    BRIEF_FRAME_TOKENS + item_tokens + chrome
+    rendered_brief_tokens(items.iter().chain(std::iter::once(candidate)), unmet)
 }
 
 /// Build a pack from the fused list, within `request.budget_tokens`.
@@ -371,7 +374,9 @@ pub fn pack(
         query: request.query.clone(),
         scope: request.scope.clone(),
         budget_tokens: request.budget_tokens,
-        estimated_tokens: selected.estimated_tokens,
+        // Filled in by `recompute_estimate` below; the packer keeps no
+        // running total of its own (see [`Selection`]).
+        estimated_tokens: 0,
         structural_freshness: request.structural_freshness.clone(),
         semantic_freshness: request.semantic_freshness.clone(),
         items: selected.items,

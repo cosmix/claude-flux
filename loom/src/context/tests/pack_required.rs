@@ -112,6 +112,75 @@ fn required_item_cost(ranked: &[RankedCandidate], chunks: &[KnowledgeChunk]) -> 
     pack(&request_with_item_budget(10_000), ranked, chunks, None).items[0].token_count
 }
 
+/// The hole `reserve_within_budget` closes: an `unmet_required` line pushed
+/// AFTER an item was admitted is charged by `recompute_estimate` (every unmet
+/// line is chrome — `render::rendered_chrome_tokens`) but was never priced
+/// against the budget it lands in. `first` fits with two tokens to spare;
+/// `second` does not, and the line reporting `second` costs far more than that
+/// spare, so a packer that reserves in one pass finalizes above its own budget
+/// and publishes a `Budget:` header advertising the overshoot.
+///
+/// The fix reserves less, never evicts: with the line's cost held back,
+/// `first` no longer fits either and both required ids are reported unmet —
+/// fewer items, more lines, within budget.
+#[test]
+fn an_unmet_line_pushed_after_an_admitted_item_cannot_take_the_pack_over_budget() {
+    let chunks = [
+        chunk("first", &"required detail line\n".repeat(20), 1),
+        chunk("second", &"far more detail than fits\n".repeat(500), 1),
+    ];
+    let ranked = [
+        required_candidate("first", 1),
+        required_candidate("second", 1),
+    ];
+
+    // Everything admitting `first` costs — frame, item and chrome — measured
+    // off a pack with room to spare rather than hand-computed.
+    let first_total = pack(
+        &request_with_raw_budget(1_000_000),
+        &ranked[..1],
+        &chunks[..1],
+        None,
+    )
+    .estimated_tokens;
+    let unmet_line = unmet_line_cost(&ranked[1..], &chunks[1..]);
+    assert!(
+        unmet_line > 2,
+        "the unmet line must be what tips this budget over, not the item"
+    );
+
+    let packed = pack(
+        &request_with_raw_budget(first_total + 2),
+        &ranked,
+        &chunks,
+        None,
+    );
+
+    assert!(
+        packed.within_budget(),
+        "pack claims {} tokens against its own budget of {}",
+        packed.estimated_tokens,
+        packed.budget_tokens
+    );
+    assert_eq!(
+        packed
+            .unmet_required
+            .iter()
+            .map(|unmet| unmet.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first", "second"],
+        "neither required id may be dropped silently to stay within budget"
+    );
+}
+
+/// The rendered cost of one `Required but unmet` line, measured off a pack
+/// reporting exactly one rather than hand-counted.
+fn unmet_line_cost(ranked: &[RankedCandidate], chunks: &[KnowledgeChunk]) -> usize {
+    let packed = pack(&request_with_item_budget(1), ranked, chunks, None);
+    assert_eq!(packed.unmet_required.len(), 1, "the fixture must not fit");
+    rendered_chrome_tokens(std::iter::empty(), &packed.unmet_required)
+}
+
 #[test]
 fn a_required_compact_item_is_marked_truncated_when_cut() {
     let body = "long compact line\n".repeat(500);

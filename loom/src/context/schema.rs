@@ -292,10 +292,12 @@ pub struct UnmetRequirement {
 /// per-path source bullet prefixes, and unmet-requirement lines — see
 /// [`ContextPack::recompute_estimate`]. The packer guarantees
 /// `estimated_tokens <= budget_tokens` (see [`ContextPack::within_budget`])
-/// for any `budget_tokens` at or above [`crate::context::config::MIN_BUDGET_TOKENS`];
-/// callers reject a smaller budget at the boundary (the CLI's
-/// `--budget-tokens` and the `[retrieval]` config both do) rather than
-/// asking the packer to accommodate one.
+/// whenever the frame plus the unmet-requirement lines alone fit the budget,
+/// since `pack::required::reserve_within_budget` holds back exactly that
+/// cost first. The one exception, a budget too small even for that floor:
+/// every required id must still be reported, so `items` is empty and
+/// `estimated_tokens` is pinned to the floor, over budget — pinned by
+/// `tests::pack::assert_pack_never_overshoots_budget`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ContextPack {
     pub query: String,
@@ -334,21 +336,13 @@ impl ContextPack {
     }
 
     /// Recompute the estimated cost of the exact brief frame, its items, and
-    /// the markdown chrome wrapped around them — see `rendered_chrome_tokens`
-    /// in `context::render`, the single definition this and the packer's own
-    /// selection accounting both call so a budget decision and this published
-    /// estimate can never disagree.
+    /// the markdown chrome wrapped around them — delegates to
+    /// `rendered_brief_tokens` in `context::render`, the single definition
+    /// this and the packer's own selection accounting both call so a budget
+    /// decision and this published estimate can never disagree.
     pub fn recompute_estimate(&mut self) {
-        self.estimated_tokens = BRIEF_FRAME_TOKENS
-            + self
-                .items
-                .iter()
-                .map(|item| item.token_count)
-                .sum::<usize>()
-            + crate::context::render::rendered_chrome_tokens(
-                self.items.iter(),
-                &self.unmet_required,
-            );
+        self.estimated_tokens =
+            crate::context::render::rendered_brief_tokens(self.items.iter(), &self.unmet_required);
     }
 }
 

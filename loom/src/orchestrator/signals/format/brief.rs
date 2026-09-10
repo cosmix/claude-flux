@@ -48,7 +48,7 @@
 use crate::context::render::fence_for;
 use crate::context::render::{
     render_knowledge_item, render_source_entry, render_source_group_prefix, render_unmet_line,
-    KNOWLEDGE_HEADING, SOURCE_HEADING,
+    source_groups, KNOWLEDGE_HEADING, SOURCE_HEADING,
 };
 use crate::context::schema::{ContextItem, ContextPack, Freshness, ItemKind};
 use crate::context::untrusted::inline_safe;
@@ -176,14 +176,8 @@ fn render_source_section(pack: &ContextPack) -> String {
         return String::new();
     }
     let mut out = String::from(SOURCE_HEADING);
-    let mut start = 0;
-    while start < items.len() {
-        let mut end = start + 1;
-        while end < items.len() && items[end].pointer.path == items[start].pointer.path {
-            end += 1;
-        }
-        out.push_str(&render_source_group(&items[start..end]));
-        start = end;
+    for group in source_groups(&items) {
+        out.push_str(&render_source_group(&items[group]));
     }
     out.push('\n');
     out

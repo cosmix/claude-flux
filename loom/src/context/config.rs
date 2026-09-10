@@ -69,13 +69,16 @@ const CONFIG_RELPATH: &str = ".loom/config.toml";
 /// budget at or below that frame cost cannot even pay for the frame, let
 /// alone one item — honouring it would silently produce empty output
 /// forever. Defined off `BRIEF_FRAME_TOKENS` rather than as an independent
-/// round number so the two constants cannot drift apart again.
+/// round number so the two constants cannot drift apart again: however
+/// `BRIEF_FRAME_TOKENS` moves, the floor keeps the same room above it.
+///
+/// 128 tokens of headroom is roughly one small excerpted chunk, or several
+/// `Required but unmet` lines. Nothing here asserts that relation, because
+/// there is no constant for "the cheapest possible item" to check it against —
+/// an item costs whatever its own text renders to. An assert of the form
+/// `BRIEF_FRAME_TOKENS + 128 > BRIEF_FRAME_TOKENS` would hold for every value
+/// the frame could ever take, and so would guard nothing.
 pub const MIN_BUDGET_TOKENS: usize = BRIEF_FRAME_TOKENS + 128;
-
-// If `BRIEF_FRAME_TOKENS` ever grows to meet or pass this floor, the floor
-// stops leaving any room for an item and the whole point of deriving it from
-// the frame cost is lost — fail the build rather than reopen that hole.
-const _: () = assert!(MIN_BUDGET_TOKENS > BRIEF_FRAME_TOKENS);
 
 /// Smallest accepted `max_payload_bytes`.
 ///
