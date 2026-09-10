@@ -9,14 +9,13 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use super::source_graph::dirty_tree_reason;
-use super::{reconcile_source_graph, SourceGraphOutcome, SourceGraphScope};
+use super::{
+    ensure_snapshot, SnapshotAction, SnapshotOutcome, SnapshotPolicy, SourceGraphCounters,
+};
 use crate::context::graph_store::GraphStore;
-use crate::context::local_overlay::local_overlay_key;
 use crate::context::schema::Freshness;
 use crate::context::store::ContextStore;
 use crate::fs::work_dir::WorkDir;
-use crate::git::runner::run_git_checked;
 
 /// Prefix for every advisory line about the source graph, on any surface.
 ///
@@ -35,29 +34,30 @@ pub const SOURCE_GRAPH_PREFIX: &str = "source graph: ";
 /// written nor how big it is. Machine-readable state belongs in [`Self::layer`]
 /// — never make a caller substring-match `freshness.detail` prose to learn
 /// which layer it got.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SemanticOutcome {
     /// Which layer this call ended up writing.
     pub layer: SemanticLayer,
-    pub files_extracted: usize,
     pub nodes: usize,
     pub edges: usize,
     /// Freshness of the semantic layer after this call.
     pub freshness: Freshness,
+    pub counters: SourceGraphCounters,
+    #[serde(skip)]
+    snapshot: Option<SnapshotOutcome>,
 }
 
 /// Which layer the semantic reconcile ended up writing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SemanticLayer {
-    /// Immutable base published for a clean revision.
+    /// Immutable base published for the current revision.
     Base { revision: String },
-    /// Working-tree overlay, because the base publish was refused.
-    LocalOverlay {
+    /// The committed base plus the checkout's working-tree overlay.
+    BaseAndLocalOverlay {
+        revision: String,
         plan: String,
         stage: String,
-        /// Why the base publish was refused.
-        refusal: String,
     },
     /// Nothing ran: `--structural-only`, or an unresolvable project root.
     Skipped { reason: String },
@@ -72,21 +72,51 @@ impl SemanticOutcome {
             layer: SemanticLayer::Skipped {
                 reason: reason.into(),
             },
-            files_extracted: 0,
             nodes: 0,
             edges: 0,
             freshness,
+            counters: SourceGraphCounters::default(),
+            snapshot: None,
         }
     }
 
-    /// Pair a layer with the counts [`reconcile_source_graph`] reported for it.
-    fn from_source_graph(layer: SemanticLayer, outcome: SourceGraphOutcome) -> Self {
+    fn from_snapshot(
+        layer: SemanticLayer,
+        freshness: Freshness,
+        nodes: usize,
+        edges: usize,
+        snapshot: SnapshotOutcome,
+    ) -> Self {
         Self {
             layer,
-            files_extracted: outcome.files_extracted,
-            nodes: outcome.nodes,
-            edges: outcome.edges,
-            freshness: outcome.freshness,
+            nodes,
+            edges,
+            freshness,
+            counters: snapshot.counters.clone(),
+            snapshot: Some(snapshot),
+        }
+    }
+
+    pub fn action(&self) -> Option<SnapshotAction> {
+        self.snapshot.as_ref().map(|snapshot| snapshot.action)
+    }
+
+    pub fn elapsed_ms(&self) -> u64 {
+        self.snapshot
+            .as_ref()
+            .map(|snapshot| u64::try_from(snapshot.elapsed.as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or(0)
+    }
+
+    pub fn describe(&self) -> String {
+        match &self.snapshot {
+            Some(snapshot) => snapshot.describe(),
+            None => match &self.layer {
+                SemanticLayer::Skipped { reason } => {
+                    format!("{SOURCE_GRAPH_PREFIX}skipped ({reason})")
+                }
+                _ => format!("{SOURCE_GRAPH_PREFIX}unavailable (snapshot outcome missing)"),
+            },
         }
     }
 }
@@ -98,8 +128,8 @@ impl SemanticOutcome {
 ///
 /// `pub(crate)`, not `pub(super)`: reachable from
 /// `commands::hook::reconcile_graph` (A.12/A.22's checkout-scope background
-/// reconcile), which needs exactly this "clean tree → Base, dirty tree →
-/// `_local` overlay" policy and must not re-derive it — a second derivation
+/// reconcile), which needs exactly this "base, plus `_local` when dirty"
+/// policy and must not re-derive it — a second derivation
 /// of one rule is the drift risk `architecture/context-retrieval.md`'s
 /// `plan_key` reasoning already warns about (`orchestrator/signals/retrieval.rs`
 /// routes through one helper for the same reason). No other visibility in
@@ -170,41 +200,51 @@ pub(crate) fn derive_project_root(knowledge_root: &Path) -> Option<&Path> {
 /// The fallible half of [`reconcile_semantic_best_effort`]; any error becomes a
 /// named staleness reason.
 ///
-/// The dirty-tree check runs HERE, before a scope is chosen, so the fallback is
-/// unambiguous rather than inferred from a degraded return. A base layer is
-/// immutable and keyed to a revision, so a dirty tree can never publish one -
-/// but publishing nothing leaves the user with no graph at all. Falling back to
-/// the working-tree overlay at the address `local_overlay_key` owns means sync
-/// always produces a graph, and always one that retrieval (which defaults to
-/// that same local scope) can actually read.
+/// A base always describes committed `HEAD`. When the checkout differs from
+/// that clean generation, the same probe also drives a `_local` overlay.
 fn try_reconcile_semantic(store: &ContextStore, project_root: &Path) -> Result<SemanticOutcome> {
     let work_dir = WorkDir::new(project_root)?;
     let graph_store = GraphStore::new(store.root(), work_dir.root());
-    let revision = run_git_checked(&["rev-parse", "HEAD"], project_root)?;
+    let snapshot = ensure_snapshot(
+        store,
+        &graph_store,
+        project_root,
+        SnapshotPolicy::LocalCurrent,
+    )?;
+    let freshness = store.load_state()?.semantic;
+    let layer = semantic_layer(&snapshot);
+    let (nodes, edges) = resolved_counts(&graph_store, &snapshot)?;
+    Ok(SemanticOutcome::from_snapshot(
+        layer, freshness, nodes, edges, snapshot,
+    ))
+}
 
-    if let Some(refusal) = dirty_tree_reason(project_root, &revision) {
-        let (plan, stage) = local_overlay_key(project_root);
-        let scope = SourceGraphScope::Overlay {
+fn semantic_layer(snapshot: &SnapshotOutcome) -> SemanticLayer {
+    if snapshot.action == SnapshotAction::Unavailable {
+        return SemanticLayer::Skipped {
+            reason: snapshot.reason.clone(),
+        };
+    }
+    match &snapshot.overlay {
+        Some((plan, stage)) => SemanticLayer::BaseAndLocalOverlay {
+            revision: snapshot.revision.clone(),
             plan: plan.clone(),
             stage: stage.clone(),
-        };
-        let outcome = reconcile_source_graph(store, &graph_store, project_root, scope)?;
-        return Ok(SemanticOutcome::from_source_graph(
-            SemanticLayer::LocalOverlay {
-                plan,
-                stage,
-                refusal,
-            },
-            outcome,
-        ));
+        },
+        None => SemanticLayer::Base {
+            revision: snapshot.revision.clone(),
+        },
     }
+}
 
-    let scope = SourceGraphScope::Base {
-        revision: revision.clone(),
-    };
-    let outcome = reconcile_source_graph(store, &graph_store, project_root, scope)?;
-    Ok(SemanticOutcome::from_source_graph(
-        SemanticLayer::Base { revision },
-        outcome,
-    ))
+fn resolved_counts(graph_store: &GraphStore, snapshot: &SnapshotOutcome) -> Result<(usize, usize)> {
+    if snapshot.revision.is_empty() {
+        return Ok((0, 0));
+    }
+    let overlay = snapshot
+        .overlay
+        .as_ref()
+        .map(|(plan, stage)| (plan.as_str(), stage.as_str()));
+    let graph = graph_store.resolved(&snapshot.revision, overlay)?;
+    Ok((graph.node_count(), graph.edge_count()))
 }

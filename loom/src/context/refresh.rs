@@ -10,22 +10,27 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::context::fingerprint::{fingerprint_tree, tree_revision};
-use crate::context::ingest::{ingest, IngestReport};
+use crate::context::fingerprint::{fingerprint_tree, tree_revision, FileFingerprint};
+use crate::context::ingest::IngestReport;
 use crate::context::schema::Freshness;
 use crate::context::store::{ContextStore, StoreState};
+use crate::fs::knowledge::catalog;
 
 mod semantic;
+pub mod snapshot;
 mod source_graph;
 
 pub use semantic::{SemanticLayer, SemanticOutcome, SOURCE_GRAPH_PREFIX};
+pub use snapshot::{ensure_snapshot, SnapshotAction, SnapshotOutcome, SnapshotPolicy};
+pub(crate) use source_graph::{clean_generation, working_tree};
 pub use source_graph::{
-    mark_semantic_stale, reconcile_source_graph, SourceGraphOutcome, SourceGraphScope,
+    mark_semantic_stale, reconcile_source_graph, SourceGraphCounters, SourceGraphOutcome,
+    SourceGraphScope,
 };
 
 // Crate-visible only: `commands::hook::reconcile_graph` (A.12/A.22's
-// checkout-scope background reconcile) needs the exact same "clean tree →
-// Base, dirty tree → `_local` overlay" policy this implements, and must call
+// checkout-scope background reconcile) needs the exact same "always ensure a
+// Base, and add a `_local` overlay when dirty" policy this implements, and must call
 // it rather than re-derive it. See the function's own doc comment for the
 // full reasoning; no other item in `semantic` was widened for this.
 pub(crate) use semantic::reconcile_semantic_best_effort;
@@ -39,25 +44,13 @@ pub(crate) use semantic::reconcile_semantic_best_effort;
 pub(crate) type BoxedExtractor =
     Box<dyn crate::context::extract::SourceGraphExtractor + Send + Sync>;
 
-/// The revision a reconcile builds against, plus its two reuse sources: the
-/// stage's own overlay and the published base at that revision, either of
-/// which may be absent on a first build.
-type ScopeLayers = (
-    String,
-    Option<crate::context::graph_store::GraphLayer>,
-    Option<crate::context::graph_store::GraphLayer>,
-);
-
-/// [`ScopeLayers`] preceded by the tracked-file list to walk.
-type ReconcileInputs = (
-    Vec<String>,
-    String,
-    Option<crate::context::graph_store::GraphLayer>,
-    Option<crate::context::graph_store::GraphLayer>,
-);
+struct Evaluated {
+    state: StoreState,
+    fingerprints: Vec<FileFingerprint>,
+}
 
 /// What a refresh actually did.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RefreshOutcome {
     /// False when the cached catalog was already current.
     pub rebuilt: bool,
@@ -120,9 +113,13 @@ fn structural_freshness(stored: &Freshness, current_revision: &str) -> Freshness
 /// missing git repository is data, not a crash
 /// (`refresh/source_graph.rs`'s module doc).
 pub fn evaluate(store: &ContextStore, knowledge_root: &Path) -> Result<StoreState> {
+    Ok(evaluate_inner(store, knowledge_root)?.state)
+}
+
+fn evaluate_inner(store: &ContextStore, knowledge_root: &Path) -> Result<Evaluated> {
     let stored = store.load_state()?;
 
-    let fingerprints = fingerprint_tree(knowledge_root)?;
+    let fingerprints = fingerprint_once(knowledge_root)?;
     let current_revision = tree_revision(&fingerprints);
 
     let mut structural = structural_freshness(&stored.structural, &current_revision);
@@ -154,11 +151,30 @@ pub fn evaluate(store: &ContextStore, knowledge_root: &Path) -> Result<StoreStat
         semantic_freshness_against_head(knowledge_root, stored.semantic.clone())
     };
 
-    Ok(StoreState {
-        structural,
-        semantic,
-        catalog_revision: stored.catalog_revision,
+    Ok(Evaluated {
+        state: StoreState {
+            structural,
+            semantic,
+            catalog_revision: stored.catalog_revision,
+        },
+        fingerprints,
     })
+}
+
+fn fingerprint_once(knowledge_root: &Path) -> Result<Vec<FileFingerprint>> {
+    #[cfg(test)]
+    FINGERPRINT_PASSES.with(|count| count.set(count.get().saturating_add(1)));
+    fingerprint_tree(knowledge_root)
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static FINGERPRINT_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn take_fingerprint_pass_count() -> usize {
+    FINGERPRINT_PASSES.with(|count| count.replace(0))
 }
 
 /// Check `stored` (a non-empty semantic revision) against the current
@@ -220,27 +236,33 @@ pub fn refresh(
     knowledge_root: &Path,
     structural_only: bool,
 ) -> Result<RefreshOutcome> {
-    let evaluated = evaluate(store, knowledge_root)?;
+    let evaluated = evaluate_inner(store, knowledge_root)?;
+    let state = evaluated.state;
 
-    if !evaluated.structural.stale {
+    if !state.structural.stale {
         let semantic = if structural_only {
-            SemanticOutcome::skipped(evaluated.semantic, STRUCTURAL_ONLY_REASON)
+            SemanticOutcome::skipped(state.semantic, STRUCTURAL_ONLY_REASON)
         } else {
             semantic::reconcile_semantic_best_effort_from_knowledge_root(
                 store,
                 knowledge_root,
-                evaluated.semantic,
+                state.semantic,
             )
         };
         return Ok(RefreshOutcome {
             rebuilt: false,
-            structural: evaluated.structural,
+            structural: state.structural,
             semantic,
             report: None,
         });
     }
 
-    let mut outcome = rebuild_and_persist(store, knowledge_root, evaluated.semantic)?;
+    let mut outcome = rebuild_and_persist(
+        store,
+        knowledge_root,
+        state.semantic,
+        evaluated.fingerprints,
+    )?;
     if !structural_only {
         let current = outcome.semantic.freshness.clone();
         outcome.semantic = semantic::reconcile_semantic_best_effort_from_knowledge_root(
@@ -259,6 +281,7 @@ fn rebuild_and_persist(
     store: &ContextStore,
     knowledge_root: &Path,
     semantic: Freshness,
+    fingerprints: Vec<FileFingerprint>,
 ) -> Result<RefreshOutcome> {
     // Persist the SAME revision `evaluate` compares against — the tree revision.
     // `catalog.revision` is a different hash over a different subject (chunk ids
@@ -266,10 +289,16 @@ fn rebuild_and_persist(
     // would compare two hash domains that can never be equal, making every
     // refresh rebuild from scratch. The catalog keeps its own revision inside
     // catalog.json as the catalog's identity.
-    let fingerprints = fingerprint_tree(knowledge_root)?;
     let current_revision = tree_revision(&fingerprints);
 
-    let (catalog, report) = ingest(knowledge_root)?;
+    let catalog = catalog::build(knowledge_root)?;
+    let report = IngestReport {
+        knowledge_root: knowledge_root.to_path_buf(),
+        files: fingerprints.len(),
+        chunks: catalog.chunks.len(),
+        revision: catalog.revision.clone(),
+        issues: catalog.issues.clone(),
+    };
     store.save_catalog(&catalog)?;
 
     let structural = Freshness {
@@ -300,3 +329,7 @@ fn rebuild_and_persist(
 #[cfg(test)]
 #[path = "refresh/tests_freshness.rs"]
 mod tests_freshness;
+
+#[cfg(test)]
+#[path = "refresh/tests_snapshot.rs"]
+mod tests_snapshot;

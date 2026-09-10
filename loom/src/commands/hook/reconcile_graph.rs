@@ -31,8 +31,8 @@
 //! `crate::context::refresh::reconcile_semantic_best_effort` — promoted
 //! from `pub(super)` to `pub(crate)` in `context::refresh::semantic` for
 //! exactly this call site — rather than re-implementing its Base-then-overlay
-//! fallback (publish an immutable base for a clean HEAD, fall back to the
-//! `_local` working-tree overlay when that is refused). One derivation of
+//! policy (always ensure the immutable committed base, then add the `_local`
+//! working-tree overlay when the checkout is dirty). One derivation of
 //! that policy, not two: see the promoted function's own doc comment.
 
 use std::path::{Path, PathBuf};
@@ -195,8 +195,8 @@ fn reconcile(target: &ReconcileTarget, store: &ContextStore) -> Result<()> {
             reconcile_source_graph(store, &graph_store, project_root, scope)?;
         }
         None => {
-            // The checkout's own working-tree scope: clean HEAD → publish an
-            // immutable Base; dirty tree → fall back to the `_local` overlay.
+            // The checkout's own working-tree scope: always ensure the
+            // committed Base; a dirty tree also gets the `_local` overlay.
             // `reconcile_semantic_best_effort` is the ONE place that policy
             // lives (promoted to `pub(crate)` in `context::refresh::semantic`
             // for exactly this call) — this module must not re-derive it; see

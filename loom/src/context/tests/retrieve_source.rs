@@ -15,6 +15,7 @@
 use super::retrieve::project_with_knowledge;
 use crate::context::graph_store::{FileEntry, GraphLayer, GraphStore};
 use crate::context::local_overlay::local_overlay_key;
+use crate::context::refresh::{reconcile_source_graph, SourceGraphScope};
 use crate::context::retrieve::{retrieve_for_stage, StageQuery};
 use crate::context::schema::*;
 use crate::context::store::ContextStore;
@@ -163,12 +164,10 @@ fn retrieve_for_stage_packs_source_nodes_with_no_knowledge_tree_at_all() {
 // semantic revision AND the RESOLVED graph — base plus this query's overlay —
 // has nothing to answer with: no base was found for that revision, AND no
 // overlay covered for it either (`retrieve::graph::degraded_reason`). A
-// missing base alone is NOT degraded — bases are immutable and revision-keyed
-// (`graph_store.rs`), so a dirty working tree can never publish one, and
-// `refresh::semantic::try_reconcile_semantic` deliberately builds a `_local`
-// overlay instead; "no base for the current revision, served from the
-// overlay" is the ordinary, healthy state of a checkout someone is actively
-// working in. Getting this wrong is not just a display bug: `degraded` is a
+// missing base alone is NOT degraded — older caches may still contain only a
+// `_local` overlay, and that overlay can fully cover the requested checkout;
+// "no base for the current revision, served from the overlay" remains a
+// healthy readable state. Getting this wrong is not just a display bug: `degraded` is a
 // live input to `reconcile_graph::spawn_if_needed` (`stale OR degraded`), so
 // misreporting it means every prompt against a dirty tree trips a background
 // full-repository rebuild.
@@ -302,5 +301,53 @@ fn retrieve_for_stage_is_not_degraded_when_the_semantic_layer_was_never_built() 
     assert_eq!(
         pack.degraded, None,
         "an empty semantic revision means never built, not degraded"
+    );
+}
+
+#[test]
+fn retrieval_reports_the_working_tree_stale_when_the_overlay_generation_moved() {
+    let temp = project_with_knowledge();
+    let root = temp.path();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env("GIT_CONFIG_GLOBAL", root.join(".loom-test-no-global"))
+            .env("GIT_CONFIG_SYSTEM", root.join(".loom-test-no-system"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-b", "main"]);
+    git(&["config", "user.email", "t@t.com"]);
+    git(&["config", "user.name", "t"]);
+    std::fs::write(root.join("src.rs"), "fn before_edit() {}\n").unwrap();
+    git(&["add", "doc", "src.rs"]);
+    git(&["commit", "-m", "seed"]);
+
+    let work_dir = WorkDir::new(root).unwrap();
+    let store = ContextStore::open(&work_dir).unwrap();
+    let graph_store = GraphStore::new(store.root(), work_dir.root());
+    let (plan, stage) = local_overlay_key(root);
+    reconcile_source_graph(
+        &store,
+        &graph_store,
+        root,
+        SourceGraphScope::Overlay { plan, stage },
+    )
+    .unwrap();
+    std::fs::write(root.join("src.rs"), "fn after_edit() {}\n").unwrap();
+
+    let pack = retrieve_for_stage(&StageQuery::new(root, "after edit"), 500).unwrap();
+
+    assert!(pack.semantic_freshness.stale);
+    assert_eq!(
+        pack.semantic_freshness.detail.as_deref(),
+        Some("working tree changed since the source graph overlay was built")
     );
 }

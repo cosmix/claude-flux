@@ -13,8 +13,6 @@ mod sandbox_preflight;
 mod tests;
 #[cfg(test)]
 mod tests_checks;
-#[cfg(test)]
-mod tests_preflight;
 
 use anyhow::{bail, Result};
 use colored::Colorize;
@@ -112,7 +110,7 @@ fn prepare_background_run(backend: Option<String>) -> Result<WorkDir> {
     plan_inputs::mark_plan_in_progress(&work_dir)?;
 
     // Publish against the committed active filename and the revision stages inherit.
-    checks::advisory_source_graph_preflight(&repo_root, &work_dir, false);
+    checks::advisory_source_graph_preflight(&repo_root, &work_dir);
 
     Ok(work_dir)
 }

@@ -58,8 +58,8 @@ pub struct StageQuery {
     ///
     /// Defaults to [`OverlayScope::Local`] in [`StageQuery::new`], not to a
     /// base-only read: a query that names no stage means "the tree in front of
-    /// me", and on a dirty tree there is no base layer for HEAD — the
-    /// working-tree overlay is the only thing describing it.
+    /// me", so a dirty checkout needs its working-tree overlay applied to the
+    /// committed base.
     pub overlay: OverlayScope,
 }
 
@@ -288,14 +288,19 @@ pub fn retrieve_for_stage(query: &StageQuery, budget_tokens: usize) -> Result<Co
 
     let config = RetrievalConfig::load(&roots.main_project_root);
 
-    let (catalog, state) = resolve_catalog(&roots.store, knowledge_root)?;
+    let (catalog, mut state) = resolve_catalog(&roots.store, knowledge_root)?;
 
-    let (graph, degraded) = graph::load_resolved_graph(
+    let graph_load = graph::load_resolved_graph(
         &query.work_dir_hint,
         &roots.store,
         &state.semantic.revision,
         &query.overlay,
     );
+    if let Some(detail) = graph_load.working_tree_stale {
+        state.semantic.stale = true;
+        state.semantic.detail = Some(detail);
+    }
+    let graph = graph_load.graph;
 
     check_require_ids(query, &catalog, graph.as_ref())?;
 
@@ -322,7 +327,7 @@ pub fn retrieve_for_stage(query: &StageQuery, budget_tokens: usize) -> Result<Co
         state,
         ranked.dropped_terms,
         ranked.surviving_terms,
-        degraded,
+        graph_load.degraded,
     );
     Ok(pack(&request, &fused, &catalog.chunks, graph.as_ref()))
 }

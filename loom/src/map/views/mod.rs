@@ -1,9 +1,7 @@
 //! Read-only CLI views over an already-resolved source graph.
 //!
-//! Every view splits into a pure `render_*` function that returns the exact
-//! `String` printed, and a thin `pub fn` wrapper that prints it — so the
-//! honesty contract below is something a test can assert on, not just eyeball
-//! from a terminal.
+//! Every view is a pure `render_*` function; the command layer owns printing
+//! and appends the global footer once after all requested views.
 //!
 //! None of these views fail on an empty result — a view that finds nothing
 //! still renders a plain sentence saying so, because "the graph has no
@@ -22,18 +20,41 @@ use colored::Colorize;
 
 use crate::context::graph_store::ResolvedGraph;
 use crate::context::resolve::node_names;
-use crate::context::source_graph::{file_node_id, FileCoverage, SourceNode, SourceNodeKind};
-use crate::context::{CoverageReport, ResolutionStats, SymbolIndex};
+use crate::context::source_graph::{
+    file_node_id, FileCoverage, SourceEdgeKind, SourceNode, SourceNodeKind,
+};
+use crate::context::{CoverageReport, ResolutionStats};
 
-/// Maximum traversal depth for `impact`.
-const IMPACT_MAX_DEPTH: usize = 3;
 /// Maximum number of ambiguous start definitions `impact` will expand.
-const IMPACT_MAX_STARTS: usize = 5;
+pub(super) const IMPACT_MAX_STARTS: usize = 5;
 /// Maximum number of rows `find_all` prints before suppressing the rest.
-const FIND_ALL_CAP: usize = 200;
+pub(super) const FIND_ALL_CAP: usize = 200;
 /// Signature column is collapsed to single spaces and capped at this many
 /// characters (including the trailing ellipsis) so an outline stays readable.
 const SIGNATURE_MAX_LEN: usize = 80;
+
+const DEFAULT_IMPACT_KINDS: [SourceEdgeKind; 4] = [
+    SourceEdgeKind::Calls,
+    SourceEdgeKind::References,
+    SourceEdgeKind::Implements,
+    SourceEdgeKind::Extends,
+];
+const ALL_EDGE_KINDS: [SourceEdgeKind; 6] = [
+    SourceEdgeKind::Contains,
+    SourceEdgeKind::Imports,
+    SourceEdgeKind::Calls,
+    SourceEdgeKind::References,
+    SourceEdgeKind::Implements,
+    SourceEdgeKind::Extends,
+];
+
+pub struct ImpactArgs {
+    pub depth: usize,
+    pub kinds: Vec<SourceEdgeKind>,
+    pub limit: usize,
+    pub path_prefix: Option<String>,
+    pub min_confidence: f32,
+}
 
 /// Turn a user-supplied path into the forward-slashed, project-root-relative
 /// form the graph keys on. Resolves against the CURRENT DIRECTORY first, so a
@@ -61,22 +82,15 @@ pub(crate) fn project_relative(project_root: &Path, arg: &str) -> Option<String>
     Some(normalized.to_string())
 }
 
-/// Print every indexed node of one file, in source order.
-pub fn outline(graph: &ResolvedGraph, project_root: &Path, arg: &str) {
-    println!("{}", render_outline(graph, project_root, arg));
-}
-
-pub(crate) fn render_outline(graph: &ResolvedGraph, project_root: &Path, arg: &str) -> String {
+/// Render every indexed node of one file, in source order.
+pub fn render_outline(graph: &ResolvedGraph, project_root: &Path, arg: &str) -> String {
     let rel = project_relative(project_root, arg).unwrap_or_else(|| arg.to_string());
     // Flatten only for display - the graph lookup below keys on the raw
     // `rel`, since flattening must never change matching behaviour.
     let safe_rel = crate::context::untrusted::inline_safe(&rel);
 
     let Some(entry) = graph.files.get(&rel) else {
-        return format!(
-            "no indexed file at {safe_rel}\n{}",
-            CoverageReport::of(graph)
-        );
+        return format!("no indexed file at {safe_rel}");
     };
 
     let mut lines = vec![format!("{} Outline: {}", "→".cyan().bold(), safe_rel)];
@@ -92,7 +106,6 @@ pub(crate) fn render_outline(graph: &ResolvedGraph, project_root: &Path, arg: &s
             .map(|node| format!("  {}", format_node_line(node))),
     );
     lines.push(file_coverage_line(&entry.coverage));
-    lines.push(CoverageReport::of(graph).to_string());
     lines.join("\n")
 }
 
@@ -145,24 +158,17 @@ fn file_coverage_line(coverage: &FileCoverage) -> String {
     }
 }
 
-/// Print every indexed node whose name matches `symbol`: an exact,
+/// Render every indexed node whose name matches `symbol`: an exact,
 /// case-sensitive match first, falling back to a case-insensitive substring
 /// match only when the exact pass finds nothing.
-pub fn find_all(graph: &ResolvedGraph, symbol: &str) {
-    println!("{}", render_find_all(graph, symbol));
-}
-
-pub(crate) fn render_find_all(graph: &ResolvedGraph, symbol: &str) -> String {
+pub fn render_find_all(graph: &ResolvedGraph, symbol: &str) -> String {
     let (mut hits, label) = find_symbol_matches(graph, symbol);
 
     // Flatten only for display - matching above stays on the raw `symbol`.
     let safe_symbol = crate::context::untrusted::inline_safe(symbol);
 
     if hits.is_empty() {
-        return format!(
-            "no nodes match {safe_symbol}\n{}",
-            CoverageReport::of(graph)
-        );
+        return format!("no nodes match {safe_symbol}");
     }
 
     hits.sort_by(|a, b| (&a.path, a.span.line_start).cmp(&(&b.path, b.span.line_start)));
@@ -184,7 +190,6 @@ pub(crate) fn render_find_all(graph: &ResolvedGraph, symbol: &str) -> String {
             hits.len() - FIND_ALL_CAP
         ));
     }
-    lines.push(CoverageReport::of(graph).to_string());
     lines.join("\n")
 }
 
@@ -192,7 +197,7 @@ pub(crate) fn render_find_all(graph: &ResolvedGraph, symbol: &str) -> String {
 /// first, falling back to a case-insensitive substring match only when the
 /// exact pass finds nothing. The returned label distinguishes the two cases
 /// for display.
-fn find_symbol_matches<'a>(
+pub(super) fn find_symbol_matches<'a>(
     graph: &'a ResolvedGraph,
     symbol: &str,
 ) -> (Vec<&'a SourceNode>, &'static str) {
@@ -238,84 +243,43 @@ fn find_all_row(node: &SourceNode) -> String {
     row
 }
 
-/// Print what reaches a symbol or file, with per-edge confidence and
-/// provenance, then the resolution and coverage summary lines.
-pub fn impact(graph: &ResolvedGraph, project_root: &Path, arg: &str, stats: &ResolutionStats) {
-    println!("{}", render_impact(graph, project_root, arg, stats));
-}
-
-pub(crate) fn render_impact(
+/// Render what reaches a symbol or file, with per-edge confidence and provenance.
+pub fn render_impact(
     graph: &ResolvedGraph,
     project_root: &Path,
     arg: &str,
     stats: &ResolutionStats,
+    args: &ImpactArgs,
 ) -> String {
-    let file_start =
-        project_relative(project_root, arg).filter(|rel| graph.files.contains_key(rel));
-    let symbol_matches = SymbolIndex::build(graph).lookup(arg).to_vec();
-
-    let starts = match &file_start {
-        Some(rel) => vec![rel.clone()],
-        None => symbol_matches.clone(),
-    };
+    let resolved = resolve_starts(graph, project_root, arg);
 
     // Flatten only for display - `file_start`/`symbol_matches`/`starts` above
     // are already resolved against the raw `arg`.
     let safe_arg = crate::context::untrusted::inline_safe(arg);
 
-    if starts.is_empty() {
-        return format!(
-            "no indexed node named {safe_arg}\n{}",
-            CoverageReport::of(graph)
-        );
+    if resolved.starts.is_empty() {
+        return format!("no indexed node named {safe_arg}");
     }
 
     let mut lines = Vec::new();
     lines.extend(impact_match_note(
-        &file_start,
-        &symbol_matches,
-        &starts,
+        &resolved.file_start,
+        &resolved.symbol_matches,
+        &resolved.starts,
         &safe_arg,
     ));
 
-    let shown = starts.len().min(IMPACT_MAX_STARTS);
-    for start_id in starts.iter().take(IMPACT_MAX_STARTS) {
-        lines.push(render_impact_for(graph, start_id, stats));
+    let shown = resolved.starts.len().min(IMPACT_MAX_STARTS);
+    for start_id in resolved.starts.iter().take(IMPACT_MAX_STARTS) {
+        lines.push(render_impact_for(graph, start_id, stats, args));
     }
-    if starts.len() > shown {
-        lines.push(format!("  ... {} more suppressed", starts.len() - shown));
+    if resolved.starts.len() > shown {
+        lines.push(format!(
+            "  ... {} more suppressed",
+            resolved.starts.len() - shown
+        ));
     }
-
-    lines.push(format!(
-        "resolution: {} retargeted, {} ambiguous (left unresolved), {} unresolved",
-        stats.retargeted, stats.ambiguous, stats.unresolved
-    ));
-    lines.push(CoverageReport::of(graph).to_string());
     lines.join("\n")
-}
-
-/// The optional note/header line for `impact`: whether `arg` matched a file
-/// (and also symbol definitions), or matched multiple symbol definitions.
-fn impact_match_note(
-    file_start: &Option<String>,
-    symbol_matches: &[String],
-    starts: &[String],
-    safe_arg: &str,
-) -> Option<String> {
-    if file_start.is_some() && !symbol_matches.is_empty() {
-        Some(format!(
-            "note: {safe_arg} also matches {} symbol definition(s); showing the file's impact only",
-            symbol_matches.len()
-        ))
-    } else if starts.len() > 1 {
-        Some(format!(
-            "{} {} definitions match {safe_arg}; showing impact for each",
-            "→".cyan().bold(),
-            starts.len()
-        ))
-    } else {
-        None
-    }
 }
 
 /// Render one start node's impact heading and its reverse-reachability rows.
@@ -324,18 +288,35 @@ fn impact_match_note(
 /// `scope::symbol` path lifted from the parsed source), so both are
 /// flattened for display; the graph traversal itself still runs on the raw
 /// `start_id`.
-fn render_impact_for(graph: &ResolvedGraph, start_id: &str, stats: &ResolutionStats) -> String {
+fn render_impact_for(
+    graph: &ResolvedGraph,
+    start_id: &str,
+    stats: &ResolutionStats,
+    args: &ImpactArgs,
+) -> String {
     let safe_start_id = crate::context::untrusted::inline_safe(start_id);
     let heading = format!(
-        "{} Impact of {safe_start_id} (depth <= {IMPACT_MAX_DEPTH}, reverse edges)",
+        "{} Impact of {safe_start_id} (depth <= {}, kinds: {}, reverse edges)",
         "→".cyan().bold(),
+        args.depth,
+        impact_kinds_label(&args.kinds),
     );
-    let hits = crate::context::impact(graph, start_id, IMPACT_MAX_DEPTH);
-    if hits.is_empty() {
+    let result = crate::context::resolve::impact_with(
+        graph,
+        start_id,
+        &crate::context::resolve::ImpactOptions {
+            max_depth: args.depth,
+            kinds: args.kinds.clone(),
+            limit: args.limit,
+            path_prefix: args.path_prefix.clone(),
+            min_confidence: args.min_confidence,
+        },
+    );
+    if result.hits.is_empty() {
         return format!("{heading}\n  {}", untraversed_summary(graph, stats));
     }
     let mut lines = vec![heading];
-    for hit in &hits {
+    for hit in &result.hits {
         lines.push(format!(
             "  d{}  {:.2}  {}  {}  {}",
             hit.depth,
@@ -345,7 +326,33 @@ fn render_impact_for(graph: &ResolvedGraph, start_id: &str, stats: &ResolutionSt
             crate::context::untrusted::inline_safe(&hit.id)
         ));
     }
+    if result.suppressed > 0 {
+        lines.push(format!(
+            "  ... {} more suppressed (raise --limit)",
+            result.suppressed
+        ));
+    }
     lines.join("\n")
+}
+
+fn impact_kinds_label(kinds: &[SourceEdgeKind]) -> String {
+    if kinds.is_empty() || ALL_EDGE_KINDS.iter().all(|kind| kinds.contains(kind)) {
+        "all".to_string()
+    } else {
+        kinds
+            .iter()
+            .map(SourceEdgeKind::as_str)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+pub(super) fn effective_impact_kinds(kinds: &[SourceEdgeKind]) -> Vec<SourceEdgeKind> {
+    if kinds.is_empty() {
+        DEFAULT_IMPACT_KINDS.to_vec()
+    } else {
+        kinds.to_vec()
+    }
 }
 
 /// Explain an empty reverse-impact result honestly: the traversal only walks
@@ -360,6 +367,23 @@ fn untraversed_summary(graph: &ResolvedGraph, stats: &ResolutionStats) -> String
         stats.unresolved
     )
 }
+
+/// Render the invocation-wide coverage and resolution footer.
+pub fn render_footer(graph: &ResolvedGraph, stats: &ResolutionStats) -> String {
+    format!(
+        "{}\nresolution: {} retargeted, {} ambiguous (left unresolved), {} unresolved",
+        CoverageReport::of(graph),
+        stats.retargeted,
+        stats.ambiguous,
+        stats.unresolved
+    )
+}
+
+pub mod json;
+mod neighbors;
+pub use json::{callees_json, callers_json, find_all_json, footer_json, impact_json, outline_json};
+use neighbors::{impact_match_note, resolve_starts};
+pub use neighbors::{render_callees, render_callers};
 
 #[cfg(test)]
 mod tests;

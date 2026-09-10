@@ -199,7 +199,7 @@ pub(crate) fn prepare_session_launch(
     // `[plan_sandbox]` snapshot the settings generator reads
     // (OrchestratorConfig.sandbox_config is loaded from it too), so the CLI
     // flag and the generated settings file never disagree.
-    let permission_mode = {
+    let sandbox = {
         let plan_sandbox = crate::fs::work_dir::read_plan_sandbox(work_dir)
             .ok()
             .flatten()
@@ -210,7 +210,6 @@ pub(crate) fn prepare_session_launch(
             stage.stage_type,
             &stage.implementers,
         )
-        .permission_mode
     };
     // Find claude's absolute path (needed for macOS where terminals don't inherit PATH).
     // build_claude_command shell-escapes the path, model, effort, and mode (S-3).
@@ -223,7 +222,7 @@ pub(crate) fn prepare_session_launch(
         &claude_path.display().to_string(),
         &model,
         &effort,
-        permission_mode.as_settings_value(),
+        sandbox.permission_mode.as_settings_value(),
         &capsule,
         &remote_control,
         &escaped_prompt,
@@ -239,7 +238,7 @@ pub(crate) fn prepare_session_launch(
     // Create the wrapper script (writes PID + start-time before exec'ing
     // claude). `stage.id` sets LOOM_STAGE_ID; `pid_key` names the per-session
     // PID file. Pass cwd so the script can cd there (macOS).
-    let wrapper_path = super::wrapper::create_wrapper_script(
+    let wrapper_path = super::wrapper::create_session_wrapper_script(
         work_dir,
         &pid_key,
         &stage.id,
@@ -248,6 +247,7 @@ pub(crate) fn prepare_session_launch(
         Some(cwd),
         kind,
         context_ceiling_tokens,
+        super::build_cache::sccache_usable_in(&sandbox),
     )?;
 
     // Build the command that runs the wrapper script.

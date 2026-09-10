@@ -5,14 +5,11 @@
 use anyhow::{bail, Result};
 use colored::Colorize;
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use crate::context::graph_store::GraphStore;
-use crate::context::local_overlay::local_overlay_key;
-use crate::context::refresh::{reconcile_source_graph, SourceGraphScope, SOURCE_GRAPH_PREFIX};
+use crate::context::refresh::{ensure_snapshot, SnapshotAction, SnapshotOutcome, SnapshotPolicy};
 use crate::context::store::ContextStore;
 use crate::fs::work_dir::WorkDir;
-use crate::git::runner::run_git_checked;
 use crate::git::{get_uncommitted_changes_summary, has_uncommitted_changes};
 
 /// Ensure the repository is ready for Loom's git worktree operations.
@@ -158,165 +155,23 @@ pub fn advisory_codex_lane_preflight(repo_root: &Path) {
 
 /// Advisory source-graph preflight - never aborts startup.
 ///
-/// Publishes the immutable base source-graph layer for HEAD when none exists
-/// yet, so the graph is there before the first stage session is ever briefed
-/// rather than only after the first merge. SILENT on the common path (a base
-/// for HEAD already exists); every failure degrades to one advisory line.
-///
-/// `allow_overlay_fallback` decides what happens when the base publish is
-/// refused because the tracked tree is dirty. Both `loom run` paths pass
-/// false: they have already bailed on a dirty tree, and a run needs a base.
-/// `loom init` passes true - it is commonly the first command run in a dirty
-/// checkout, where publishing nothing would leave it with no graph at all - and
-/// falls back to the working-tree overlay at the address `local_overlay_key`
-/// owns, which is the same address retrieval reads by default.
-///
-/// The [`SOURCE_GRAPH_PREFIX`] on every advisory line here is a convention
-/// introduced with this function (shared with `loom knowledge sync`), because
-/// this codebase had no shared advisory marker: `advisory_codex_lane_preflight`
-/// prints bare text and `foreground.rs` uses a literal "Warning: ".
-pub fn advisory_source_graph_preflight(
-    repo_root: &Path,
-    work_dir: &WorkDir,
-    allow_overlay_fallback: bool,
-) {
-    if let Err(error) = publish_source_graph(repo_root, work_dir, allow_overlay_fallback) {
-        eprintln!("{SOURCE_GRAPH_PREFIX}not published ({error:#})");
+/// Ensures the immutable base source graph for HEAD. Silent when reused;
+/// writes and unavailable snapshots get the shared one-line description.
+pub fn advisory_source_graph_preflight(repo_root: &Path, work_dir: &WorkDir) {
+    match preflight_snapshot(repo_root, work_dir) {
+        Ok(outcome) if outcome.action != SnapshotAction::Reused => {
+            eprintln!("{}", outcome.describe());
+        }
+        Ok(_) => {}
+        Err(error) => eprintln!("source graph: unavailable ({error:#})"),
     }
 }
 
-/// The fallible half of [`advisory_source_graph_preflight`]. Every error is
-/// swallowed by the caller; nothing here may abort startup.
-fn publish_source_graph(
-    repo_root: &Path,
-    work_dir: &WorkDir,
-    allow_overlay_fallback: bool,
-) -> Result<()> {
+fn preflight_snapshot(repo_root: &Path, work_dir: &WorkDir) -> Result<SnapshotOutcome> {
     let store = ContextStore::open(work_dir)?;
-    // Idempotent, and required: without it the very first publish on a fresh
-    // checkout fails on a missing cache directory.
     store.ensure()?;
     let graph_store = GraphStore::new(store.root(), work_dir.root());
-    let head = run_git_checked(&["rev-parse", "HEAD"], repo_root)?;
-
-    if graph_store.load_base(&head)?.is_some() {
-        return Ok(());
-    }
-
-    announce_source_graph_build(&head);
-    let started = Instant::now();
-    let base = reconcile_source_graph(
-        &store,
-        &graph_store,
-        repo_root,
-        SourceGraphScope::Base {
-            revision: head.clone(),
-        },
-    )?;
-    // `reconcile_source_graph` degrades rather than erroring: a refusal comes
-    // back as a stale, zero-count freshness carrying the reason.
-    if !base.freshness.stale {
-        report_source_graph_build_finished(&head, &base, started.elapsed());
-        return Ok(());
-    }
-
-    let refusal = base
-        .freshness
-        .detail
-        .unwrap_or_else(|| "unknown reason".to_string());
-    if !allow_overlay_fallback {
-        eprintln!("{SOURCE_GRAPH_PREFIX}base not published - {refusal}");
-        return Ok(());
-    }
-
-    publish_source_graph_overlay(&store, &graph_store, repo_root, work_dir, &refusal)
-}
-
-fn announce_source_graph_build(revision: &str) {
-    println!(
-        "{} {}",
-        "→".cyan().bold(),
-        format_source_graph_build_started(revision)
-    );
-}
-
-fn report_source_graph_build_finished(
-    revision: &str,
-    outcome: &crate::context::refresh::SourceGraphOutcome,
-    elapsed: Duration,
-) {
-    println!(
-        "{} {}",
-        "✓".green().bold(),
-        format_source_graph_build_finished(
-            revision,
-            outcome.files_extracted,
-            outcome.nodes,
-            elapsed,
-        )
-    );
-}
-
-fn format_source_graph_build_started(revision: &str) -> String {
-    format!(
-        "Building source graph for {} — this can take a moment...",
-        short_revision(revision)
-    )
-}
-
-fn format_source_graph_build_finished(
-    revision: &str,
-    files: usize,
-    nodes: usize,
-    elapsed: Duration,
-) -> String {
-    let file_label = if files == 1 { "file" } else { "files" };
-    let node_label = if nodes == 1 { "node" } else { "nodes" };
-    format!(
-        "Source graph published for {} ({files} {file_label}, {nodes} {node_label}, {:.1}s)",
-        short_revision(revision),
-        elapsed.as_secs_f64()
-    )
-}
-
-fn short_revision(revision: &str) -> &str {
-    revision.get(..8).unwrap_or(revision)
-}
-
-fn publish_source_graph_overlay(
-    store: &ContextStore,
-    graph_store: &GraphStore,
-    repo_root: &Path,
-    work_dir: &WorkDir,
-    refusal: &str,
-) -> Result<()> {
-    // The overlay address is keyed on the project root's directory name, and
-    // `local_overlay_stage_name` canonicalizes before taking it, so the
-    // address identifies the directory rather than how the path happened to
-    // be spelled: an absolute repo_root and a relative "." naming the same
-    // directory now key to the SAME address. Deriving it from
-    // `work_dir.project_root()` - the same call every reader (`loom map`,
-    // `loom knowledge sync`/`context`) makes to build the address it reads -
-    // is still correct. Do not "simplify" this back to `repo_root`.
-    let project_root = work_dir.project_root().unwrap_or(repo_root);
-    let (plan, stage) = local_overlay_key(project_root);
-    let overlay = reconcile_source_graph(
-        store,
-        graph_store,
-        repo_root,
-        SourceGraphScope::Overlay {
-            plan: plan.clone(),
-            stage: stage.clone(),
-        },
-    )?;
-    println!(
-        "{} Source graph written to working-tree overlay {plan}/{stage} ({} files, {} nodes)",
-        "✓".green().bold(),
-        overlay.files_extracted,
-        overlay.nodes
-    );
-    eprintln!("{SOURCE_GRAPH_PREFIX}base not published - {refusal}");
-    Ok(())
+    ensure_snapshot(&store, &graph_store, repo_root, SnapshotPolicy::BaseOnly)
 }
 
 fn print_repo_bootstrap(result: crate::git::RepoBootstrapResult) {
@@ -363,32 +218,4 @@ pub fn check_for_uncommitted_changes(repo_root: &Path) -> Result<()> {
         bail!("Uncommitted changes in repository - commit or stash before running loom");
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod progress_tests {
-    use super::*;
-
-    #[test]
-    fn source_graph_progress_explains_the_wait_and_summarizes_the_build() {
-        let revision = "1234567890abcdef";
-
-        assert_eq!(
-            format_source_graph_build_started(revision),
-            "Building source graph for 12345678 — this can take a moment..."
-        );
-        assert_eq!(
-            format_source_graph_build_finished(
-                revision,
-                1_564,
-                42_000,
-                Duration::from_millis(12_345),
-            ),
-            "Source graph published for 12345678 (1564 files, 42000 nodes, 12.3s)"
-        );
-        assert_eq!(
-            format_source_graph_build_finished(revision, 1, 1, Duration::ZERO),
-            "Source graph published for 12345678 (1 file, 1 node, 0.0s)"
-        );
-    }
 }

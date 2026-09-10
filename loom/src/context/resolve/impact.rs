@@ -44,6 +44,38 @@ pub struct ImpactHit {
     pub weakest_kind: SourceEdgeKind,
 }
 
+/// Filters and bounds for one reverse-impact traversal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImpactOptions {
+    pub max_depth: usize,
+    /// An empty list walks every semantic dependency kind, excluding file
+    /// containment and imports. A non-empty list is an explicit allow-list.
+    pub kinds: Vec<SourceEdgeKind>,
+    /// Zero is unlimited; otherwise only the first `limit` sorted hits remain.
+    pub limit: usize,
+    pub path_prefix: Option<String>,
+    pub min_confidence: f32,
+}
+
+impl Default for ImpactOptions {
+    fn default() -> Self {
+        Self {
+            max_depth: 3,
+            kinds: Vec::new(),
+            limit: 0,
+            path_prefix: None,
+            min_confidence: 0.0,
+        }
+    }
+}
+
+/// Reverse-impact hits plus the number removed by [`ImpactOptions::limit`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImpactResult {
+    pub hits: Vec<ImpactHit>,
+    pub suppressed: usize,
+}
+
 /// The weakest edge seen so far along one path.
 #[derive(Debug, Clone, Copy)]
 struct Trust {
@@ -106,10 +138,14 @@ impl<'a> Walk<'a> {
         depth: usize,
         reverse: &Reverse<'a>,
         nodes: &Nodes<'a>,
+        options: &ImpactOptions,
     ) -> Frontier<'a> {
         let mut discovered: Vec<&'a str> = Vec::new();
         for (id, carried) in frontier {
             for &edge in reverse.get(*id).into_iter().flatten() {
+                if !edge_is_allowed(edge, options) {
+                    continue;
+                }
                 let from = edge.from.as_str();
                 // The start node is the query's subject, never a result; skipping
                 // it is also what makes a cycle back to it terminate.
@@ -180,10 +216,28 @@ impl<'a> Walk<'a> {
     }
 }
 
-/// Breadth-first reverse traversal: who reaches `start_id`, within `max_depth` hops.
-pub fn impact(graph: &ResolvedGraph, start_id: &str, max_depth: usize) -> Vec<ImpactHit> {
-    if max_depth == 0 {
-        return Vec::new();
+/// Apply edge filters while expanding the graph. Filtering here, rather than
+/// retaining hits afterward, prevents a rejected edge from becoming a bridge
+/// to otherwise-matching nodes farther away.
+fn edge_is_allowed(edge: &SourceEdge, options: &ImpactOptions) -> bool {
+    let kind_allowed = if options.kinds.is_empty() {
+        !matches!(
+            edge.kind,
+            SourceEdgeKind::Contains | SourceEdgeKind::Imports
+        )
+    } else {
+        options.kinds.contains(&edge.kind)
+    };
+    kind_allowed && edge.confidence >= options.min_confidence
+}
+
+/// Breadth-first reverse traversal with edge, path, confidence, and result bounds.
+pub fn impact_with(graph: &ResolvedGraph, start_id: &str, options: &ImpactOptions) -> ImpactResult {
+    if options.max_depth == 0 {
+        return ImpactResult {
+            hits: Vec::new(),
+            suppressed: 0,
+        };
     }
     let nodes: Nodes<'_> = graph.nodes().map(|node| (node.id.as_str(), node)).collect();
     let reverse = reverse_adjacency(graph);
@@ -194,15 +248,43 @@ pub fn impact(graph: &ResolvedGraph, start_id: &str, max_depth: usize) -> Vec<Im
     };
 
     let mut frontier: Frontier<'_> = vec![(start_id, None)];
-    for depth in 1..=max_depth {
-        let next = walk.expand(&frontier, depth, &reverse, &nodes);
+    for depth in 1..=options.max_depth {
+        let next = walk.expand(&frontier, depth, &reverse, &nodes, options);
         if next.is_empty() {
             break;
         }
         frontier = next;
     }
 
-    walk.finish()
+    let mut hits = walk.finish();
+    if let Some(prefix) = &options.path_prefix {
+        hits.retain(|hit| hit.path.to_string_lossy().starts_with(prefix));
+    }
+    let suppressed = if options.limit > 0 && hits.len() > options.limit {
+        let suppressed = hits.len() - options.limit;
+        hits.truncate(options.limit);
+        suppressed
+    } else {
+        0
+    };
+    ImpactResult { hits, suppressed }
+}
+
+/// Compatibility traversal retaining the original all-edge-kinds semantics.
+pub fn impact(graph: &ResolvedGraph, start_id: &str, max_depth: usize) -> Vec<ImpactHit> {
+    let options = ImpactOptions {
+        max_depth,
+        kinds: vec![
+            SourceEdgeKind::Contains,
+            SourceEdgeKind::Imports,
+            SourceEdgeKind::Calls,
+            SourceEdgeKind::References,
+            SourceEdgeKind::Implements,
+            SourceEdgeKind::Extends,
+        ],
+        ..ImpactOptions::default()
+    };
+    impact_with(graph, start_id, &options).hits
 }
 
 #[cfg(test)]

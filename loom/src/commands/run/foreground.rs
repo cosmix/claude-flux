@@ -37,7 +37,7 @@ pub fn execute(
     super::plan_inputs::mark_plan_in_progress(&work_dir)?;
 
     // Publish against the committed active filename and the revision stages inherit.
-    super::checks::advisory_source_graph_preflight(&repo_root, &work_dir, false);
+    super::checks::advisory_source_graph_preflight(&repo_root, &work_dir);
 
     crate::utils::print_logo_header("Run (foreground)");
 

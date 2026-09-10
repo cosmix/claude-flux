@@ -181,3 +181,14 @@ fn a_stored_revision_shorter_than_eight_characters_does_not_panic() {
         "a revision shorter than 8 chars must render whole, not panic: {detail}"
     );
 }
+
+#[test]
+fn refresh_fingerprints_the_tree_once_per_call() {
+    let (temp, knowledge_root, _first) = init_repo_with_knowledge_root();
+    let store = ContextStore::with_root(temp.path().join("cache"));
+    take_fingerprint_pass_count();
+
+    refresh(&store, &knowledge_root, true).unwrap();
+
+    assert_eq!(take_fingerprint_pass_count(), 1);
+}

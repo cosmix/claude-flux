@@ -234,6 +234,14 @@ fn append_topic_tables(out: &mut String, topics: &[TopicEntry]) {
 pub fn write_index(root: &Path) -> Result<()> {
     let content = generate_index(root)?;
     let path = root.join(INDEX_FILENAME);
+    match fs::read(&path) {
+        Ok(existing) if existing == content.as_bytes() => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("Failed to read {}", path.display()));
+        }
+    }
     crate::fs::locking::locked_write(&path, &content)
         .with_context(|| format!("Failed to write {}", path.display()))
 }
@@ -378,3 +386,7 @@ mod tests {
         assert!(!content.contains("Tier 2"));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/index.rs"]
+mod tests_index_write;

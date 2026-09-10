@@ -4,6 +4,7 @@
 //! Rule 17), matching how `tests_capsule.rs` and `tests_launch.rs` are split
 //! out of the same directory.
 
+use super::wrapper::create_session_wrapper_script;
 use super::*;
 use tempfile::TempDir;
 
@@ -18,6 +19,23 @@ fn wrapper_script_for(kind: SessionType) -> String {
         None,
         kind,
         100_000,
+    )
+    .unwrap();
+    std::fs::read_to_string(path).unwrap()
+}
+
+fn wrapper_script_for_with_rustc_wrapper(kind: SessionType, rustc_wrapper_allowed: bool) -> String {
+    let work_dir = TempDir::new().unwrap();
+    let path = create_session_wrapper_script(
+        work_dir.path(),
+        "loom-test-session",
+        "feature",
+        "session1",
+        "claude 'prompt'",
+        None,
+        kind,
+        100_000,
+        rustc_wrapper_allowed,
     )
     .unwrap();
     std::fs::read_to_string(path).unwrap()
@@ -102,9 +120,13 @@ impl Drop for EnvVarGuard {
     }
 }
 
+/// Writes an executable fake `sccache` under `dir`, so the resolver in
+/// `build_cache::find_sccache_path` (via `LOOM_SCCACHE`) has a real file to
+/// find. Its body never runs: the gate that decides `RUSTC_WRAPPER` no
+/// longer probes the candidate, it only resolves a path.
 fn fake_sccache_executable(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("sccache");
-    std::fs::write(&path, "#!/bin/sh\n").unwrap();
+    std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -115,17 +137,27 @@ fn fake_sccache_executable(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
+/// Pins `LOOM_SCCACHE` at `fake` and strips the two env vars the
+/// forwarding logic itself reads, so a test observes only what the pin
+/// controls. Returns the guards; dropping them restores the prior state.
+fn pin_sccache(fake: &std::path::Path) -> (EnvVarGuard, EnvVarGuard, EnvVarGuard) {
+    (
+        EnvVarGuard::unset("SCCACHE_DIR"),
+        EnvVarGuard::unset("SCCACHE_CACHE_SIZE"),
+        EnvVarGuard::set("LOOM_SCCACHE", fake.to_str().unwrap()),
+    )
+}
+
 #[test]
 #[serial_test::serial]
-fn wrapper_script_exports_rustc_wrapper_when_sccache_is_pinned() {
+fn wrapper_script_exports_rustc_wrapper_when_allowed_and_resolvable() {
     let sccache_dir = TempDir::new().unwrap();
     let fake = fake_sccache_executable(sccache_dir.path());
     let _rustc_wrapper = EnvVarGuard::unset("RUSTC_WRAPPER");
-    let _sccache_dir = EnvVarGuard::unset("SCCACHE_DIR");
-    let _sccache_cache_size = EnvVarGuard::unset("SCCACHE_CACHE_SIZE");
-    let _pin = EnvVarGuard::set("LOOM_SCCACHE", fake.to_str().unwrap());
+    let _guards = pin_sccache(&fake);
 
-    let script = wrapper_script_for(SessionType::Stage);
+    let script = wrapper_script_for_with_rustc_wrapper(SessionType::Stage, true);
+    assert_eq!(script.matches("RUSTC_WRAPPER=").count(), 1, "{script}");
     assert!(
         script.contains(&format!("RUSTC_WRAPPER={}", fake.display())),
         "{script}"
@@ -134,15 +166,57 @@ fn wrapper_script_exports_rustc_wrapper_when_sccache_is_pinned() {
 
 #[test]
 #[serial_test::serial]
-fn wrapper_script_omits_rustc_wrapper_when_sccache_is_disabled() {
+fn wrapper_script_omits_rustc_wrapper_when_not_allowed_even_if_resolvable() {
+    let sccache_dir = TempDir::new().unwrap();
+    let fake = fake_sccache_executable(sccache_dir.path());
+    let _rustc_wrapper = EnvVarGuard::unset("RUSTC_WRAPPER");
+    let _guards = pin_sccache(&fake);
+
+    let script = wrapper_script_for_with_rustc_wrapper(SessionType::Stage, false);
+    assert!(!script.contains("RUSTC_WRAPPER"), "{script}");
+}
+
+#[test]
+#[serial_test::serial]
+fn wrapper_script_omits_an_operators_rustc_wrapper_when_not_allowed() {
+    // No resolvable sccache at all — the only candidate is the operator's own
+    // `RUSTC_WRAPPER`, forwarded from the (unsandboxed) daemon's environment.
+    // This is the leak that dropping RUSTC_WRAPPER from ENV_ALLOWLIST closes:
+    // it must not surface even though `sccache_env`'s fallback would read it.
+    let _sccache_dir = EnvVarGuard::unset("SCCACHE_DIR");
+    let _sccache_cache_size = EnvVarGuard::unset("SCCACHE_CACHE_SIZE");
+    let _disabled = EnvVarGuard::set("LOOM_SCCACHE", "0");
+    let _operator_value = EnvVarGuard::set("RUSTC_WRAPPER", "/usr/bin/operator-sccache");
+
+    let script = wrapper_script_for_with_rustc_wrapper(SessionType::Stage, false);
+    assert!(!script.contains("RUSTC_WRAPPER"), "{script}");
+}
+
+#[test]
+#[serial_test::serial]
+fn wrapper_script_escapes_a_sccache_path_containing_a_space() {
+    let sccache_dir = TempDir::new().unwrap();
+    let nested = sccache_dir.path().join("has space");
+    std::fs::create_dir(&nested).unwrap();
+    let fake = fake_sccache_executable(&nested);
+    let _rustc_wrapper = EnvVarGuard::unset("RUSTC_WRAPPER");
+    let _guards = pin_sccache(&fake);
+
+    let script = wrapper_script_for_with_rustc_wrapper(SessionType::Stage, true);
+    let expected = escape(format!("RUSTC_WRAPPER={}", fake.display()).into());
+    assert!(script.contains(&expected.to_string()), "{script}");
+}
+
+#[test]
+#[serial_test::serial]
+fn wrapper_script_omits_rustc_wrapper_when_nothing_resolves() {
     let _rustc_wrapper = EnvVarGuard::unset("RUSTC_WRAPPER");
     let _sccache_dir = EnvVarGuard::unset("SCCACHE_DIR");
     let _sccache_cache_size = EnvVarGuard::unset("SCCACHE_CACHE_SIZE");
     let _pin = EnvVarGuard::set("LOOM_SCCACHE", "0");
 
-    let script = wrapper_script_for(SessionType::Stage);
-    // `RUSTC_WRAPPER` (bare, no `=`) still names the var in the
-    // host-forwarding allowlist loop — only the explicit `NAME=value`
-    // assignment must be absent.
-    assert!(!script.contains("RUSTC_WRAPPER="), "{script}");
+    let script = wrapper_script_for_with_rustc_wrapper(SessionType::Stage, true);
+    // No resolved path and no operator override: the script has no
+    // `RUSTC_WRAPPER` anywhere, matching the no-sccache shape.
+    assert!(!script.contains("RUSTC_WRAPPER"), "{script}");
 }
