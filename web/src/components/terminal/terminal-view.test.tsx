@@ -267,13 +267,15 @@ describe("terminal view", () => {
     await waitFor(() => expect(router.state.location.search).toBe(`?stage=${stage.id}`));
   });
 
-  it("takes control by remounting the emulator in control mode", async () => {
+  it("takes control when the terminal is clicked in view mode", async () => {
     const timers = fakeTimers();
     const factory = fakeFactory();
     renderView(terminalStage(), factory.factory, timers.deps);
 
-    await waitForMount(factory);
-    fireEvent.click(screen.getByRole("radio", { name: "Take control" }));
+    const first = await waitForMount(factory);
+    act(() => FakeSocket.instances[0].open());
+    await waitFor(() => expect(first.calls.readOnly).toEqual([true]));
+    fireEvent.click(well());
     await waitFor(() => expect(factory.doubles).toHaveLength(2));
     act(() => FakeSocket.instances[1].open());
 

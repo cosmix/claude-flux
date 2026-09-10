@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { useAtomValue } from "jotai/react";
-import { ExternalLinkIcon } from "lucide-react";
+import { EyeIcon, ExternalLinkIcon, KeyboardIcon, MousePointer2Icon } from "lucide-react";
 import {
   createContext,
   useContext,
@@ -89,6 +89,9 @@ export function TerminalView({ stage, frame, factory, deps }: TerminalViewProps)
       event.stopPropagation();
     }
   };
+  const takeControl = () => {
+    if (mode === "view" && phase === "live") setMode("control");
+  };
   const switchable = phase === "live" || phase === "connecting";
 
   return (
@@ -107,9 +110,21 @@ export function TerminalView({ stage, frame, factory, deps }: TerminalViewProps)
         onMode={setMode}
       />
       <div className="terminal-well-wrap">
-        <div className="terminal-well" data-mode={mode} data-phase={phase} onKeyDown={onKeyDown}>
+        <div
+          className="terminal-well"
+          data-mode={mode}
+          data-phase={phase}
+          onClick={takeControl}
+          onKeyDown={onKeyDown}
+        >
           <div className="terminal-bar" aria-hidden="true" />
           <div ref={hostRef} className="terminal-host" aria-label="Agent terminal" />
+          {mode === "view" && phase === "live" && (
+            <span className="terminal-takeover-cue" aria-hidden="true">
+              <MousePointer2Icon />
+              click to take control
+            </span>
+          )}
           <Notice state={state} alive={stage.session_alive} terminals={terminals} retry={retry} />
         </div>
       </div>
@@ -186,7 +201,7 @@ function ModeSwitch({
   onMode: (mode: TerminalMode) => void;
 }) {
   return (
-    <div className="terminal-seg" role="radiogroup" aria-label="Terminal mode">
+    <div className="terminal-seg" data-mode={mode} role="radiogroup" aria-label="Terminal mode">
       <button
         type="button"
         role="radio"
@@ -194,7 +209,8 @@ function ModeSwitch({
         disabled={!switchable}
         onClick={() => onMode("view")}
       >
-        View
+        <EyeIcon aria-hidden="true" />
+        <span>View</span>
       </button>
       <Tooltip>
         <TooltipTrigger asChild>
@@ -206,7 +222,8 @@ function ModeSwitch({
             disabled={!switchable}
             onClick={() => onMode("control")}
           >
-            Take control
+            <KeyboardIcon aria-hidden="true" />
+            <span>Take control</span>
           </button>
         </TooltipTrigger>
         <TooltipContent>Keystrokes reach a running autonomous agent</TooltipContent>
