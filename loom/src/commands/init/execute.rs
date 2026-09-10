@@ -190,7 +190,7 @@ pub fn execute(
     // nowhere else: `loom init` is commonly the first command run in a dirty
     // checkout, where a base publish is always refused, and publishing nothing
     // would be honest but useless.
-    crate::commands::run::checks::advisory_source_graph_preflight(&repo_root, &work_dir, true);
+    crate::commands::run::checks::advisory_source_graph_preflight(&repo_root, &work_dir);
 
     // Success - disarm the guard to prevent cleanup
     guard.disarm();

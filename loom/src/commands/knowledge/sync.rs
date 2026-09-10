@@ -21,9 +21,7 @@
 //! already current.
 
 use super::context::resolve;
-use crate::context::refresh::{
-    refresh, RefreshOutcome, SemanticLayer, SemanticOutcome, SOURCE_GRAPH_PREFIX,
-};
+use crate::context::refresh::{refresh, RefreshOutcome, SemanticLayer, SemanticOutcome};
 use crate::fs::knowledge::{KnowledgeDir, KnowledgeLayout, INDEX_FILENAME};
 use anyhow::{Context, Result};
 use colored::Colorize;
@@ -57,13 +55,6 @@ pub fn sync(structural_only: bool, json: bool) -> Result<()> {
     }
     let outcome = refresh(&store, &knowledge_root, structural_only)
         .with_context(|| catalog_failure_context(upgraded))?;
-
-    // Stdout carries the machine-readable result in --json mode, so a refused
-    // base publish goes to stderr in BOTH modes: a scripted caller that reads
-    // only stdout still learns the tree was dirty and it got an overlay.
-    if let SemanticLayer::LocalOverlay { refusal, .. } = &outcome.semantic.layer {
-        eprintln!("{SOURCE_GRAPH_PREFIX}base not published - {refusal}");
-    }
 
     if json {
         print_json(&outcome, upgraded)
@@ -166,27 +157,33 @@ fn semantic_json(semantic: &SemanticOutcome) -> serde_json::Value {
             None,
             semantic.freshness.detail.as_deref(),
         ),
-        SemanticLayer::LocalOverlay {
+        SemanticLayer::BaseAndLocalOverlay {
+            revision,
             plan,
             stage,
-            refusal,
         } => (
-            "local-overlay",
-            Some(semantic.freshness.revision.as_str()),
+            "base-and-local-overlay",
+            Some(revision.as_str()),
             Some(plan.as_str()),
             Some(stage.as_str()),
-            Some(refusal.as_str()),
+            semantic.freshness.detail.as_deref(),
         ),
         SemanticLayer::Skipped { reason } => ("skipped", None, None, None, Some(reason.as_str())),
     };
     serde_json::json!({
+        "action": semantic.action().map(|action| action.as_str()).unwrap_or("skipped"),
         "layer": layer,
         "revision": revision,
         "plan": plan,
         "stage": stage,
-        "files": semantic.files_extracted,
+        "files": semantic.counters.files_enumerated,
+        "parsed": semantic.counters.files_parsed,
+        "reused": semantic.counters.files_reused,
+        "deleted": semantic.counters.files_deleted,
+        "elapsed_ms": semantic.elapsed_ms(),
         "nodes": semantic.nodes,
         "edges": semantic.edges,
+        "counters": &semantic.counters,
         "stale": semantic.freshness.stale,
         "detail": detail,
     })
@@ -218,26 +215,7 @@ fn print_human(outcome: &RefreshOutcome, upgraded: bool) {
 /// sync` drives BOTH layers, and printing only the catalog is what made the
 /// command look like it did nothing.
 fn print_semantic(semantic: &SemanticOutcome) {
-    match &semantic.layer {
-        SemanticLayer::Base { revision } => println!(
-            "{SOURCE_GRAPH_PREFIX}published base for {} ({} files, {} nodes)",
-            short_revision(revision),
-            semantic.files_extracted,
-            semantic.nodes
-        ),
-        SemanticLayer::LocalOverlay { plan, stage, .. } => println!(
-            "{SOURCE_GRAPH_PREFIX}working-tree overlay {plan}/{stage} ({} files, {} nodes)",
-            semantic.files_extracted, semantic.nodes
-        ),
-        SemanticLayer::Skipped { reason } => {
-            println!("{SOURCE_GRAPH_PREFIX}skipped ({reason})")
-        }
-    }
-}
-
-/// First 8 characters of a revision, for display only.
-fn short_revision(revision: &str) -> &str {
-    revision.get(..8).unwrap_or(revision)
+    println!("{}", semantic.describe());
 }
 
 #[cfg(test)]

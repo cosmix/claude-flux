@@ -198,6 +198,13 @@ fn sync_does_not_fail_when_the_index_write_fails() {
         .initialize()
         .expect("Failed to initialize knowledge");
     let knowledge_root = test_dir.join("doc/loom/knowledge");
+    let changed_topic = knowledge_root.join("architecture/index-write-must-run.md");
+    fs::create_dir_all(changed_topic.parent().unwrap()).unwrap();
+    fs::write(
+        changed_topic,
+        "# Changed\n\n> Makes the generated index differ.\n",
+    )
+    .unwrap();
 
     // Read + execute only, no write: `write_index`'s crash-atomic temp-file
     // create needs write permission on the PARENT directory to succeed, so
@@ -220,6 +227,19 @@ fn sync_does_not_fail_when_the_index_write_fails() {
     result.expect(
         "an INDEX.md write failure on an already-hierarchical directory must not fail sync",
     );
+}
+
+#[test]
+fn semantic_json_includes_snapshot_action_counters_and_elapsed_time() {
+    let semantic = SemanticOutcome::skipped(Default::default(), "--structural-only");
+
+    let json = semantic_json(&semantic);
+
+    assert_eq!(json["action"], "skipped");
+    assert_eq!(json["parsed"], 0);
+    assert_eq!(json["reused"], 0);
+    assert_eq!(json["deleted"], 0);
+    assert_eq!(json["elapsed_ms"], 0);
 }
 
 /// A context-catalog write failure (BUG 4, `loom-bugs.txt`) must still fail
