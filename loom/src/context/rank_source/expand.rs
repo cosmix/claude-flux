@@ -26,15 +26,29 @@ pub(super) const MIN_NEIGHBOR_EDGE_CONFIDENCE: f32 = 0.5;
 /// produces, so truncating it still keeps the strongest neighbours.
 pub(super) const MAX_EXAMINED_NEIGHBORS_PER_SEED: usize = 32;
 
-/// Ceiling on a neighbour's score, strictly below the weakest exact rung
-/// ([`BOOST_EXACT_SYMBOL`]) so a node that merely neighbours a seed can never
-/// outrank a node the query matched directly. Without this, a neighbour of an
+/// Ceiling on a neighbour's score: at most the weakest a genuine exact rung
+/// can ever score, so a node that merely neighbours a seed can never outrank
+/// a node the query matched directly.
+///
+/// [`BOOST_EXACT_SYMBOL`] (80.0) is not itself that floor. `score_node`
+/// (`rank_source.rs:281`) applies `config.test_path_factor` to a node's WHOLE
+/// score as its last step, so a genuine `ExactSymbol` hit in a test file
+/// scores as low as `BOOST_EXACT_SYMBOL * config.test_path_factor` (32.0 at
+/// the 0.4 default) — well below 80. A flat cap near 80 let a neighbour of an
 /// `ExplicitId` or `ExactPath` seed (`BOOST_EXPLICIT_ID` = 1000,
-/// `BOOST_EXACT_PATH` = 100) scores `seed_score * NEIGHBOR_SCORE_FACTOR`
-/// uncapped, which clears every exact rung.
-const MAX_NEIGHBOR_SCORE: f32 = BOOST_EXACT_SYMBOL - 1.0;
+/// `BOOST_EXACT_PATH` = 100) outrank exactly that kind of direct hit.
+/// Deriving the cap from the same factor keeps the invariant true regardless
+/// of which file the direct match lives in.
+fn max_neighbor_score(config: &RetrievalConfig) -> f32 {
+    BOOST_EXACT_SYMBOL * config.test_path_factor
+}
 
 type Adjacency<'a> = BTreeMap<&'a str, Vec<&'a SourceEdge>>;
+
+/// Each seed's score paired with the neighbours it reached, in the order the
+/// accept walk examines them. Named because the pair of that list and the id
+/// set it covers is `resolve_seed_neighbours`'s whole output.
+type SeedNeighbours<'a> = Vec<(f32, Vec<(&'a str, f32)>)>;
 
 /// Mutable state threaded through one expansion pass: the growing candidate
 /// list, the id set it already carries, how many neighbours have been
@@ -69,26 +83,63 @@ pub(super) fn expand_from_seeds(
         .iter()
         .map(|candidate| candidate.id.as_str().to_string())
         .collect();
-    let nodes_by_id: BTreeMap<&str, &SourceNode> =
-        graph.nodes().map(|node| (node.id.as_str(), node)).collect();
-    let (forward, reverse) = build_adjacencies(graph);
+
+    let seed_ids: BTreeSet<&str> = seeds.iter().map(|(id, _)| id.as_str()).collect();
+    let (forward, reverse) = build_seed_adjacencies(graph, &seed_ids);
+    let (per_seed, wanted_ids) = resolve_seed_neighbours(&seeds, &forward, &reverse);
+    let nodes_by_id = index_wanted_nodes(graph, &wanted_ids);
+
     let mut state = Expansion {
         ranked,
         existing,
         expanded: 0,
         nodes_by_id,
     };
-    for (seed_id, seed_score) in seeds {
+    for (seed_score, neighbours) in per_seed {
         if state.expanded == MAX_EXPANDED {
             break;
         }
-        let neighbours: Vec<(&str, f32)> = neighbours_for_seed(&seed_id, &forward, &reverse)
-            .into_iter()
-            .take(MAX_EXAMINED_NEIGHBORS_PER_SEED)
-            .collect();
         append_neighbours(neighbours, seed_score, config, &mut state);
     }
     state.ranked
+}
+
+/// Resolve every seed's neighbour ids before touching `graph.nodes()`, so the
+/// id index `index_wanted_nodes` builds only has to cover ids the traversal
+/// can actually reach — at most `MAX_EXPANSION_SEEDS *
+/// MAX_EXAMINED_NEIGHBORS_PER_SEED` — instead of every node in the graph.
+/// Split out of `expand_from_seeds` (expand.rs:62) to keep it under the
+/// function line limit.
+fn resolve_seed_neighbours<'a>(
+    seeds: &[(String, f32)],
+    forward: &Adjacency<'a>,
+    reverse: &Adjacency<'a>,
+) -> (SeedNeighbours<'a>, BTreeSet<&'a str>) {
+    let mut per_seed: SeedNeighbours = Vec::with_capacity(seeds.len());
+    let mut wanted_ids: BTreeSet<&str> = BTreeSet::new();
+    for (seed_id, seed_score) in seeds {
+        let neighbours: Vec<(&str, f32)> = neighbours_for_seed(seed_id, forward, reverse)
+            .into_iter()
+            .take(MAX_EXAMINED_NEIGHBORS_PER_SEED)
+            .collect();
+        wanted_ids.extend(neighbours.iter().map(|(id, _)| *id));
+        per_seed.push((*seed_score, neighbours));
+    }
+    (per_seed, wanted_ids)
+}
+
+/// Index just the nodes `resolve_seed_neighbours` found reachable, rather
+/// than every node the graph holds. Split out of `expand_from_seeds`
+/// (expand.rs:62) to keep it under the function line limit.
+fn index_wanted_nodes<'a>(
+    graph: &'a ResolvedGraph,
+    wanted_ids: &BTreeSet<&str>,
+) -> BTreeMap<&'a str, &'a SourceNode> {
+    graph
+        .nodes()
+        .filter(|node| wanted_ids.contains(node.id.as_str()))
+        .map(|node| (node.id.as_str(), node))
+        .collect()
 }
 
 fn has_seed_reason(reasons: &[SelectionReason]) -> bool {
@@ -103,12 +154,27 @@ fn has_seed_reason(reasons: &[SelectionReason]) -> bool {
     })
 }
 
-fn build_adjacencies(graph: &ResolvedGraph) -> (Adjacency<'_>, Adjacency<'_>) {
-    let mut forward: Adjacency<'_> = BTreeMap::new();
-    let mut reverse: Adjacency<'_> = BTreeMap::new();
+/// Forward/reverse adjacency restricted to edges that touch a seed.
+///
+/// A retrieval pass has at most [`MAX_EXPANSION_SEEDS`] seeds, so scanning
+/// every node and every edge in the graph to answer at most 5 lookups wastes
+/// work on the prompt-hook path the lexical cache exists to keep cheap. One
+/// pass over `graph.edges()`, keeping only the edges whose `from` or `to` is a
+/// seed, does the same job without a `Vec` entry for every node the graph
+/// actually has.
+fn build_seed_adjacencies<'a>(
+    graph: &'a ResolvedGraph,
+    seed_ids: &BTreeSet<&str>,
+) -> (Adjacency<'a>, Adjacency<'a>) {
+    let mut forward: Adjacency<'a> = BTreeMap::new();
+    let mut reverse: Adjacency<'a> = BTreeMap::new();
     for edge in graph.edges() {
-        forward.entry(edge.from.as_str()).or_default().push(edge);
-        reverse.entry(edge.to.as_str()).or_default().push(edge);
+        if seed_ids.contains(edge.from.as_str()) {
+            forward.entry(edge.from.as_str()).or_default().push(edge);
+        }
+        if seed_ids.contains(edge.to.as_str()) {
+            reverse.entry(edge.to.as_str()).or_default().push(edge);
+        }
     }
     (forward, reverse)
 }
@@ -172,7 +238,7 @@ fn append_neighbours(
         }
         let score = apply_test_path_factor(
             node,
-            (seed_score * NEIGHBOR_SCORE_FACTOR).min(MAX_NEIGHBOR_SCORE),
+            (seed_score * NEIGHBOR_SCORE_FACTOR).min(max_neighbor_score(config)),
             config,
         );
         state.ranked.push(RankedCandidate {
