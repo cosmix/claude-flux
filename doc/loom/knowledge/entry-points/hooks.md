@@ -4,13 +4,18 @@
 
 ## Hooks
 
-- `hooks/*.sh` - Shell scripts (commit-guard.sh, commit-filter.sh, etc.)
-- `fs/permissions/hooks.rs` - install_loom_hooks()
+- `hooks/*.sh` - the hook scripts (commit-guard.sh, commit-filter.sh, etc.); `skill-trigger.sh` is Python despite its extension
+- `fs/permissions/hooks.rs` - `install_loom_hooks()`, `configure_loom_hooks()`; `loom_hooks_config_for_dir` builds the global registration table from `fs/permissions/hooks/config.rs`
 - `fs/permissions/codex_hooks.rs` - installs assets to `~/.codex/hooks/loom/` and merges `~/.codex/hooks.json`
-- `fs/permissions/settings.rs` - ensure_loom_permissions(), create_worktree_settings()
-- `fs/permissions/constants.rs` - Embedded hook scripts via include_str!()
-- `orchestrator/hooks/config.rs` - HookEvent enum
-- `orchestrator/hooks/generator.rs` - setup_hooks_for_worktree()
+- `fs/permissions/settings.rs` - `ensure_loom_permissions()`, `scrub_session_identity_env()`; `create_worktree_settings()` lives in `git/worktree/settings.rs`
+- `fs/permissions/constants.rs` - embedded hook scripts via `include_str!()` (`LOOM_HOOKS`)
+- `hooks/config.rs` - `HookEvent` enum and `HooksConfig`; the session-hook module is the top-level `loom/src/hooks/`, not the `orchestrator/hooks/` an earlier version of this list named
+- `hooks/generator.rs` - `setup_hooks_for_worktree()`, `generate_hooks_settings()`, `find_hooks_dir()`
+- `commands/hook/` - the `loom hook` delegates the shell hooks call: `user_prompt.rs` (`loom hook user-prompt`, behind `user-prompt-context.sh`), `pre_compact.rs`, `reconcile_graph.rs`, `context_ceilings.rs`, and `project_types.rs` (behind `skill-trigger.sh`)
+- `commands/hook/target.rs` - `HookTarget`, the one stage-or-checkout scope resolution the user-prompt, pre-compact and reconcile-graph delegates share
+- `telemetry/mod.rs` - `TelemetryEvent`; the prompt hook appends `prompt-brief` and `prompt-abstained` events, which `loom knowledge telemetry` summarizes
+
+Skill-trigger scoring, the prompt-hook wrapper and `HookTarget` are described in [Hook System](../architecture/hook-system.md).
 
 ## Shared Hook Utility
 
@@ -18,14 +23,14 @@
 
 ## Hook System (loom/src/hooks/)
 
-- `hooks/mod.rs` - Module root; re-exports `HookEvent`, `HooksConfig`, `generate_hooks_settings`, `setup_hooks_for_worktree`, `find_hooks_dir`
+- `hooks/mod.rs` - Module root; re-exports `HookEvent`, `HooksConfig`, `generate_hooks_settings`, `setup_hooks_for_worktree`, `find_hooks_dir`, and the `events` types
 - `hooks/config.rs` - `HookEvent` enum (7 variants: `SessionStart`, `PostToolUse`, `PreCompact`, `SessionEnd`, `Stop`, `SubagentStart`, `SubagentStop`) + `HooksConfig` struct + `to_settings_hooks()`
-- `hooks/generator.rs` - `generate_hooks_settings()` (merge session hooks into settings.json), `setup_hooks_for_worktree()`, `find_hooks_dir()`
+- `hooks/generator.rs` - `generate_hooks_settings()` (merge session hooks into settings), `setup_hooks_for_worktree()`, `find_hooks_dir()`
 - `hooks/events.rs` - `log_hook_event()`, `read_recent_events()`, event log CRUD
-- `hooks/validators/` - Validator scripts for PreToolUse hooks (commit-filter, git-add-guard, worktree-isolation, prefer-modern-tools)
-- `hooks/codex-apply-patch.sh` - translates Codex `apply_patch` targets into canonical file-guard payloads and records successful edits
+- `hooks/validators/` - Rust implementations of the rules `worktree-isolation.sh` enforces (`bash.rs`, `file_path.rs`), used for tests, pre-validation and detailed error messages; they are not hook scripts
+- `hooks/codex-apply-patch.sh` - (repository `hooks/`, not `loom/src/hooks/`) translates Codex `apply_patch` targets into canonical file-guard payloads and records successful edits
 
-**7 emitted session-hook events** (`HooksConfig::to_settings_hooks()`, derives the map by iterating `HookEvent::all()` — `config.rs:183` — rather than seven hand-written blocks, so the list and the map can no longer diverge):
+**7 emitted session-hook events** (`HooksConfig::to_settings_hooks()`, derives the map by iterating `HookEvent::all()` rather than seven hand-written blocks, so the list and the map can no longer diverge):
 
 | Event           | Script                   | Purpose                                                                  |
 | --------------- | ------------------------ | ------------------------------------------------------------------------- |
@@ -39,7 +44,7 @@
 
 There is no `PreferModernTools` `HookEvent` variant any more — it was deleted. `prefer-modern-tools.sh` still runs, but through a separate path entirely: it is registered as a **global** `PreToolUse:Bash` hook in `fs/permissions/hooks/config.rs`, alongside `commit-filter.sh`/`git-add-guard.sh`/etc., never through `HookEvent`/`to_settings_hooks()`.
 
-**Settings placement:** Session hooks → `<worktree>/.claude/settings.local.json`. Global hooks (commit-filter, git-add-guard, worktree-isolation) configured via `fs/permissions.rs:configure_loom_hooks()`.
+**Settings placement:** Session hooks → `<worktree>/.claude/settings.local.json` (`hooks/generator.rs`). Global hooks (commit-filter, git-add-guard, worktree-isolation and the rest) are configured by `fs/permissions/hooks.rs::configure_loom_hooks()` from the table in `fs/permissions/hooks/config.rs`; an earlier version of this line named a `fs/permissions.rs` module, which is now the `fs/permissions/` directory.
 
 **Env vars injected via settings env block:**
 
@@ -47,7 +52,7 @@ There is no `PreferModernTools` `HookEvent` variant any more — it was deleted.
 
 **Per-session identity (LOOM_MAIN_AGENT_PID, LOOM_STAGE_ID, LOOM_SESSION_ID):** Explicitly REMOVED from all settings env blocks (`scrub_session_identity_env` in `fs/permissions/settings.rs`). Set ONLY by the wrapper script exports so they always reflect the running session — settings env overrides process env, so persisted values from an earlier session would shadow the fresh exports (see mistakes.md 2026-07-22). Because Claude Code applies the MAIN repo's settings env to worktree sessions, the main-repo files are also healed in the run path: `scrub_main_repo_settings_identity` at `loom run` startup and inside the `sync.rs` fold-back (see mistakes.md 2026-07-23).
 
-**Hooks discovery:** `find_hooks_dir()` checks `$LOOM_HOOKS_DIR` env first, then `~/.claude/hooks/loom/`. Returns `None` if not installed.
+**Hooks discovery:** `find_hooks_dir()` checks `$LOOM_HOOKS_DIR` first (used when that path exists), then `~/.claude/hooks/loom/`. Returns `None` if neither exists.
 
 **Permissions:** Absolute paths use `//` prefix in allow entries (e.g., `Read(//home/user/.work/signals/**)`). Single `/` means project-relative — wrong for `.work/` which resolves outside the worktree due to symlink.
 
@@ -97,18 +102,13 @@ Public helpers hooks may call. Everything prefixed `_loom_*`, plus
 
 ### Registration Sites for a New Hook
 
-A hook that Claude Code itself invokes (a `PreToolUse` guard, or a session-lifecycle `HookEvent`) needs FOUR integration surfaces; the installer is not one of them. `install.sh` carries no hook inventory any more: it delegates to `loom install-assets` (`install.sh:349-354`), which installs every hook embedded through `LOOM_HOOKS`, and `dev-install.sh` builds the binary and delegates to `install.sh`. (This section used to list two `all_hooks` arrays in `install.sh` as a fifth surface; those arrays are gone.) A SOURCED LIBRARY (like `hooks/_common.sh`, `hooks/_read_discipline.sh`, `hooks/_read_ledger.sh` — embedded and installed, but never invoked directly by the harness) needs every applicable surface below except a trigger:
+A hook that Claude Code itself invokes (a `PreToolUse` guard, a global `UserPromptSubmit` or `SessionStart` hook, or a session-lifecycle `HookEvent`) needs FOUR integration surfaces; the installer is not one of them. `install.sh` carries no hook inventory any more: it delegates to `loom install-assets`, which installs every hook embedded through `LOOM_HOOKS`, and `dev-install.sh` builds the binary and delegates to `install.sh`. (This section used to list two `all_hooks` arrays in `install.sh` as a fifth surface; those arrays are gone.) A SOURCED LIBRARY (like `hooks/_common.sh`, `hooks/_read_discipline.sh`, `hooks/_read_ledger.sh` — embedded and installed, but never invoked directly by the harness) needs every applicable surface below except a trigger:
 
 1. The executable or sourced file under `hooks/`.
 2. An `include_str!` const plus a `LOOM_HOOKS` entry in `fs/permissions/constants.rs`.
-3. Its trigger: for a `PreToolUse` guard, an entry in the config builder `fs/permissions/hooks.rs::loom_hooks_config_for_dir`; for a session-lifecycle hook, a `HookEvent` variant in `hooks/config.rs` (`to_settings_hooks()` derives the emitted map from `HookEvent::all()`, so adding the variant is enough — no hand-written block to update). A sourced library has neither — it carries no independent trigger.
-4. Tests: `fs/permissions/tests/hooks_tests.rs::test_hooks_config_structure` asserts the exact
-   `PreToolUse` array length and per-index order (currently 39 entries) — or, for a session hook,
-   `fs/permissions/tests/hooks_tests.rs::test_hook_event_surface_has_seven_events` / `hooks/tests.rs`'s
-   `all().len()==7` — plus a `hooks/tests/` case registered in `hooks/tests/run-all.sh`, and the
-   `setup_hook()` of every integration test harness that sources the new file (e.g.
-   `hooks_read_guard.rs`, `hooks_poll_guard.rs`) if it is a sourced library.
+3. Its trigger: for a global hook, an entry in the table `fs/permissions/hooks/config.rs` builds (reached through `fs/permissions/hooks.rs::loom_hooks_config_for_dir`); for a session-lifecycle hook, a `HookEvent` variant in `hooks/config.rs` (`to_settings_hooks()` derives the emitted map from `HookEvent::all()`, so adding the variant is enough — no hand-written block to update). A hook Codex should also run needs its entry in `fs/permissions/codex_hooks.rs`. A sourced library has no trigger.
+4. Tests: `fs/permissions/tests/hooks_tests.rs::test_hooks_config_structure` asserts the exact `PreToolUse` array length and per-index order (currently 47 entries) — or, for a session hook, `fs/permissions/tests/hooks_tests.rs::test_hook_event_surface_has_seven_events`, while `hooks/tests.rs` asserts the emitted map has one entry per `HookEvent::all()` — plus a `hooks/tests/` case registered in `hooks/tests/run-all.sh`, and the `setup_hook()` of every integration test harness that sources the new file (e.g. `hooks_read_guard.rs`, `hooks_poll_guard.rs`) if it is a sourced library.
 
-`settings_checks.rs` renders `LOOM_HOOKS.len()` dynamically (`commands/repair/settings_checks.rs:79-80`), so it needs no edit when a hook is added — only the count assertions above do.
+`settings_checks.rs` renders `LOOM_HOOKS.len()` dynamically (`commands/repair/settings_checks.rs`), so it needs no edit when a hook is added — only the count assertions above do.
 
-**Worktree detection gotcha:** `_common.sh:loom_current_worktree()` checks TWO conditions — current directory contains `.worktrees/` AND `LOOM_WORKTREE_PATH` points into `.worktrees/` with the directory existing. LOOM_STAGE_ID alone is insufficient (it leaks into plain sessions from prior runs).
+**Worktree detection gotcha:** `_common.sh:loom_current_worktree()` decides membership by LOCATION, never by `LOOM_STAGE_ID`, which leaks into plain sessions from prior runs. A session counts as inside a worktree when EITHER the current directory is inside `.worktrees/<stage>/`, OR `LOOM_WORKTREE_PATH` points into `.worktrees/` and that directory still exists on disk (the on-disk check rejects a stale, leaked value). An earlier version of this note said both conditions were required.

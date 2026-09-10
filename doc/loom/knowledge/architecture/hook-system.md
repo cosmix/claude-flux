@@ -111,27 +111,40 @@ Set by wrapper script (pid_tracking.rs:463-479) before `exec claude`:
 
 ### Hook Embedding (constants.rs)
 
-`LOOM_HOOKS` (`fs/permissions/constants.rs`) holds **32 entries**, each embedded via `include_str!()` at compile time. `install_loom_hooks()` writes them to `~/.claude/hooks/loom/` with mode 0o755. Hooks are NOT read from disk by loom at runtime.
+`LOOM_HOOKS` (`fs/permissions/constants.rs`) holds **33 entries**, each embedded via
+`include_str!()` at compile time. `install_loom_hooks()` writes them to
+`~/.claude/hooks/loom/` with mode 0o755. Hooks are NOT read from disk by loom at
+runtime.
 
-**Do not read "32 entries" as "32 hooks."** The arithmetic, verified against `fd -t f -e sh . hooks --max-depth 1 | wc -l` and `rg -c '^    ("' loom/src/fs/permissions/constants.rs`:
+**Do not read "33 entries" as "33 hooks."** The arithmetic, verified against
+`fd -t f -e sh . hooks --max-depth 1 | wc -l`,
+`rg -c '^    ("' loom/src/fs/permissions/constants.rs`, and the script names in
+`fs/permissions/hooks/config.rs`:
 
 ```text
-33 top-level scripts in hooks/
+34 top-level scripts in hooks/
  −1  git-pre-commit-hook.sh    (excluded from LOOM_HOOKS; appended to .git/hooks/pre-commit by loom init)
  ───
- 32  LOOM_HOOKS entries installed to ~/.claude/hooks/loom/
+ 33  LOOM_HOOKS entries installed to ~/.claude/hooks/loom/
  −3  _common.sh, _read_discipline.sh, _read_ledger.sh   (sourced libraries, not registered hooks)
- −1  codex-forward.sh          (wrapper the codex forwarding lane invokes directly; not a registered Claude Code hook)
+ −1  codex-forward.sh          (wrapper the codex forwarding lane invokes directly)
+ −1  codex-apply-patch.sh      (Codex apply_patch bridge, registered only by codex_hooks.rs)
  ───
- 28  actual Claude Code hooks, registered in fs/permissions/hooks/config.rs
+ 28  Claude Code hooks: 21 global, registered in fs/permissions/hooks/config.rs,
+                        + 7 session hooks emitted from HookEvent
 ```
 
-So: **28 Claude Code hooks + 3 shared libraries + 1 codex wrapper + 1 git-side hook = 33 scripts**
-in `hooks/` (plus `hooks/tests/`).
+An earlier version of this section counted 32 entries and 33 scripts, and put all
+28 Claude Code hooks in `fs/permissions/hooks/config.rs`.
 
-One of those 28 registered hooks is `knowledge-orient.sh`, the only hook registered **globally** on `SessionStart` (`fs/permissions/hooks/config.rs`) rather than per-session — it points a fresh non-stage session at `doc/loom/knowledge/INDEX.md`. It exits silently inside a stage, on `compact`/`resume`, and when no `INDEX.md` exists inside the git root.
+One of the 21 global hooks is `knowledge-orient.sh`, the only hook registered
+**globally** on `SessionStart` (`fs/permissions/hooks/config.rs`) rather than
+per-session — it points a fresh non-stage session at `doc/loom/knowledge/INDEX.md`.
+It exits silently inside a stage, on `compact`/`resume`, and when no `INDEX.md`
+exists inside the git root.
 
-Re-derive these with the two commands above rather than trusting the numbers here — they have gone stale before.
+Re-derive these with the commands above rather than trusting the numbers here —
+they have gone stale before.
 
 ## Subagent Isolation
 
@@ -173,3 +186,58 @@ Late hooks from an old session therefore cannot overwrite a successor, concurren
 refreshes cannot roll the parent's token count backward, and the Rust watcher never observes a
 partially truncated JSON document. Lock metadata permits conservative recovery after a dead
 writer leaves an abandoned lock; live or uncertain owners are never stolen.
+
+## Prompt-Submit Hooks and the `loom hook` Delegates
+
+Two global `UserPromptSubmit` hooks run as separate processes on every prompt, each
+printing at most one `hookSpecificOutput` object (`fs/permissions/hooks/config.rs`;
+Codex registers `user-prompt-context.sh` as well, through
+`fs/permissions/codex_hooks.rs`):
+
+- **`skill-trigger.sh`** — a Python script despite the extension. It tokenizes the
+  prompt (words, 2- and 3-word phrases, a plural-stripping stem pass, and a
+  stopword list that a keyword present in the index overrides) and scores skills
+  from `hooks/loom/skill-keywords.json`: a multi-word phrase, or a keyword that
+  names the skill itself (or a 4+ character prefix of its name), scores 2; any other
+  keyword hit scores 1. Skills with no `SKILL.md` on disk are dropped. Repository
+  detection (`loom hook project-types`, which returns `root`, `types` and
+  `truncated` from `ProjectProfile::discover`) is a **tie-breaker, never a
+  qualifier**: a detected type adds 1 point to the matching `loom-<kind>` or
+  `<kind>` skill, and with `MIN_SCORE = 2` a repo-type skill still needs a prompt
+  keyword hit of its own to qualify. At most `MAX_SUGGESTIONS = 5` are printed,
+  strongest first; the `loom-skills` catalog loader is dropped whenever another
+  skill qualifies; two or more catalogued matches get one combined
+  `Skill(skill="loom-skills", args=...)` line. `--codex` switches the output to
+  native `SKILL.md` read paths.
+- **`user-prompt-context.sh`** — a thin wrapper around `loom hook user-prompt`. It
+  exits silently unless `LOOM_WORK_DIR` names a directory or a `.loom/work`,
+  `.work`, `doc/loom/knowledge` or `.loom/cache/context-v1` directory exists walking
+  up from the working directory, runs the delegate under a 5 s timeout, and re-checks
+  the 16 KiB payload ceiling on its own side because the `loom` on PATH may be older
+  than the script. All retrieval, gating and delivery logic is Rust — see
+  [Context Retrieval](context-retrieval.md).
+
+**The delegates** (`commands/hook/`, filesystem-only — no subcommand may make a
+model or network call): `user-prompt`, `pre-compact` (deletes only the compacting
+session's own delivery record), `reconcile-graph` (the detached, debounced
+source-graph self-heal), `context-ceilings` (the `<main>:<subagent>` pair
+`post-tool-use.sh` caches), and `project-types`.
+
+**`HookTarget`** (`commands/hook/target.rs`) is the one environment-to-scope
+resolution the `user-prompt`, `pre-compact` and `reconcile-graph` delegates share,
+so the prompt-time reader and the background writer cannot derive different overlay
+addresses. `from_environment` tries a real stage first — `LOOM_STAGE_ID` (validated
+with `validate_id`) plus `LOOM_WORK_DIR`, the stage record loaded, the plan from
+`delivery::plan_key`, overlay `OverlayScope::Stage`, and a `pull_stage` the brief's
+"Pull more" footer may name — then falls back to the checkout: `local_overlay_key`
+(`_local` / `map-<dir>`), `OverlayScope::Local`, no `pull_stage`.
+`snapshot_policy()` maps those to `SnapshotPolicy::StageOverlay` and
+`SnapshotPolicy::LocalCurrent`, and `retrieval_config()` loads `RetrievalConfig`
+from the MAIN project root behind a worktree.
+
+**Telemetry.** The prompt hook appends a `prompt-brief` event (`items`,
+`estimated_tokens`, `omitted`) when it prints a brief, and `prompt-abstained` with a
+reason — `floor`, `all-delivered`, `over-ceiling`, `no-retrieval` or `no-target` —
+when it does not. Both are written only when the state directory already exists, so
+an unrelated repository never grows a `.loom/work/` tree. `loom knowledge telemetry`
+summarizes them per stage.

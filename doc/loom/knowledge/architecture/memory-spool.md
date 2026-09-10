@@ -1,6 +1,12 @@
+---
+sources:
+- loom/src/fs/memory/types.rs
+- loom/src/fs/memory/spool.rs
+verified: 054528e508d51ede343e254590cdb73ae00f7df6
+---
 # Memory Spool and Drain
 
-> Topic notes for the architecture knowledge area.
+> Read before touching loom memory: spool/drain, ids, receipts, pending, archive
 
 ## The Problem It Solves
 
@@ -103,3 +109,51 @@ the drain.
 - The completion broker solves the same "sandboxed agent needs privileged state
   written" problem a different way — hook outside the sandbox plus an
   authenticated RPC. See [mistakes/completion-broker-credential.md](../mistakes/completion-broker-credential.md).
+
+## Entry Identity, Evidence and Receipts
+
+Every `MemoryEntry` (`fs/memory/types.rs`) is given an `id` once, at capture —
+`Uuid::new_v4().simple()`, 32 lowercase hex characters — alongside `timestamp`,
+`entry_type`, `content`, an optional `context`, `session` (`LOOM_SESSION_ID` at
+capture, when set), `evidence` and `receipt`. The spool line is the whole serialized
+entry and the journal heading records the id (`format_entry` writes `id=<id>`), so
+the id minted inside the sandbox is the id the journal keeps; the drain never
+re-mints it.
+
+- **Entry types** (`MemoryEntryType`): `Note`, `Decision`, `Question`, `Change`,
+  `Receipt`. `loom memory note`, `decision`, `question` and `change` all accept
+  evidence.
+- **Evidence** is a list of paths, `path:line` spans or symbols the entry rests on.
+  `validate_evidence` (`fs/memory/persistence.rs`) allows at most 16 references,
+  each non-empty, at most 256 characters, with no backtick and no newline. `record`
+  validates on the way in; `drain_into_journal` re-validates content, context and
+  evidence on the way out, so a poison entry is skipped rather than written or
+  redelivered.
+- **Receipts** settle an earlier event. `loom memory resolve <event-id> --outcome
+  <promoted|merged|discarded|deferred>` builds a `Receipt` entry and writes it
+  through the same `record` path, so the stage-forgery check and the spool fallback
+  apply to it too. `promoted` and `merged` require `--target` (the knowledge target
+  the event went into); `discarded` and `deferred` require `--reason`. The id must
+  name an existing non-receipt entry in some journal or in the current worktree's
+  undrained spool, or the command fails with "Unknown memory event id". A journal
+  entry is dropped on parse when it is typed `Receipt` without a receipt payload, or
+  carries a payload without being a `Receipt` (`EntryBuilder::build`).
+
+## Pending Events and the Run Archive
+
+`loom memory pending [--stage <id>] [--json] [--strict]`
+(`commands/memory/handlers/pending.rs`) lists every `Note`, `Decision` and
+`Question` whose id no receipt settles, across every journal plus the current
+worktree's undrained spool, deduplicated by id. It also counts `Change` entries
+without a receipt and the receipts themselves. `--strict` exits 1 when anything is
+pending.
+
+The journals live in the state directory, which is removed when a plan finishes.
+`archive_run_state` (`fs/memory/archive.rs`) first copies its `memory/` and
+`telemetry/` subdirectories, whichever exist, to
+`.loom/memory/archive/<plan-id-or-default>-<YYYYmmddTHHMMSSZ>/` under the main
+repository root. It runs at plan completion
+(`fs/plan_lifecycle.rs::archive_run_state_before_done`), in `loom clean`
+(`clean_state_directory`), and in the init-time state cleanup
+(`commands/init/cleanup.rs::cleanup_work_directory`). A failure prints a warning and
+returns `None`, so cleanup and completion continue.
