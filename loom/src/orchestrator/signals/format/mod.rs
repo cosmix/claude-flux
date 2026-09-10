@@ -10,6 +10,7 @@ mod brief;
 mod codex;
 mod helpers;
 mod sandbox_section;
+mod section_boxes;
 mod sections;
 mod skills;
 

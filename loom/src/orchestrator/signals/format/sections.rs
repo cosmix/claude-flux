@@ -13,6 +13,7 @@ use super::helpers::{
     format_structured_handoff,
 };
 use super::sandbox_section::format_sandbox_section;
+use super::section_boxes::{append_empty_memory_box, append_knowledge_updates_required_box};
 use super::skills::format_skill_recommendations;
 
 /// SEMI-STABLE section: per-stage content (brief, facts), never per-session
@@ -38,30 +39,7 @@ pub(super) fn format_semi_stable_section(
         stage_type,
         StageType::Knowledge | StageType::IntegrationVerify | StageType::KnowledgeDistill
     ) {
-        content.push_str("```text\n");
-        content
-            .push_str("┌────────────────────────────────────────────────────────────────────┐\n");
-        content
-            .push_str("│  📝 KNOWLEDGE UPDATES REQUIRED                                     │\n");
-        content
-            .push_str("│                                                                    │\n");
-        content
-            .push_str("│  As you work, UPDATE doc/loom/knowledge/:                          │\n");
-        content
-            .push_str("│  - Entry points: Key files you discover                            │\n");
-        content
-            .push_str("│  - Patterns: Architectural patterns you find                       │\n");
-        content
-            .push_str("│  - Conventions: Coding conventions you learn                       │\n");
-        content
-            .push_str("│  - Mistakes: Errors you make and how to avoid them                 │\n");
-        content
-            .push_str("│                                                                    │\n");
-        content
-            .push_str("│  Command: loom knowledge update <file> \"content\"                   │\n");
-        content
-            .push_str("└────────────────────────────────────────────────────────────────────┘\n");
-        content.push_str("```\n\n");
+        append_knowledge_updates_required_box(&mut content);
     }
 
     // Knowledge Management section with stage-type-aware content
@@ -227,12 +205,21 @@ pub(super) fn format_semi_stable_section(
             );
             content.push_str("| Trigger | Command |\n");
             content.push_str("|---------|---------|\n");
-            content.push_str("| Mistake | `loom memory note \"mistake: ...\"` |\n");
-            content.push_str("| Decision | `loom memory decision \"...\" --context \"...\"` |\n");
-            content.push_str("| Surprise | `loom memory note \"found: ...\"` |\n");
+            content.push_str(
+                "| Mistake | `loom memory note \"mistake: ...\" --evidence loom/src/x.rs:42` |\n",
+            );
+            content.push_str(
+                "| Decision | `loom memory decision \"...\" --context \"...\" --evidence loom/src/x.rs:42` |\n",
+            );
+            content.push_str(
+                "| Surprise | `loom memory note \"found: ...\" --evidence loom/src/x.rs:42` |\n",
+            );
             content.push_str("| Gotcha | `loom memory note \"gotcha: ...\"` |\n");
             content.push_str("| File change | `loom memory change \"...\"` |\n");
             content.push_str("| Question | `loom memory question \"...\"` |\n\n");
+            content.push_str(
+                "Evidence makes the entry checkable at distillation; an entry without evidence is a claim.\n\n",
+            );
             content.push_str(
                 "⚠️ NEVER use 'loom knowledge' in implementation stages — curated into \
                  knowledge by knowledge-distill.\n",
@@ -633,34 +620,22 @@ pub(super) fn format_recitation_section(
         content.push('\n');
     } else {
         // CRITICAL: Show prominent prompt when memory is empty
-        content.push_str("```\n");
-        content.push_str("┌─────────────────────────────────────────────────────────────┐\n");
-        content.push_str("│  ⚠️  NO MEMORY ENTRIES RECORDED — THIS IS A PROBLEM         │\n");
-        content.push_str("│                                                             │\n");
-        content.push_str("│  You should have been recording memories AS YOU WORKED:     │\n");
-        content.push_str("│  - Every mistake/error you hit and how you fixed it         │\n");
-        content.push_str("│  - Every non-obvious decision and WHY                       │\n");
-        content.push_str("│  - Every surprise or gotcha in the code                     │\n");
-        content.push_str("│                                                             │\n");
-        content.push_str("│  BEFORE completing this stage, record what you learned:     │\n");
-        content.push_str("│  BAD:  \"mistake: wrong path\"  (no context, useless)         │\n");
-        content.push_str("│  GOOD: \"mistake: used loom/src/foo.rs in acceptance but     │\n");
-        content.push_str("│    working_dir='loom' so path should be src/foo.rs.         │\n");
-        content.push_str("│    Prevention: check working_dir before writing paths\"      │\n");
-        content.push_str("│                                                             │\n");
-        content.push_str("│  Empty memory = lost learning = repeated mistakes           │\n");
-        content.push_str("└─────────────────────────────────────────────────────────────┘\n");
-        content.push_str("```\n\n");
+        append_empty_memory_box(&mut content);
     }
     content.push_str("**Memory Commands:**\n");
-    content.push_str("- `loom memory note \"observation\"` - Record a discovery\n");
     content.push_str(
-        "- `loom memory decision \"choice\" --context \"rationale\"` - Record a decision\n",
+        "- `loom memory note \"observation\" --evidence loom/src/x.rs:42` - Record a discovery\n",
+    );
+    content.push_str(
+        "- `loom memory decision \"choice\" --context \"rationale\" --evidence loom/src/x.rs:42` - Record a decision\n",
     );
     content.push_str("- `loom memory question \"open question\"` - Record an open question\n");
     content.push_str("- `loom memory change \"file.rs - description\"` - Record a file change\n");
     content.push_str("- `loom memory list` - Review your stage entries\n");
-    content.push_str("- `loom memory show --all` - Show all stage memories\n\n");
+    content.push_str("- `loom memory show --all` - Show all stage memories\n");
+    content.push_str(
+        "- Evidence makes the entry checkable at distillation; an entry without evidence is a claim.\n\n",
+    );
 
     content
 }

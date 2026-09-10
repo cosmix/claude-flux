@@ -67,7 +67,7 @@ fn note_does_not_adopt_an_impostor_git_dir_at_the_temp_root() {
     let plain_dir = TempDir::new().unwrap();
     env::set_current_dir(plain_dir.path()).unwrap();
 
-    let result = note("should not be recorded".to_string(), None);
+    let result = note("should not be recorded".to_string(), Vec::new(), None);
 
     assert!(
         result.is_err(),

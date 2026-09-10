@@ -16,9 +16,11 @@ use crate::fs::work_dir::load_config;
 use crate::git::worktree::find_worktree_root_from_cwd;
 use crate::parser::frontmatter::extract_frontmatter_field;
 
+use super::changes_section::append_changes_by_stage_section;
+
 /// Information extracted from a stage file.
-struct StageInfo {
-    id: String,
+pub(super) struct StageInfo {
+    pub(super) id: String,
     name: String,
     description: String,
     status: String,
@@ -184,7 +186,7 @@ fn format_entry_bullet(entry: &MemoryEntry) -> String {
 }
 
 /// Render the "Changes by Stage" section for one stage.
-fn render_stage_section(stage: &StageInfo, entries: &[&MemoryEntry]) -> String {
+pub(super) fn render_stage_section(stage: &StageInfo, entries: &[&MemoryEntry]) -> String {
     let mut out = String::new();
 
     out.push_str(&format!("### {} ({})\n\n", stage.name, stage.id));
@@ -344,26 +346,7 @@ pub fn execute(ai_summary: bool) -> Result<()> {
     doc.push_str("\n\n");
 
     // Changes by Stage
-    doc.push_str("## Changes by Stage\n\n");
-
-    let mut has_any_stage = false;
-    for stage in &stages {
-        let entries_opt = journals.get(&stage.id);
-        let entries: Vec<&MemoryEntry> =
-            entries_opt.map(|v| v.iter().collect()).unwrap_or_default();
-
-        // Skip stages with no memory entries
-        if entries.is_empty() {
-            continue;
-        }
-
-        has_any_stage = true;
-        doc.push_str(&render_stage_section(stage, &entries));
-    }
-
-    if !has_any_stage {
-        doc.push_str("No stage memory recorded.\n\n");
-    }
+    append_changes_by_stage_section(&mut doc, &stages, &journals);
 
     // Open Questions — collect all question entries across all stages
     doc.push_str("## Open Questions\n\n");

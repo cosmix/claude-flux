@@ -6,53 +6,57 @@ use std::path::Path;
 
 use crate::daemon::DaemonServer;
 use crate::fs::memory::{
-    append_entry, append_to_spool, validate_content, MemoryEntry, MemoryEntryType,
+    append_entry, append_to_spool, validate_content, validate_evidence, MemoryEntry,
+    MemoryEntryType,
 };
 use crate::git::worktree::find_worktree_root_from_cwd;
 
 use super::super::formatters::format_record_success;
 use super::work_dir::{get_or_create_work_dir, validate_stage_id, AD_HOC_STAGE_ID};
 
-/// Shared implementation behind `note`, `decision`, `change`, and `question`.
-fn record(
-    entry_type: MemoryEntryType,
-    text: String,
-    context: Option<String>,
-    stage_id: Option<String>,
-) -> Result<()> {
-    validate_content(&text)?;
-    if let Some(ref ctx) = context {
-        validate_content(ctx)?;
+/// Record a fully constructed entry through the shared direct/spool path.
+pub(super) fn record(entry: MemoryEntry, stage_id: Option<String>) -> Result<()> {
+    validate_content(&entry.content)?;
+    if let Some(ref context) = entry.context {
+        validate_content(context)?;
     }
+    validate_evidence(&entry.evidence)?;
     reject_stage_forgery(&stage_id)?;
 
     let work_dir = get_or_create_work_dir()?;
-    // Validate the RESOLVED stage id, not just an explicitly-passed `--stage`:
-    // the `LOOM_STAGE_ID` fallback becomes a path component in
-    // `fs::memory::storage::memory_dir(..).join(format!("{stage_id}.md"))`, so
-    // an unvalidated env value (e.g. `LOOM_STAGE_ID=../../../tmp/x`) would
-    // otherwise bypass the same traversal check applied to `--stage`.
     let stage = stage_id
         .or_else(|| std::env::var("LOOM_STAGE_ID").ok())
         .unwrap_or_else(|| AD_HOC_STAGE_ID.to_string());
     validate_stage_id(&stage)?;
 
-    let entry = match context {
-        Some(ctx) => MemoryEntry::with_context(entry_type, text.clone(), ctx),
-        None => MemoryEntry::new(entry_type, text.clone()),
-    };
-
     match append_entry(&work_dir, &stage, &entry) {
         Ok(()) => {}
-        Err(e) if is_write_denied(&e) => {
-            record_via_spool(e, &work_dir, &stage, &entry)?;
+        Err(error) if is_write_denied(&error) => {
+            record_via_spool(error, &work_dir, &stage, &entry)?;
         }
-        Err(e) => return Err(e),
+        Err(error) => return Err(error),
     }
 
-    println!("{}", format_record_success(&entry_type, &stage, &text));
-
+    if entry.entry_type != MemoryEntryType::Receipt {
+        println!("{}", format_record_success(&entry, &stage));
+    }
     Ok(())
+}
+
+/// Construct entries for the four ordinary recording commands.
+fn record_kind(
+    entry_type: MemoryEntryType,
+    text: String,
+    context: Option<String>,
+    evidence: Vec<String>,
+    stage_id: Option<String>,
+) -> Result<()> {
+    let entry = match context {
+        Some(context) => MemoryEntry::with_context(entry_type, text, context),
+        None => MemoryEntry::new(entry_type, text),
+    }
+    .with_evidence(evidence);
+    record(entry, stage_id)
 }
 
 /// Refuse an explicit `--stage` that disagrees with `LOOM_STAGE_ID`.
@@ -138,22 +142,27 @@ fn record_via_spool(
     Ok(())
 }
 
-/// Record a note in the memory journal
-pub fn note(text: String, stage_id: Option<String>) -> Result<()> {
-    record(MemoryEntryType::Note, text, None, stage_id)
+/// Record a note with evidence references in the memory journal.
+pub fn note(text: String, evidence: Vec<String>, stage_id: Option<String>) -> Result<()> {
+    record_kind(MemoryEntryType::Note, text, None, evidence, stage_id)
 }
 
 /// Record a decision in the memory journal
-pub fn decision(text: String, context: Option<String>, stage_id: Option<String>) -> Result<()> {
-    record(MemoryEntryType::Decision, text, context, stage_id)
+pub fn decision(
+    text: String,
+    context: Option<String>,
+    evidence: Vec<String>,
+    stage_id: Option<String>,
+) -> Result<()> {
+    record_kind(MemoryEntryType::Decision, text, context, evidence, stage_id)
 }
 
 /// Record a file change in the memory journal
-pub fn change(text: String, stage_id: Option<String>) -> Result<()> {
-    record(MemoryEntryType::Change, text, None, stage_id)
+pub fn change(text: String, evidence: Vec<String>, stage_id: Option<String>) -> Result<()> {
+    record_kind(MemoryEntryType::Change, text, None, evidence, stage_id)
 }
 
 /// Record a question in the memory journal
-pub fn question(text: String, stage_id: Option<String>) -> Result<()> {
-    record(MemoryEntryType::Question, text, None, stage_id)
+pub fn question(text: String, evidence: Vec<String>, stage_id: Option<String>) -> Result<()> {
+    record_kind(MemoryEntryType::Question, text, None, evidence, stage_id)
 }

@@ -5,6 +5,7 @@ use super::parser::{format_entry, parse_journal};
 use super::types::{MemoryEntry, MemoryJournal};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use fs2::FileExt;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -40,13 +41,17 @@ pub fn create_journal(work_dir: &Path, stage_id: &str) -> Result<PathBuf> {
     init_memory_dir(work_dir)?;
 
     let file_path = memory_file_path(work_dir, stage_id);
-
-    let header = format!(
-        "{MEMORY_HEADER}# Memory Journal: {stage_id}\n\n**Stage**: {stage_id}\n**Created**: {}\n\n---\n\n",
-        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
-    );
-
-    fs::write(&file_path, header)
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&file_path)
+        .with_context(|| format!("Failed to create memory journal: {}", file_path.display()))?;
+    file.lock_exclusive()
+        .with_context(|| format!("Failed to lock memory journal: {}", file_path.display()))?;
+    file.set_len(0)
+        .with_context(|| format!("Failed to truncate memory journal: {}", file_path.display()))?;
+    file.write_all(journal_header(stage_id).as_bytes())
         .with_context(|| format!("Failed to create memory journal: {}", file_path.display()))?;
 
     Ok(file_path)
@@ -54,19 +59,32 @@ pub fn create_journal(work_dir: &Path, stage_id: &str) -> Result<PathBuf> {
 
 /// Append an entry to a stage's memory journal
 pub fn append_entry(work_dir: &Path, stage_id: &str, entry: &MemoryEntry) -> Result<()> {
+    init_memory_dir(work_dir)?;
     let file_path = memory_file_path(work_dir, stage_id);
-
-    // Create journal if it doesn't exist
-    if !file_path.exists() {
-        create_journal(work_dir, stage_id)?;
-    }
-
     let formatted = format_entry(entry);
 
     let mut file = fs::OpenOptions::new()
+        .create(true)
         .append(true)
         .open(&file_path)
         .with_context(|| format!("Failed to open memory journal: {}", file_path.display()))?;
+    file.lock_exclusive()
+        .with_context(|| format!("Failed to lock memory journal: {}", file_path.display()))?;
+
+    if file
+        .metadata()
+        .with_context(|| format!("Failed to stat memory journal: {}", file_path.display()))?
+        .len()
+        == 0
+    {
+        file.write_all(journal_header(stage_id).as_bytes())
+            .with_context(|| {
+                format!(
+                    "Failed to initialize memory journal: {}",
+                    file_path.display()
+                )
+            })?;
+    }
 
     file.write_all(formatted.as_bytes()).with_context(|| {
         format!(
@@ -76,6 +94,13 @@ pub fn append_entry(work_dir: &Path, stage_id: &str, entry: &MemoryEntry) -> Res
     })?;
 
     Ok(())
+}
+
+fn journal_header(stage_id: &str) -> String {
+    format!(
+        "{MEMORY_HEADER}# Memory Journal: {stage_id}\n\n**Stage**: {stage_id}\n**Created**: {}\n\n---\n\n",
+        Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    )
 }
 
 /// Read a stage's memory journal

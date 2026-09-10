@@ -209,6 +209,56 @@ fn dispatch_tools(command: Commands) -> Result<()> {
     }
 }
 
+/// `loom memory <subcommand>` dispatch.
+///
+/// Broken out for the same reason as `dispatch_knowledge`: the top-level match
+/// sits at its line ceiling, so every new subcommand has to buy its line back
+/// from an existing one.
+fn dispatch_memory(command: MemoryCommands) -> Result<()> {
+    match command {
+        MemoryCommands::Note {
+            text,
+            evidence,
+            stage,
+        } => memory::note(text, evidence, stage),
+        MemoryCommands::Decision {
+            text,
+            context,
+            evidence,
+            stage,
+        } => memory::decision(text, context, evidence, stage),
+        MemoryCommands::Change {
+            text,
+            evidence,
+            stage,
+        } => memory::change(text, evidence, stage),
+        MemoryCommands::Question {
+            text,
+            evidence,
+            stage,
+        } => memory::question(text, evidence, stage),
+        MemoryCommands::Resolve {
+            event_id,
+            outcome,
+            target,
+            reason,
+            stage,
+        } => memory::resolve(event_id, outcome, target, reason, stage),
+        MemoryCommands::Pending {
+            stage,
+            json,
+            strict,
+        } => memory::pending(stage, json, strict),
+        MemoryCommands::Query { search, stage } => memory::query(search, stage),
+        MemoryCommands::List {
+            stage,
+            entry_type,
+            json,
+        } => memory::list(stage, entry_type, json),
+        MemoryCommands::Show { stage, all, json } => memory::show(stage, all, json),
+    }
+}
+
 pub fn dispatch(command: Commands) -> Result<()> {
     match command {
         Commands::Init {
@@ -260,19 +310,7 @@ pub fn dispatch(command: Commands) -> Result<()> {
         } => handoff::create::execute(stage, session, trigger, message),
         Commands::Stage { command } => dispatch_stage::dispatch_stage(command),
         Commands::Knowledge { command } => dispatch_knowledge(command),
-        Commands::Memory { command } => match command {
-            MemoryCommands::Note { text, stage } => memory::note(text, stage),
-            MemoryCommands::Decision {
-                text,
-                context,
-                stage,
-            } => memory::decision(text, context, stage),
-            MemoryCommands::Change { text, stage } => memory::change(text, stage),
-            MemoryCommands::Question { text, stage } => memory::question(text, stage),
-            MemoryCommands::Query { search, stage } => memory::query(search, stage),
-            MemoryCommands::List { stage, entry_type } => memory::list(stage, entry_type),
-            MemoryCommands::Show { stage, all } => memory::show(stage, all),
-        },
+        Commands::Memory { command } => dispatch_memory(command),
         Commands::Review { ai_summary } => review::execute(ai_summary),
         Commands::Update => self_update::execute(),
         Commands::InstallAssets {

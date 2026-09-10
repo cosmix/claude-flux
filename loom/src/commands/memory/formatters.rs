@@ -3,17 +3,12 @@
 use colored::Colorize;
 
 use crate::commands::common::truncate_for_display;
-use crate::fs::memory::{MemoryEntry, MemoryEntryType};
+use crate::fs::memory::MemoryEntry;
 
 /// Format a single entry for list/query display (compact format)
 pub fn format_entry_compact(entry: &MemoryEntry) -> String {
     let time = entry.timestamp.format("%H:%M:%S").to_string();
-    let type_emoji = match entry.entry_type {
-        MemoryEntryType::Note => "📝",
-        MemoryEntryType::Decision => "✅",
-        MemoryEntryType::Question => "❓",
-        MemoryEntryType::Change => "🔧",
-    };
+    let type_emoji = entry.entry_type.emoji();
 
     let main_line = format!(
         "{} {} {} {}",
@@ -23,7 +18,7 @@ pub fn format_entry_compact(entry: &MemoryEntry) -> String {
         truncate_for_display(&entry.content, 50)
     );
 
-    if let Some(ctx) = &entry.context {
+    let mut output = if let Some(ctx) = &entry.context {
         format!(
             "{}\n  {} {}",
             main_line,
@@ -32,18 +27,23 @@ pub fn format_entry_compact(entry: &MemoryEntry) -> String {
         )
     } else {
         main_line
+    };
+    if let Some(receipt) = &entry.receipt {
+        output.push_str(&format!(
+            "\n  {} event={} outcome={} target={}",
+            "→".dimmed(),
+            receipt.event_id,
+            receipt.outcome,
+            receipt.target.as_deref().unwrap_or("-")
+        ));
     }
+    output
 }
 
 /// Format a single entry for show display (full format)
 pub fn format_entry_full(entry: &MemoryEntry) -> String {
     let time = entry.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
-    let type_emoji = match entry.entry_type {
-        MemoryEntryType::Note => "📝",
-        MemoryEntryType::Decision => "✅",
-        MemoryEntryType::Question => "❓",
-        MemoryEntryType::Change => "🔧",
-    };
+    let type_emoji = entry.entry_type.emoji();
 
     let mut output = format!(
         "\n{} {} {}\n{}\n{}",
@@ -57,24 +57,37 @@ pub fn format_entry_full(entry: &MemoryEntry) -> String {
     if let Some(ctx) = &entry.context {
         output.push_str(&format!("\n\n{} {}", "Context:".cyan(), ctx));
     }
+    output.push_str(&format!("\n\n{} {}", "ID:".cyan(), entry.id));
+    if !entry.evidence.is_empty() {
+        output.push_str(&format!(
+            "\n{} {}",
+            "Evidence:".cyan(),
+            entry.evidence.join(", ")
+        ));
+    }
+    if let Some(session) = &entry.session {
+        output.push_str(&format!("\n{} {}", "Session:".cyan(), session));
+    }
+    if let Some(receipt) = &entry.receipt {
+        output.push_str(&format!(
+            "\n{} event={} outcome={} target={}",
+            "Receipt:".cyan(),
+            receipt.event_id,
+            receipt.outcome,
+            receipt.target.as_deref().unwrap_or("-")
+        ));
+    }
 
     output
 }
 
 /// Format a success message for recording an entry
-pub fn format_record_success(entry_type: &MemoryEntryType, stage_id: &str, text: &str) -> String {
-    let (emoji, action) = match entry_type {
-        MemoryEntryType::Note => ("📝", "Recorded note"),
-        MemoryEntryType::Decision => ("✅", "Recorded decision"),
-        MemoryEntryType::Question => ("❓", "Recorded question"),
-        MemoryEntryType::Change => ("🔧", "Recorded change"),
-    };
-
+pub fn format_record_success(entry: &MemoryEntry, stage_id: &str) -> String {
     format!(
-        "{} {} in stage '{}'\n  {}",
-        emoji.green(),
-        action,
-        stage_id.cyan(),
-        truncate_for_display(text, 60)
+        "✓ Recorded {} {} for stage {}\n  {}",
+        entry.entry_type,
+        entry.id,
+        stage_id,
+        truncate_for_display(&entry.content, 60)
     )
 }

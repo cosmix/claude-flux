@@ -213,6 +213,8 @@ fn test_mark_plan_done_when_all_merged() {
     // Create merged stage files
     create_stage_file(&work_dir, "stage-1", true);
     create_stage_file(&work_dir, "stage-2", true);
+    fs::create_dir_all(work_dir.root().join("memory")).unwrap();
+    fs::write(work_dir.root().join("memory/stage-1.md"), "journal").unwrap();
 
     let result = mark_plan_done_if_all_merged(&work_dir).unwrap();
 
@@ -226,6 +228,12 @@ fn test_mark_plan_done_when_all_merged() {
         .starts_with("DONE-"));
     assert!(!new_path.to_str().unwrap().contains("IN_PROGRESS"));
     assert!(new_path.exists());
+    let archive_root = temp_dir.path().join(".loom/memory/archive");
+    let archive = fs::read_dir(archive_root).unwrap().next().unwrap().unwrap();
+    assert_eq!(
+        fs::read_to_string(archive.path().join("memory/stage-1.md")).unwrap(),
+        "journal"
+    );
 }
 
 #[test]

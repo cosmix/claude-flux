@@ -20,7 +20,7 @@
 //! forge the worktree it is running in, but it could trivially forge a
 //! field. Keeping the payload stage-less makes that the only path.
 
-use super::persistence::validate_content;
+use super::persistence::{validate_content, validate_evidence};
 use super::storage::append_entry;
 use super::types::MemoryEntry;
 use anyhow::{Context, Result};
@@ -229,6 +229,7 @@ fn validate_spooled_entry(entry: &MemoryEntry) -> Result<()> {
     if let Some(context) = &entry.context {
         validate_content(context)?;
     }
+    validate_evidence(&entry.evidence)?;
     Ok(())
 }
 

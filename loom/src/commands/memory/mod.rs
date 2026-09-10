@@ -7,6 +7,8 @@
 //! - `loom memory query <search>` - Search memory entries
 //! - `loom memory list [--stage <id>]` - List memory entries
 //! - `loom memory show [--stage <id>] [--all]` - Show full memory journal
+//! - `loom memory pending [--stage <id>]` - List entries without receipts
+//! - `loom memory resolve <event-id> --outcome <outcome>` - Record a receipt
 
 mod formatters;
 mod handlers;
@@ -16,6 +18,8 @@ pub use handlers::change;
 pub use handlers::decision;
 pub use handlers::list;
 pub use handlers::note;
+pub use handlers::pending;
 pub use handlers::query;
 pub use handlers::question;
+pub use handlers::resolve;
 pub use handlers::show;

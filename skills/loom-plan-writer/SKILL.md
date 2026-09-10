@@ -254,7 +254,7 @@ Captures codebase understanding before implementation. `stage_type: knowledge`, 
 
 ### knowledge-distill (last)
 
-`stage_type: knowledge-distill`, model sonnet (`reasoning_effort: high`) — the ONE bookend that is NOT opus: distillation is a linear read-synthesize-write pass, run **single-agent with NO subagents**. Curates all stage memories into permanent knowledge and updates user-facing docs. Reads the plan, `loom memory show --all`, and current knowledge; FIRST applies every `stale-knowledge:` memory in place with `loom knowledge replace-section <file> "<heading>" "<body>"` (never `update`, which appends the fix below the stale text), then synthesizes mistakes as actionable prevention rules, patterns, decisions, conventions via `loom knowledge update`, following the same tier-routing rule as knowledge-bootstrap (above); `INDEX.md` regenerates on each knowledge write, so then run `loom review` to prune stale entries; updates README/CONTRIBUTING for changed behavior (only relevant sections). Add `loom knowledge check --strict` to this stage's acceptance — `--strict` is what makes the criterion fail on a reported issue; the command validates the knowledge tree's structure and is acceptance-safe because it never opens the context store. **Context discipline (200k window):** the memories are compact summaries — lean on them and keep code spot-reads narrow; do NOT fan out to subagents. **Skip ONLY if** the plan produces no new knowledge worth preserving (rare).
+`stage_type: knowledge-distill`, model sonnet (`reasoning_effort: high`) — the ONE bookend that is NOT opus: distillation is a linear read-synthesize-write pass, run **single-agent with NO subagents**. Curates all stage memories into permanent knowledge and updates user-facing docs. Reads the plan, `loom memory show --all`, and current knowledge; FIRST applies every `stale-knowledge:` memory in place with `loom knowledge replace-section <file> "<heading>" "<body>"` (never `update`, which appends the fix below the stale text), then synthesizes mistakes as actionable prevention rules, patterns, decisions, conventions via `loom knowledge update`, following the same tier-routing rule as knowledge-bootstrap (above); `INDEX.md` regenerates on each knowledge write, so then run `loom review` to prune stale entries; updates README/CONTRIBUTING for changed behavior (only relevant sections). Every Note/Decision/Question entry taken into knowledge gets a receipt: `loom memory resolve <id> --outcome promoted --target <file#heading>` right after the write that used it (`merged` into an existing section, `discarded --reason "..."` for a duplicate or wrong entry, `deferred --reason "..."` when it needs evidence not available now); finish with `loom memory pending --strict` and resolve whatever it lists. Add `loom knowledge check --strict` AND `loom memory pending --strict` to this stage's acceptance — both are acceptance-safe: the former validates the knowledge tree's structure and never opens the context store, the latter reads `.loom/work/memory` only. **Context discipline (200k window):** the memories are compact summaries — lean on them and keep code spot-reads narrow; do NOT fan out to subagents. **Skip ONLY if** the plan produces no new knowledge worth preserving (rare).
 
 Full YAML for all three bookends is in the canonical template (Section 10).
 
@@ -1070,12 +1070,17 @@ loom:
         stale entries.
         Update README/CONTRIBUTING for changed behavior (relevant sections only);
         if nothing user-facing changed, skip but record WHY in memory.
+        RECEIPTS: every Note/Decision/Question taken into knowledge gets
+        loom memory resolve <id> --outcome promoted|merged|discarded|deferred
+        right after the write that used it (--target/--reason as appropriate);
+        finish with loom memory pending --strict and resolve whatever it lists.
       dependencies: ["integration-verify"]
       acceptance:
         # works under both flat and hierarchical layouts — tier-1 files keep ## headings
         - 'rg -q "## " doc/loom/knowledge/architecture.md'
         - 'rg -q "## " doc/loom/knowledge/patterns.md'
         - "loom knowledge check --strict"   # fails on any reported issue — acceptance-safe, never opens the context store
+        - "loom memory pending --strict"    # fails if any memory event lacks a receipt — reads .loom/work/memory only
       files: ["doc/loom/knowledge/**", "README.md", "CONTRIBUTING.md"]
       working_dir: "."
 ```

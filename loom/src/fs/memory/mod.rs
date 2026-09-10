@@ -1,18 +1,8 @@
 //! Per-session memory journal for continuous fact recording.
 //!
-//! Memory journals allow agents to continuously record notes, decisions, and questions
-//! during a session. This implements the Manus todo.md recitation pattern:
-//! - Agent constantly writes to memory
-//! - Signal generation recites recent memory at end
-//! - Keeps important context in attention window
-//!
-//! Memory files are stored in .loom/work/memory/{session-id}.md
-//!
-//! Entry types:
-//! - Note: General observations and context
-//! - Decision: Choices made with rationale
-//! - Question: Open questions for future investigation
+//! Journals persist typed stage events for recitation, handoff, and review.
 
+mod archive;
 mod constants;
 mod export;
 mod parser;
@@ -22,33 +12,37 @@ mod spool;
 mod storage;
 mod types;
 
-// Re-export public types
-pub use types::{MemoryEntry, MemoryEntryType, MemoryJournal};
+pub use types::{MemoryEntry, MemoryEntryType, MemoryJournal, Receipt, ReceiptOutcome};
 
-// Re-export storage functions
+pub use archive::archive_run_state;
+
 pub use storage::{
     append_entry, create_journal, init_memory_dir, memory_dir, memory_file_path, read_journal,
     write_summary,
 };
 
-// Re-export query functions
 pub use query::{generate_summary, get_recent_entries, query_entries};
 
-// Re-export export functions
 pub use export::{format_memory_for_handoff, format_memory_for_signal};
 
-// Re-export persistence functions
-pub use persistence::{extract_key_notes, list_journals, preserve_for_crash, validate_content};
+pub use persistence::{
+    extract_key_notes, list_journals, preserve_for_crash, validate_content, validate_evidence,
+};
 
-// Re-export spool functions (sandboxed-worktree write fallback; see spool.rs)
 pub use spool::{
     append_to_spool, drain_into_journal, drain_spool, read_pending, spool_path, DrainOutcome,
     SPOOL_MAX_BYTES, SPOOL_RELPATH,
 };
 
 #[cfg(test)]
+#[path = "tests/archive.rs"]
+mod archive_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     #[test]
@@ -56,6 +50,7 @@ mod tests {
         assert_eq!(MemoryEntryType::Note.to_string(), "note");
         assert_eq!(MemoryEntryType::Decision.to_string(), "decision");
         assert_eq!(MemoryEntryType::Question.to_string(), "question");
+        assert_eq!(MemoryEntryType::Receipt.to_string(), "receipt");
     }
 
     #[test]
@@ -71,6 +66,10 @@ mod tests {
         assert_eq!(
             "questions".parse::<MemoryEntryType>().unwrap(),
             MemoryEntryType::Question
+        );
+        assert_eq!(
+            "receipts".parse::<MemoryEntryType>().unwrap(),
+            MemoryEntryType::Receipt
         );
         assert!("invalid".parse::<MemoryEntryType>().is_err());
     }
@@ -309,5 +308,88 @@ mod tests {
         assert_eq!(journals.len(), 2);
         assert!(journals.contains(&"stage-1".to_string()));
         assert!(journals.contains(&"stage-2".to_string()));
+    }
+
+    #[test]
+    fn an_entry_round_trips_its_id_full_timestamp_session_evidence_and_receipt() {
+        let temp = TempDir::new().unwrap();
+        let receipt = Receipt {
+            event_id: "1".repeat(32),
+            outcome: ReceiptOutcome::Promoted,
+            target: Some("architecture/context-retrieval.md#required-items".to_string()),
+        };
+        let mut entry = MemoryEntry::receipt(receipt, "captured in knowledge".to_string())
+            .with_evidence(vec![
+                "src/lib.rs:12".to_string(),
+                "important_symbol".to_string(),
+            ]);
+        entry.id = "a".repeat(32);
+        entry.timestamp = Utc.with_ymd_and_hms(2026, 9, 10, 14, 3, 22).unwrap();
+        entry.session = Some("session-42".to_string());
+
+        append_entry(temp.path(), "round-trip", &entry).unwrap();
+        let parsed = read_journal(temp.path(), "round-trip").unwrap();
+
+        assert_eq!(parsed.entries, vec![entry]);
+    }
+
+    #[test]
+    fn a_journal_read_the_next_day_keeps_yesterdays_date() {
+        let temp = TempDir::new().unwrap();
+        let mut entry = MemoryEntry::new(MemoryEntryType::Note, "yesterday".to_string());
+        entry.timestamp = Utc.with_ymd_and_hms(2026, 9, 9, 23, 59, 58).unwrap();
+        append_entry(temp.path(), "multi-day", &entry).unwrap();
+
+        let parsed = read_journal(temp.path(), "multi-day").unwrap();
+
+        assert_eq!(
+            parsed.entries[0].timestamp.date_naive(),
+            entry.timestamp.date_naive()
+        );
+    }
+
+    #[test]
+    fn two_concurrent_appends_never_interleave() {
+        let temp = Arc::new(TempDir::new().unwrap());
+        let threads: Vec<_> = (0..2)
+            .map(|thread| {
+                let temp = Arc::clone(&temp);
+                std::thread::spawn(move || {
+                    for index in 0..50 {
+                        let content = format!("{thread}:{index}:{}", "x".repeat(3000));
+                        let entry = MemoryEntry::new(MemoryEntryType::Note, content);
+                        append_entry(temp.path(), "concurrent", &entry).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+
+        let journal = read_journal(temp.path(), "concurrent").unwrap();
+        assert_eq!(journal.entries.len(), 100);
+    }
+
+    #[test]
+    fn receipts_are_excluded_from_signal_and_handoff_exports() {
+        let temp = TempDir::new().unwrap();
+        let note = MemoryEntry::new(MemoryEntryType::Note, "keep me".to_string());
+        let receipt = MemoryEntry::receipt(
+            Receipt {
+                event_id: note.id.clone(),
+                outcome: ReceiptOutcome::Discarded,
+                target: None,
+            },
+            "hide me".to_string(),
+        );
+        append_entry(temp.path(), "exports", &note).unwrap();
+        append_entry(temp.path(), "exports", &receipt).unwrap();
+
+        let signal = format_memory_for_signal(temp.path(), "exports", 10).unwrap();
+        let handoff = format_memory_for_handoff(temp.path(), "exports").unwrap();
+
+        assert!(signal.contains("keep me") && !signal.contains("hide me"));
+        assert!(handoff.contains("keep me") && !handoff.contains("hide me"));
     }
 }

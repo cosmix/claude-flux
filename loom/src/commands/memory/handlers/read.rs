@@ -1,22 +1,17 @@
-//! Read-only handlers: `query`, `list`, `show`.
-
 use anyhow::Result;
 use colored::Colorize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::fs::memory::{
-    list_journals, query_entries, read_journal, read_pending, MemoryEntryType, MemoryJournal,
+    list_journals, query_entries, read_journal, read_pending, MemoryEntry, MemoryEntryType,
+    MemoryJournal,
 };
 use crate::git::worktree::find_worktree_root_from_cwd;
 
 use super::super::formatters::{format_entry_compact, format_entry_full};
 use super::work_dir::{readonly_work_dir, validate_stage_id};
 
-/// `(worktree_root, stage_id)` for the worktree that owns the current
-/// working directory, if cwd is inside one. Shared by every spool lookup on
-/// the read path so "which stage does this worktree belong to" has exactly
-/// one definition - a worktree's stage id is its directory's basename
-/// (`.worktrees/<stage-id>/`).
 fn current_worktree_stage() -> Option<(PathBuf, String)> {
     let cwd = std::env::current_dir().ok()?;
     let worktree_root = find_worktree_root_from_cwd(&cwd)?;
@@ -24,17 +19,6 @@ fn current_worktree_stage() -> Option<(PathBuf, String)> {
     Some((worktree_root, stage))
 }
 
-/// `read_journal`, plus any entries still pending in this worktree's spool.
-///
-/// An agent that just recorded a note and immediately runs `loom memory
-/// list`/`show`/`query` (post-compaction recovery is exactly this sequence)
-/// must still see its own entry even though the daemon hasn't drained the
-/// spool into the journal file yet. Only applies when cwd is inside the
-/// worktree that owns `stage` - reading another stage's journal must not
-/// leak a third worktree's spool into it. A `read_pending` failure degrades
-/// to the journal alone rather than failing the read, matching how these
-/// read-only commands already tolerate a missing state directory (see
-/// `work_dir.rs`).
 pub(super) fn read_journal_with_pending(work_dir: &Path, stage: &str) -> Result<MemoryJournal> {
     let mut journal = read_journal(work_dir, stage)?;
 
@@ -53,10 +37,6 @@ pub(super) fn read_journal_with_pending(work_dir: &Path, stage: &str) -> Result<
     Ok(journal)
 }
 
-/// A worktree's stage id, if it has spooled entries but no journal file yet
-/// (i.e. it's missing from `journals`, which only enumerates journal
-/// *files*). `None` on any error or absence - this is a best-effort
-/// addition to an aggregate listing, not something that should fail it.
 pub(super) fn spool_only_stage_with_pending(journals: &[String]) -> Option<String> {
     let (worktree_root, stage) = current_worktree_stage()?;
     if journals.contains(&stage) {
@@ -69,7 +49,6 @@ pub(super) fn spool_only_stage_with_pending(journals: &[String]) -> Option<Strin
     Some(stage)
 }
 
-/// Query memory entries by search term
 pub fn query(search: String, stage_id: Option<String>) -> Result<()> {
     if let Some(ref id) = stage_id {
         validate_stage_id(id)?;
@@ -111,7 +90,6 @@ pub fn query(search: String, stage_id: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// Query one stage's journal and print matches (compact). Returns the match count.
 fn query_stage(work_dir: &Path, stage: &str, search: &str) -> Result<usize> {
     let journal = read_journal_with_pending(work_dir, stage)?;
     let results = query_entries(&journal, search);
@@ -131,10 +109,6 @@ fn query_stage(work_dir: &Path, stage: &str, search: &str) -> Result<usize> {
     Ok(count)
 }
 
-/// Print a single stage's journal entries (compact), applying an optional type filter.
-///
-/// Returns the number of entries displayed (after filtering). A zero return means
-/// the journal had no entries matching the filter and nothing was printed.
 fn print_journal_entries(
     work_dir: &Path,
     stage: &str,
@@ -176,18 +150,16 @@ fn print_journal_entries(
     Ok(entries.len())
 }
 
-/// List memory entries.
-///
-/// With an explicit `--stage`, lists only that stage's journal. Without one,
-/// aggregates every journal in the plan so a running stage sees all memories
-/// recorded so far — not just its own. `LOOM_STAGE_ID` no longer scopes `list`;
-/// use `--stage` to narrow to a single stage.
-pub fn list(stage_id: Option<String>, entry_type: Option<String>) -> Result<()> {
+pub fn list(stage_id: Option<String>, entry_type: Option<String>, json: bool) -> Result<()> {
     if let Some(ref id) = stage_id {
         validate_stage_id(id)?;
     }
 
     let Some(work_dir) = readonly_work_dir() else {
+        if json {
+            println!("[]");
+            return Ok(());
+        }
         println!(
             "{} No memory recorded yet (no state directory found)",
             "ℹ".blue()
@@ -196,6 +168,14 @@ pub fn list(stage_id: Option<String>, entry_type: Option<String>) -> Result<()> 
     };
     let type_filter: Option<MemoryEntryType> = entry_type.map(|t| t.parse()).transpose()?;
 
+    if json {
+        println!(
+            "{}",
+            list_json_output(&work_dir, stage_id.as_deref(), type_filter)?
+        );
+        return Ok(());
+    }
+
     if let Some(stage) = stage_id {
         return list_single_stage(&work_dir, &stage, type_filter);
     }
@@ -203,7 +183,35 @@ pub fn list(stage_id: Option<String>, entry_type: Option<String>) -> Result<()> 
     list_all_stages(&work_dir, type_filter)
 }
 
-/// Explicit stage: scope to that single journal.
+pub(super) fn list_json_output(
+    work_dir: &Path,
+    stage_id: Option<&str>,
+    type_filter: Option<MemoryEntryType>,
+) -> Result<String> {
+    let mut journals = match stage_id {
+        Some(stage) => vec![stage.to_string()],
+        None => list_journals(work_dir)?,
+    };
+    if stage_id.is_none() {
+        if let Some(stage) = spool_only_stage_with_pending(&journals) {
+            journals.push(stage);
+        }
+        journals.sort();
+    }
+
+    let mut entries = Vec::new();
+    for stage in journals {
+        let journal = read_journal_with_pending(work_dir, &stage)?;
+        entries.extend(
+            journal
+                .entries
+                .into_iter()
+                .filter(|entry| type_filter.is_none_or(|kind| entry.entry_type == kind)),
+        );
+    }
+    Ok(serde_json::to_string(&entries)?)
+}
+
 fn list_single_stage(
     work_dir: &Path,
     stage: &str,
@@ -223,7 +231,6 @@ fn list_single_stage(
     Ok(())
 }
 
-/// No explicit stage: aggregate all journals in the plan.
 fn list_all_stages(work_dir: &Path, type_filter: Option<MemoryEntryType>) -> Result<()> {
     let mut journals = list_journals(work_dir)?;
     if let Some(spool_only_stage) = spool_only_stage_with_pending(&journals) {
@@ -275,9 +282,12 @@ fn list_all_stages(work_dir: &Path, type_filter: Option<MemoryEntryType>) -> Res
     Ok(())
 }
 
-/// Show full memory journal
-pub fn show(stage_id: Option<String>, all: bool) -> Result<()> {
+pub fn show(stage_id: Option<String>, all: bool, json: bool) -> Result<()> {
     let Some(work_dir) = readonly_work_dir() else {
+        if json {
+            println!("{}", if all { "{}" } else { "[]" });
+            return Ok(());
+        }
         println!(
             "{} No memory recorded yet (no state directory found)",
             "ℹ".blue()
@@ -286,14 +296,13 @@ pub fn show(stage_id: Option<String>, all: bool) -> Result<()> {
     };
 
     if all {
+        if json {
+            println!("{}", show_all_json_output(&work_dir)?);
+            return Ok(());
+        }
         return show_all_journals(&work_dir);
     }
 
-    // Validate the RESOLVED stage id, not just an explicitly-passed `--stage`:
-    // an unvalidated `LOOM_STAGE_ID` fallback would otherwise bypass the same
-    // traversal check applied to `--stage` before it reaches
-    // `read_journal`'s path construction (see the matching fix in
-    // `handlers/record.rs`).
     let stage = match stage_id {
         Some(id) => id,
         None => std::env::var("LOOM_STAGE_ID")
@@ -301,7 +310,28 @@ pub fn show(stage_id: Option<String>, all: bool) -> Result<()> {
     };
     validate_stage_id(&stage)?;
 
+    if json {
+        let entries = read_journal_with_pending(&work_dir, &stage)?.entries;
+        println!("{}", serde_json::to_string(&entries)?);
+        return Ok(());
+    }
+
     show_single_journal(&work_dir, &stage)
+}
+
+fn show_all_json_output(work_dir: &Path) -> Result<String> {
+    let mut journals = list_journals(work_dir)?;
+    if let Some(stage) = spool_only_stage_with_pending(&journals) {
+        journals.push(stage);
+    }
+    journals.sort();
+
+    let mut entries_by_stage: BTreeMap<String, Vec<MemoryEntry>> = BTreeMap::new();
+    for stage in journals {
+        let entries = read_journal_with_pending(work_dir, &stage)?.entries;
+        entries_by_stage.insert(stage, entries);
+    }
+    Ok(serde_json::to_string(&entries_by_stage)?)
 }
 
 fn show_all_journals(work_dir: &Path) -> Result<()> {

@@ -124,7 +124,7 @@ CONTEXT CEILING - HOOK-REPORTED ONLY:
 - The hook line beginning `SUBAGENT CEILING REACHED:` in your own tool output is the sole evidence you reached it. Never estimate, infer, or assume one.
 - A turn that ends with zero files written, on a task that asked for files, counts as a FAILED unit of work even if the report reads well. If genuinely blocked, name the real blocker - the hook line above is the only thing that counts as a context blocker.
 
-MEMORY RECORDING - REQUIRED (write advice to your future self):
+MEMORY RECORDING - REQUIRED (write advice to your future self; attach --evidence file:line where you have it):
 - Mistakes IMMEDIATELY: loom memory note "mistake: tried X because [misleading signal]. Failed because Y. Prevention: [detection rule]. Fix: Z"
 - A fix that failed once: record it, then REPORT it instead of retrying - the orchestrator escalates the tier
 - Non-obvious decisions: loom memory decision "chose X over Y" --context "because Z"
@@ -305,6 +305,8 @@ loom knowledge replace-section <file> "<Heading>" "<corrected body, WITHOUT the 
 ```
 
 On a non-matching heading it appends and SAYS so — read that line, or the stale text stands. Name the wrong claim explicitly in the replacement.
+
+In a knowledge-distill stage every memory ends with `loom memory resolve`; `loom memory pending` is the queue.
 
 ### 13. SILENT FAILURE DETECTION
 

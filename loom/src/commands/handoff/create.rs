@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use std::env;
-use std::fs;
 use std::path::Path;
 use std::process::Command;
 
 use crate::commands::common::work_dir_path;
+use crate::fs::memory::format_memory_for_handoff;
 use crate::git::branch::current_branch;
 use crate::handoff::generator::{generate_handoff, HandoffContent};
 use crate::handoff::HandoffOrigin;
@@ -89,13 +89,11 @@ pub fn execute(
         content = content.with_files_modified(files);
     }
 
-    // Read session memory if available
-    let memory_path = work_dir.join("memory").join(format!("{}.md", session_id));
-    if memory_path.exists() {
-        if let Ok(memory_content) = fs::read_to_string(&memory_path) {
-            content = content.with_memory_content(Some(memory_content));
-        }
-    }
+    // Merge the stage's memory journal into the handoff (journals are keyed by
+    // stage, not session — `memory/<session_id>.md` never existed, so a
+    // CLI-triggered handoff used to carry no memory section at all). Same
+    // model as the daemon's own path: orchestrator/monitor/handlers.rs.
+    content = content.with_memory_content(format_memory_for_handoff(&work_dir, &stage_id));
 
     // Add message as a next step if provided
     if let Some(msg) = &message {

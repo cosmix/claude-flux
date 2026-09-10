@@ -12,8 +12,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use toml_edit::value;
 
+use crate::fs::memory::archive_run_state;
 use crate::fs::work_dir::{self, WorkDir};
 use crate::parser::frontmatter::extract_frontmatter_field;
+
+mod commit;
+use commit::commit_post_completion_changes;
 
 // Filename prefix constants
 pub const IN_PROGRESS_PREFIX: &str = "IN_PROGRESS-";
@@ -124,61 +128,6 @@ pub fn all_stages_merged(work_dir: &WorkDir) -> Result<bool> {
     Ok(found_any_stage)
 }
 
-// ===== Post-Completion Commit =====
-
-/// Commit tracked changes to keep the default branch clean after plan completion.
-///
-/// After all stages are merged and the plan is renamed to DONE, this commits:
-/// - The plan file rename (IN_PROGRESS → DONE)
-/// - Any other tracked modifications (e.g., knowledge files updated by integration-verify)
-fn commit_post_completion_changes(
-    work_dir: &WorkDir,
-    old_plan_path: &Path,
-    new_plan_path: &Path,
-) -> Result<()> {
-    use crate::git::runner::run_git_checked;
-
-    let repo_root = work_dir
-        .project_root()
-        .context("Failed to determine project root")?;
-
-    // Stage the plan file rename: add the new DONE file and stage deletion of old
-    run_git_checked(&["add", &new_plan_path.display().to_string()], repo_root)?;
-    run_git_checked(&["add", &old_plan_path.display().to_string()], repo_root)?;
-
-    // Stage any other tracked modifications (modified + deleted tracked files).
-    // Does NOT add untracked files — safe for automated use.
-    // Typically catches knowledge files updated by integration-verify.
-    run_git_checked(&["add", "-u"], repo_root)?;
-
-    // Check if there's anything staged to commit
-    let staged = run_git_checked(&["diff", "--cached", "--name-only"], repo_root)?;
-    if staged.is_empty() {
-        return Ok(());
-    }
-
-    // Commit with a descriptive message
-    let plan_name = new_plan_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("plan");
-    run_git_checked(
-        &[
-            "commit",
-            "-m",
-            &format!("chore(loom): mark plan complete — {plan_name}"),
-        ],
-        repo_root,
-    )?;
-
-    println!(
-        "  {} Committed post-completion changes to default branch",
-        "✓".green().bold(),
-    );
-
-    Ok(())
-}
-
 // ===== Plan Lifecycle Functions =====
 
 /// Mark the plan file as in-progress by adding `IN_PROGRESS-` prefix.
@@ -271,6 +220,7 @@ pub fn mark_plan_done_if_all_merged(work_dir: &WorkDir) -> Result<Option<PathBuf
     // Remove IN_PROGRESS- and add DONE-
     let without_prefix = remove_prefix_from_filename(&current_path, IN_PROGRESS_PREFIX);
     let new_path = add_prefix_to_filename(&without_prefix, DONE_PREFIX);
+    archive_run_state_before_done(work_dir);
 
     // Rename the file
     fs::rename(&current_path, &new_path).with_context(|| {
@@ -289,7 +239,6 @@ pub fn mark_plan_done_if_all_merged(work_dir: &WorkDir) -> Result<Option<PathBuf
         "✓".green().bold(),
         new_path.file_name().unwrap_or_default().to_string_lossy()
     );
-
     // Commit tracked changes to leave the default branch clean
     if let Err(e) = commit_post_completion_changes(work_dir, &current_path, &new_path) {
         eprintln!(
@@ -299,6 +248,24 @@ pub fn mark_plan_done_if_all_merged(work_dir: &WorkDir) -> Result<Option<PathBuf
     }
 
     Ok(Some(new_path))
+}
+
+/// Archive the run's state before the DONE rename. Best-effort: a missing
+/// project root only logs a warning, it does not block completion.
+fn archive_run_state_before_done(work_dir: &WorkDir) {
+    let plan_id = work_dir
+        .load_config()
+        .ok()
+        .flatten()
+        .and_then(|config| config.plan_id().map(str::to_owned));
+    if let Some(main_root) = work_dir
+        .main_project_root()
+        .or_else(|| work_dir.project_root().map(Path::to_path_buf))
+    {
+        archive_run_state(work_dir.root(), &main_root, plan_id.as_deref());
+    } else {
+        eprintln!("Warning: Failed to archive run state: could not determine project root");
+    }
 }
 
 #[cfg(test)]

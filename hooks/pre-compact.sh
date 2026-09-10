@@ -122,13 +122,25 @@ else
 {"timestamp":"${TIMESTAMP}","stage_id":"${LOOM_STAGE_ID}","session_id":"${LOOM_SESSION_ID}","event":"PreCompact","payload":${PAYLOAD}}
 EOF
 
-	# Instruct agent to dump context before compaction proceeds
-	cat >&2 <<'INTERCEPT'
+	# Tell the agent where its working state already is, and what belongs in
+	# `loom memory` instead: durable lessons, never task state. The handoff
+	# just written above (path parsed into $HANDOFF_FILE) already carries the
+	# working state - a memory entry duplicating it is procedural noise that
+	# distillation would treat as durable knowledge.
+	INTERCEPT_HANDOFF_LINE=""
+	if [[ -n "$HANDOFF_FILE" ]]; then
+		INTERCEPT_HANDOFF_LINE="Your working state is already captured in: ${HANDOFF_FILE}"
+	else
+		INTERCEPT_HANDOFF_LINE="Your working state is already captured in the handoff just written."
+	fi
+
+	cat >&2 <<INTERCEPT
 
 CONTEXT COMPACTION INTERCEPTED
-Before compaction, record your working state:
-  loom memory note "CONTEXT DUMP: Working on [TASK]. Next: [NEXT]. Key context: [INFO]"
-After recording, continue work. Compaction will proceed on next cycle.
+${INTERCEPT_HANDOFF_LINE}
+Do NOT record task state to 'loom memory' - it is not read back after compaction.
+Record only DURABLE lessons there (mistakes, decisions, gotchas), if any are worth keeping.
+Continue work. Compaction will proceed on next cycle.
 
 INTERCEPT
 

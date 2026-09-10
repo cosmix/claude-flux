@@ -11,7 +11,7 @@ file src/commands/graph/tests.rs 425
 file src/commands/hook/tests_reconcile_graph.rs 432
 file src/commands/init/tests.rs 570
 file src/commands/plan/verify.rs 599
-file src/commands/review/generate.rs 439
+file src/commands/review/generate.rs 422
 file src/commands/stage/complete.rs 771
 file src/commands/stage/merge.rs 546
 file src/commands/stage/tests/complete.rs 544
@@ -35,8 +35,8 @@ file src/orchestrator/core/orchestrator.rs 547
 file src/orchestrator/core/recovery.rs 1569
 file src/orchestrator/core/stage_executor.rs 790
 file src/orchestrator/merge_attribution.rs 543
-file src/orchestrator/signals/cache.rs 594
-file src/orchestrator/signals/format/sections.rs 666
+file src/orchestrator/signals/cache.rs 590
+file src/orchestrator/signals/format/sections.rs 641
 file src/orchestrator/signals/tests.rs 551
 file src/orchestrator/signals/tests_cache.rs 665
 file src/orchestrator/terminal/emulator.rs 611
@@ -61,7 +61,7 @@ file tests/failure_resume.rs 468
 file tests/integration/merge_conflict_recovery.rs 412
 file tests/integration/plan_verify.rs 1028
 
-function src/cli/dispatch.rs dispatch 124
+function src/cli/dispatch.rs dispatch 112
 function src/cli/dispatch_stage.rs dispatch_stage 51
 function src/commands/clean/mod.rs print_summary 52
 function src/commands/clean/sessions.rs test_clean_sessions_reaps_live_only_when_destroying_state 57
@@ -72,7 +72,7 @@ function src/commands/diagnose.rs format_diagnosis_signal 125
 function src/commands/graph/display.rs build_graph_display 52
 function src/commands/graph/tests.rs test_build_graph_display_shows_all_deps 70
 function src/commands/graph/tree.rs build_tree_display 57
-function src/commands/handoff/create.rs execute 88
+function src/commands/handoff/create.rs execute 86
 function src/commands/init/execute.rs execute 131
 function src/commands/init/plan_setup.rs initialize_with_plan 211
 function src/commands/init/tests.rs test_cleanup_orphaned_sessions_reaps_live_only_in_clean_mode 76
@@ -86,7 +86,7 @@ function src/commands/plan/verify.rs print_human 110
 function src/commands/repair.rs execute 99
 function src/commands/repair/tests.rs repair_fixes_a_stale_knowledge_directory_deny_in_a_worktree 62
 function src/commands/resume.rs execute 57
-function src/commands/review/generate.rs execute 156
+function src/commands/review/generate.rs execute 137
 function src/commands/review/generate.rs load_stage_infos 59
 function src/commands/review/generate.rs render_stage_section 59
 function src/commands/run/foreground.rs print_result 58
@@ -129,9 +129,8 @@ function src/daemon/server/status.rs collect_completion_summary 97
 function src/daemon/server/tests.rs test_collect_status_with_stages 77
 function src/diagnosis/signal.rs generate_diagnosis_signal 124
 function src/fs/knowledge/templates.rs default_content 62
-function src/fs/memory/export.rs format_memory_for_handoff 91
+function src/fs/memory/export.rs format_memory_for_handoff 80
 function src/fs/memory/export.rs format_memory_for_signal 92
-function src/fs/memory/parser.rs parse_journal 108
 function src/fs/memory/query.rs generate_summary 52
 function src/fs/permissions/hooks.rs migrate_old_hook_paths 84
 function src/fs/permissions/settings.rs ensure_loom_hooks_local_inner 68
@@ -191,15 +190,15 @@ function src/orchestrator/monitor/detection.rs detect_stage_changes 56
 function src/orchestrator/monitor/tests/heartbeats.rs test_hung_detection_honors_per_stage_subagent_timeout 68
 function src/orchestrator/retry.rs classify_failure 64
 function src/orchestrator/retry.rs test_classify_failure 85
-function src/orchestrator/signals/cache.rs generate_knowledge_distill_stable_prefix 85
+function src/orchestrator/signals/cache.rs generate_knowledge_distill_stable_prefix 79
 function src/orchestrator/signals/cache.rs generate_knowledge_stable_prefix 66
 function src/orchestrator/signals/cache.rs test_integration_verify_stable_prefix_contains_required_sections 56
 function src/orchestrator/signals/crud.rs update_signal 69
 function src/orchestrator/signals/format/helpers.rs format_structured_handoff 107
 function src/orchestrator/signals/format/sandbox_section.rs format_sandbox_section 68
 function src/orchestrator/signals/format/sections.rs format_dynamic_section 280
-function src/orchestrator/signals/format/sections.rs format_recitation_section 70
-function src/orchestrator/signals/format/sections.rs format_semi_stable_section 292
+function src/orchestrator/signals/format/sections.rs format_recitation_section 58
+function src/orchestrator/signals/format/sections.rs format_semi_stable_section 278
 function src/orchestrator/signals/knowledge.rs format_knowledge_signal_content 77
 function src/orchestrator/signals/merge.rs format_merge_signal_content 122
 function src/orchestrator/signals/merge_conflict.rs format_merge_conflict_signal_content 67
