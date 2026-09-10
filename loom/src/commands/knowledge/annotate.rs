@@ -47,7 +47,10 @@ pub(crate) fn annotate(args: AnnotateArgs) -> Result<()> {
 
     let rendered = annotate_path(&knowledge.target_path(&target), &annotation)?;
     knowledge.refresh_index_if_hierarchical();
-    println!("{}", rendered.trim_end());
+    let trimmed = rendered.trim_end();
+    if !trimmed.is_empty() {
+        println!("{trimmed}");
+    }
     Ok(())
 }
 

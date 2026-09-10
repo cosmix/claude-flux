@@ -81,6 +81,27 @@ fn annotate_verified_head_resolves_the_full_revision() {
 }
 
 #[test]
+fn annotate_with_only_a_blurb_does_not_introduce_a_frontmatter_block() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("topic.md");
+    fs::write(
+        &path,
+        "# Topic\n\n> Old description.\n\n## Details\nBody.\n",
+    )
+    .unwrap();
+    let annotation = Annotation {
+        blurb: Some("Concise current description.".into()),
+        ..Default::default()
+    };
+
+    annotate_path(&path, &annotation).unwrap();
+
+    let updated = fs::read_to_string(&path).unwrap();
+    assert!(!updated.starts_with("---"));
+    assert_eq!(updated.lines().next(), Some("# Topic"));
+}
+
+#[test]
 fn annotate_rejects_an_unknown_state() {
     let error = parse_state("forgotten").unwrap_err();
 
