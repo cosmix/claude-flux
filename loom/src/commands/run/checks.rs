@@ -171,7 +171,12 @@ fn preflight_snapshot(repo_root: &Path, work_dir: &WorkDir) -> Result<SnapshotOu
     let store = ContextStore::open(work_dir)?;
     store.ensure()?;
     let graph_store = GraphStore::new(store.root(), work_dir.root());
-    ensure_snapshot(&store, &graph_store, repo_root, SnapshotPolicy::BaseOnly)
+    Ok(ensure_snapshot(
+        &store,
+        &graph_store,
+        repo_root,
+        SnapshotPolicy::BaseOnly,
+    ))
 }
 
 fn print_repo_bootstrap(result: crate::git::RepoBootstrapResult) {

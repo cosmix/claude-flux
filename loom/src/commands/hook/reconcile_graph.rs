@@ -103,7 +103,7 @@ fn reconcile(target: &HookTarget, store: &ContextStore) -> Result<()> {
         &graph_store,
         &target.project_root,
         target.snapshot_policy(),
-    )?;
+    );
     Ok(())
 }
 

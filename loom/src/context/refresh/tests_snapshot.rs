@@ -48,8 +48,8 @@ fn base_is_built_once_then_reused_without_counters() {
     let root = temp.path();
     let (store, graph_store) = stores(&temp);
 
-    let first = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::BaseOnly).unwrap();
-    let second = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::BaseOnly).unwrap();
+    let first = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::BaseOnly);
+    let second = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::BaseOnly);
 
     assert_eq!(first.action, SnapshotAction::Rebuilt);
     assert_eq!(second.action, SnapshotAction::Reused);
@@ -64,8 +64,8 @@ fn unchanged_dirty_tree_reuses_the_current_local_overlay() {
     let (store, graph_store) = stores(&temp);
     std::fs::write(root.join("src.rs"), "fn edited() {}\n").unwrap();
 
-    let first = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::LocalCurrent).unwrap();
-    let second = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::LocalCurrent).unwrap();
+    let first = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::LocalCurrent);
+    let second = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::LocalCurrent);
 
     assert_eq!(first.overlay, Some(local_overlay_key(root)));
     assert_ne!(first.action, SnapshotAction::Reused);
@@ -84,8 +84,8 @@ fn unchanged_stage_generation_reuses_the_overlay() {
         stage: "stage".to_string(),
     };
 
-    ensure_snapshot(&store, &graph_store, root, policy()).unwrap();
-    let second = ensure_snapshot(&store, &graph_store, root, policy()).unwrap();
+    ensure_snapshot(&store, &graph_store, root, policy());
+    let second = ensure_snapshot(&store, &graph_store, root, policy());
 
     assert_eq!(second.action, SnapshotAction::Reused);
     assert_eq!(
@@ -105,13 +105,63 @@ fn a_directory_without_git_is_unavailable_instead_of_erroring() {
         &graph_store,
         temp.path(),
         SnapshotPolicy::LocalCurrent,
-    )
-    .unwrap();
+    );
 
     assert_eq!(outcome.action, SnapshotAction::Unavailable);
     assert!(outcome
         .reason
         .contains("failed to inspect the working tree"));
+}
+
+#[test]
+#[serial]
+fn a_snapshot_that_cannot_persist_is_unavailable_not_an_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = init_repo();
+    let root = temp.path();
+    let (store, graph_store) = stores(&temp);
+
+    let base_dir = graph_store.base_dir();
+    std::fs::create_dir_all(&base_dir).unwrap();
+    std::fs::set_permissions(&base_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    // Root (and some sandboxes - the default in most CI containers) ignore
+    // directory permission bits entirely, in which case this environment
+    // cannot exercise the persist-failure path at all. Probe with a real
+    // write before trusting the mode bits, mirroring
+    // `context::refresh::tests_source_graph::enumeration`'s unreadable-file
+    // skip and `commands::knowledge::tests_sync::
+    // sync_does_not_fail_when_the_index_write_fails`.
+    let probe = base_dir.join(".write-probe");
+    let still_writable = std::fs::write(&probe, b"x").is_ok();
+    if still_writable {
+        let _ = std::fs::remove_file(&probe);
+    }
+
+    let outcome = ensure_snapshot(&store, &graph_store, root, SnapshotPolicy::BaseOnly);
+
+    // Restore write access before any assertion can panic and leave a
+    // read-only directory behind for `TempDir`'s `Drop` to choke on.
+    std::fs::set_permissions(&base_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    if still_writable {
+        eprintln!(
+            "SKIP a_snapshot_that_cannot_persist_is_unavailable_not_an_error: this \
+             environment does not enforce 0o555 directory permissions (running as root, or a \
+             sandbox that ignores mode bits), so the persist-failure path was never exercised"
+        );
+        return;
+    }
+
+    let head = working_tree(root).unwrap().head;
+    assert_eq!(outcome.action, SnapshotAction::Unavailable);
+    assert_eq!(outcome.revision, head);
+    assert!(
+        outcome.reason.contains("Failed to write source graph"),
+        "unexpected reason: {}",
+        outcome.reason
+    );
 }
 
 /// Restores the working directory on drop, even if the test body panics -

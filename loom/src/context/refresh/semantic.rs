@@ -210,7 +210,7 @@ fn try_reconcile_semantic(store: &ContextStore, project_root: &Path) -> Result<S
         &graph_store,
         project_root,
         SnapshotPolicy::LocalCurrent,
-    )?;
+    );
     let freshness = store.load_state()?.semantic;
     let layer = semantic_layer(&snapshot);
     let (nodes, edges) = resolved_counts(&graph_store, &snapshot)?;
