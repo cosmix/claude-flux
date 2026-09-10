@@ -4,6 +4,12 @@
 Claude uses Skill-tool invocations; --codex emits native SKILL.md read paths.
 Project discovery is bounded and delegated to loom hook project-types.
 The hook is advisory: unavailable discovery never blocks a user prompt.
+
+A detected repository type is a tie-breaker, never a qualifier: it adds one
+point to a skill's score, which only clears MIN_SCORE alongside a prompt
+keyword hit of its own. A repo-type skill never qualifies from detection
+alone, so a prompt with no matching keywords gets no suggestions just
+because a technology exists somewhere in the tree.
 """
 
 import json
@@ -13,7 +19,7 @@ import subprocess
 import sys
 
 CODEX = "--codex" in sys.argv[1:]
-MAX_SUGGESTIONS = 8
+MAX_SUGGESTIONS = 5
 MIN_SCORE = 2
 DEBUG = os.environ.get("LOOM_SKILL_DEBUG", "") == "1"
 STOPWORDS = frozenset({
@@ -151,9 +157,12 @@ def _add_project_matches(types, roots, scores, matched):
         kind = item["kind"]
         # Detection identifies a skill directly. "react" also indexes TypeScript;
         # expanding detected types through that index caused asymmetric scoring.
+        # A detected type is only a tie-breaker: it adds one point, never enough
+        # on its own to clear MIN_SCORE, so a repo-type skill still needs a
+        # prompt keyword hit of its own to qualify.
         for skill in ("loom-" + kind, kind):
             if _locate_skill_md(skill, roots)[0]:
-                scores[skill] = max(scores.get(skill, 0), MIN_SCORE)
+                scores[skill] = scores.get(skill, 0) + 1
                 path = json.dumps(item["path"] or ".")[1:-1]
                 marker = f"repo:{kind} ({path})"
                 if marker not in matched.setdefault(skill, []):
@@ -170,7 +179,14 @@ def _rank(scores, matched):
     ))[:MAX_SUGGESTIONS]
 
 
-def _render_one(skill, matched, roots):
+def _repo_kind(skill, matched):
+    for entry in matched.get(skill, []):
+        if entry.startswith("repo:"):
+            return entry[len("repo:"):].split(" (", 1)[0]
+    return None
+
+
+def _render_one(skill, matched, roots, keyword_scores):
     path, catalogued = _locate_skill_md(skill, roots)
     if not path:
         return None, False
@@ -178,17 +194,21 @@ def _render_one(skill, matched, roots):
     desc = _parse_description(path)
     label = f"{skill} -- {desc}" if desc else skill
     if CODEX:
-        return f"  - {label} (matched: {keywords}) -- read {json.dumps(path)} in full", False
+        if keyword_scores.get(skill, 0) >= MIN_SCORE:
+            return f"  - {label} (matched: {keywords}) -- read {json.dumps(path)} in full", False
+        kind = _repo_kind(skill, matched) or "this"
+        return (f"  - {label} (matched: {keywords}) -- read {json.dumps(path)} "
+                f"if the task touches {kind}"), False
     if catalogued:
         loader = f'Skill(skill="loom-skills", args="{skill}")'
         return f"  - {label} (matched: {keywords}) -- load with {loader}", True
     return f"  - /{label} (matched: {keywords})", False
 
 
-def _render(top, matched, roots):
+def _render(top, matched, roots, keyword_scores):
     lines, catalogued = [], []
     for skill, _score in top:
-        line, is_catalogued = _render_one(skill, matched, roots)
+        line, is_catalogued = _render_one(skill, matched, roots, keyword_scores)
         if line:
             lines.append(line)
         if is_catalogued:
@@ -198,8 +218,8 @@ def _render(top, matched, roots):
     if len(catalogued) >= 2:
         combined = " ".join(catalogued)
         lines.append(f'  All catalogued matches at once: Skill(skill="loom-skills", args="{combined}")')
-    return ("SKILL MATCH: These skills are relevant to this task. Load EVERY one "
-            "that applies before implementing. Detected project types are shown as repo: matches.\n"
+    return ("SKILL MATCH: skills matching this request (keyword hits shown; "
+            "repo: markers are context, not a reason to load).\n"
             + "\n".join(lines))
 
 
@@ -244,8 +264,9 @@ def main():
     profile, types = _project_types(cwd, prompt)
     roots = _skill_roots(cwd, profile.get("root"))
     scores = {name: score for name, score in scores.items() if _locate_skill_md(name, roots)[0]}
+    keyword_scores = dict(scores)
     _add_project_matches(types, roots, scores, matched)
-    context = _render(_rank(scores, matched), matched, roots)
+    context = _render(_rank(scores, matched), matched, roots, keyword_scores)
     if context:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit", "additionalContext": context,

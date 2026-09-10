@@ -355,7 +355,7 @@ fn cap_limits_flood() {
     let ctx = additional_context(&out.stdout);
 
     let skill_lines: Vec<&str> = ctx.lines().filter(|l| l.starts_with("  -")).collect();
-    assert_eq!(skill_lines.len(), 8, "expected exactly 8 lines: {ctx}");
+    assert_eq!(skill_lines.len(), 5, "expected exactly 5 lines: {ctx}");
 
     let combined = ctx
         .lines()
@@ -368,7 +368,7 @@ fn cap_limits_flood() {
         .unwrap_or_else(|| panic!("missing args in combined line: {combined}"));
     assert_eq!(
         args.split_whitespace().count(),
-        8,
-        "expected 8 names in combined args: {combined}"
+        5,
+        "expected 5 names in combined args: {combined}"
     );
 }
