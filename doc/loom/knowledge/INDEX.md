@@ -89,7 +89,7 @@
 | Topic | Blurb | Lines |
 | --- | --- | --- |
 | [adjudication-autonomy-deadlock](mistakes/adjudication-autonomy-deadlock.md) | An accepted verdict deadlocked the run: adoption by stage_id alone, requeue… | 188 |
-| [ambient-filesystem-trust](mistakes/ambient-filesystem-trust.md) | Why an ancestor directory merely named .git is not evidence of a real… | 57 |
+| [ambient-filesystem-trust](mistakes/ambient-filesystem-trust.md) | Why a directory named .git is not evidence of a real repository, the validation… | 95 |
 | [codex-lane-rogue-wrapper](mistakes/codex-lane-rogue-wrapper.md) | A forwarding wrapper that did the task itself instead of forwarding, and why… | 117 |
 | [codex-navigation](mistakes/codex-navigation.md) | Forbidding reads instead of fixing a slow reader - a misdiagnosis and its… | 25 |
 | [completion-broker-credential](mistakes/completion-broker-credential.md) | The completion broker unreachable server-side fallback, duplicate file naming… | 141 |

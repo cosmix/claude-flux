@@ -1,6 +1,6 @@
 # Ambient Filesystem Trust
 
-> Why an ancestor directory merely named .git is not evidence of a real repository, and the validation this requires.
+> Why a directory named .git is not evidence of a real repository, the validation this requires, and the debris `git init` must clear before reusing one.
 
 ## An Ancestor Named `.git` Is Not a Repository (2026-08-29)
 
@@ -55,3 +55,41 @@ cannot write the failing case, the function probably never returns `None` — re
 relying on it. Existing callers are unaffected only because they all pair it with
 `.unwrap_or_else(|| cwd)`, which wants exactly the fallback; that idiom hides the trap from anyone
 reading call sites to infer semantics.
+
+## Hook Install Fabricated `.git/`, Then `git init` Refused the Leftovers (2026-09-11)
+
+**What happened:** in a directory that was not yet a repository, `loom repair --fix` followed by
+`loom init <plan>` failed with `git init failed ... could not lock config file .git/config: File
+exists`. The project's `.git/` held `hooks/pre-commit`, three 0-byte files (`config`,
+`config.lock`, `config.worktree`) and no `objects/`.
+
+**Why (three links):**
+
+1. `install_pre_commit_hook` (`git/hooks.rs`) ran `create_dir_all(".git/hooks")` without checking
+   that a repository existed, and repair (`commands/repair/hooks.rs`) raised "pre-commit hook not
+   installed" in any directory. `loom repair --fix` therefore fabricated a `.git/` skeleton.
+2. Claude Code's Linux sandbox write-protects `<cwd>/.git/config`, `config.lock`,
+   `config.worktree`, `config.worktree.lock`, `hooks` and more (list read from the 2.1.269
+   binary). Once `.git/` existed, sandboxed commands in that project left 0-byte placeholder
+   files at those paths behind.
+3. `ensure_repo_ready_for_worktrees` (`git/repository.rs`) treats a failed `rev-parse` as "no
+   repo" and runs `git init`, which refuses to start while `config.lock` or `HEAD.lock` exists or
+   while `config` does not parse.
+
+**Misleading signals:** the user blamed `loom repair --fix` because it ran just before; the 0-byte
+files date from separate sandboxed commands minutes later. A failed `git init` still writes `HEAD`,
+`refs/`, `info/` and the sample hooks before it dies on the lock, so the skeleton afterwards passes
+the `HEAD` test of `is_real_git_dir` (first entry above). Only `objects/` is missing.
+
+**Prevention:** code that writes under `.git/` must first confirm `.git` is a directory it did not
+have to create. Code that runs `git init` over an existing `.git/` must expect debris: a lock with
+no live owner, an empty or unparseable config. Probing `git init` in a scratch directory holding
+the exact debris settles which leftovers matter: on git 2.43 only `config.lock`, `HEAD.lock` and an
+unparseable `config` block it; an empty `config`, a junk `config.worktree` and `index.lock` do not.
+
+**Fix:** when `rev-parse` fails and `.git/` is a directory, `git/init_blockers.rs` deletes
+`config.lock`/`HEAD.lock` and renames a `config` that `git config --file` cannot parse to
+`.git/config.loom-backup-<secs>` before `git init` runs. The same path recovers a real repository
+whose config was corrupted, history intact. `install_pre_commit_hook` bails when `.git` is not a
+directory and repair raises the hook issue only inside one; `loom init` bootstraps git before its
+startup repair installs the hook.

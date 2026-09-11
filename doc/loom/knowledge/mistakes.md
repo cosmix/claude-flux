@@ -180,7 +180,7 @@ Nothing enforced daemon singleton, so a second daemon could attach to a live `.w
 
 ## An Unbounded Walk Up the Filesystem Adopts Whatever It Finds (2026-08-29)
 
-`loom memory note`, run outside a repository, wrote its journal into an unrelated ancestor directory because the repo-root search walks up without a ceiling and validated the result by NAME rather than structure. Also: `find_repo_root_from_cwd` returning `Some(cwd)` outside any repo.
+`loom memory note`, run outside a repository, wrote its journal into an unrelated ancestor directory because the repo-root search walks up without a ceiling and validated the result by NAME rather than structure. Also: `find_repo_root_from_cwd` returning `Some(cwd)` outside any repo, and the pre-commit hook installer fabricating `.git/` in a non-repo, after which `git init` refused the sandbox's 0-byte `config.lock` placeholder (2026-09-11).
 
 → [Ambient Filesystem Trust](mistakes/ambient-filesystem-trust.md)
 
