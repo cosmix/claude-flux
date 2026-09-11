@@ -141,7 +141,6 @@ function src/fs/safe_fs.rs safe_replace_outside_workdir 138
 function src/fs/session_files.rs find_session_file 55
 function src/fs/work_integrity.rs validate_work_dir_state 60
 function src/fs/worktree_files/sessions.rs cleanup_sessions_for_stage 79
-function src/git/hooks.rs install_pre_commit_hook 60
 function src/git/merge/mod.rs merge_stage 112
 function src/git/worktree/base.rs resolve_base_branch 92
 function src/git/worktree/discovery.rs find_worktree_by_prefix 55

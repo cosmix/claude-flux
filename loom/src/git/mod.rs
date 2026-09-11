@@ -10,6 +10,7 @@
 pub mod branch;
 pub mod cleanup;
 pub mod hooks;
+mod init_blockers;
 pub mod merge;
 pub mod repository;
 pub mod runner;

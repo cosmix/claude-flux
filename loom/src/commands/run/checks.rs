@@ -194,6 +194,20 @@ fn print_repo_bootstrap(result: crate::git::RepoBootstrapResult) {
             "✓".green().bold()
         );
     }
+
+    if result.removed_stale_git_locks {
+        println!(
+            "{} Removed stale .git lock files that blocked git init",
+            "✓".green().bold()
+        );
+    }
+
+    if result.backed_up_git_config {
+        println!(
+            "{} Moved unreadable .git/config aside (kept as .git/config.loom-backup-*)",
+            "!".yellow().bold()
+        );
+    }
 }
 
 /// Check for uncommitted changes and bail if found

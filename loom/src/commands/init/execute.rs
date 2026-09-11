@@ -309,6 +309,20 @@ fn print_repo_bootstrap(repo_bootstrap: crate::git::RepoBootstrapResult) {
             "✓".green().bold()
         );
     }
+
+    if repo_bootstrap.removed_stale_git_locks {
+        println!(
+            "  {} Removed stale .git lock files that blocked git init",
+            "✓".green().bold()
+        );
+    }
+
+    if repo_bootstrap.backed_up_git_config {
+        println!(
+            "  {} Moved unreadable .git/config aside (kept as .git/config.loom-backup-*)",
+            "!".yellow().bold()
+        );
+    }
 }
 
 /// Print the loom init header

@@ -2,7 +2,7 @@
 //!
 //! Installs git hooks to prevent accidental commits of .loom/work/ and .worktrees/
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -17,10 +17,12 @@ const PRE_COMMIT_HOOK_CONTENT: &str = include_str!("../../../hooks/git-pre-commi
 /// Install the pre-commit hook to the repository's .git/hooks directory
 ///
 /// This function:
-/// 1. Creates the hooks directory if it doesn't exist
-/// 2. Appends the loom hook to any existing pre-commit hook (idempotent)
-/// 3. Creates a new pre-commit hook if none exists
-/// 4. Makes the hook executable
+/// 1. Refuses if `repo_root` has no `.git` directory - there is nothing to
+///    install into
+/// 2. Creates the hooks directory if it doesn't exist
+/// 3. Appends the loom hook to any existing pre-commit hook (idempotent)
+/// 4. Creates a new pre-commit hook if none exists
+/// 5. Makes the hook executable
 ///
 /// # Arguments
 /// * `repo_root` - Path to the repository root
@@ -30,6 +32,13 @@ const PRE_COMMIT_HOOK_CONTENT: &str = include_str!("../../../hooks/git-pre-commi
 /// * `Ok(false)` - Hook was already up to date
 /// * `Err` - Installation failed
 pub fn install_pre_commit_hook(repo_root: &Path) -> Result<bool> {
+    if !repo_root.join(".git").is_dir() {
+        bail!(
+            "{} is not a git repository (no .git directory); run `loom init` to set one up",
+            repo_root.display()
+        );
+    }
+
     let git_hooks_dir = repo_root.join(".git/hooks");
     let hook_path = git_hooks_dir.join("pre-commit");
 
@@ -46,48 +55,59 @@ pub fn install_pre_commit_hook(repo_root: &Path) -> Result<bool> {
     // Extract only the loom section from the full hook file
     let loom_section = extract_loom_section(PRE_COMMIT_HOOK_CONTENT);
 
-    // Check if hook already exists
-    if hook_path.exists() {
-        let existing_content = fs::read_to_string(&hook_path)
-            .with_context(|| format!("Failed to read existing hook: {}", hook_path.display()))?;
+    let Some(content) = updated_hook_content(&hook_path, &loom_section)? else {
+        return Ok(false); // Already up to date
+    };
 
-        // Check if loom hook is already installed
-        if existing_content.contains(LOOM_HOOK_START_MARKER) {
-            // Check if content is the same
-            let existing_section = extract_existing_loom_section(&existing_content);
-            if existing_section.trim() == loom_section.trim() {
-                return Ok(false); // Already up to date
-            }
+    fs::write(&hook_path, content)
+        .with_context(|| format!("Failed to write hook: {}", hook_path.display()))?;
 
-            // Replace existing loom section
-            let new_content = replace_loom_section(&existing_content, &loom_section);
-            fs::write(&hook_path, new_content)
-                .with_context(|| format!("Failed to update hook: {}", hook_path.display()))?;
-        } else {
-            // Append loom section to existing hook
-            let new_content = format!("{}\n\n{}", existing_content.trim_end(), loom_section);
-            fs::write(&hook_path, new_content)
-                .with_context(|| format!("Failed to append to hook: {}", hook_path.display()))?;
-        }
-    } else {
+    make_executable(&hook_path)?;
+
+    Ok(true)
+}
+
+/// Compute the new content for the pre-commit hook, or `None` if the hook is
+/// already up to date and no write is needed.
+fn updated_hook_content(hook_path: &Path, loom_section: &str) -> Result<Option<String>> {
+    if !hook_path.exists() {
         // Create new hook with shebang and loom section
-        let content = format!(
+        return Ok(Some(format!(
             "#!/usr/bin/env bash\n# Git pre-commit hook\n\n{}",
             loom_section
-        );
-        fs::write(&hook_path, content)
-            .with_context(|| format!("Failed to create hook: {}", hook_path.display()))?;
+        )));
     }
 
-    // Make executable
-    let mut perms = fs::metadata(&hook_path)
+    let existing_content = fs::read_to_string(hook_path)
+        .with_context(|| format!("Failed to read existing hook: {}", hook_path.display()))?;
+
+    if existing_content.contains(LOOM_HOOK_START_MARKER) {
+        let existing_section = extract_existing_loom_section(&existing_content);
+        if existing_section.trim() == loom_section.trim() {
+            return Ok(None); // Already up to date
+        }
+
+        // Replace existing loom section
+        Ok(Some(replace_loom_section(&existing_content, loom_section)))
+    } else {
+        // Append loom section to existing hook
+        Ok(Some(format!(
+            "{}\n\n{}",
+            existing_content.trim_end(),
+            loom_section
+        )))
+    }
+}
+
+/// Make the pre-commit hook executable
+fn make_executable(hook_path: &Path) -> Result<()> {
+    let mut perms = fs::metadata(hook_path)
         .with_context(|| format!("Failed to get metadata for hook: {}", hook_path.display()))?
         .permissions();
     perms.set_mode(0o755);
-    fs::set_permissions(&hook_path, perms)
+    fs::set_permissions(hook_path, perms)
         .with_context(|| format!("Failed to set permissions on hook: {}", hook_path.display()))?;
-
-    Ok(true)
+    Ok(())
 }
 
 /// Extract the loom section from the full hook content
@@ -153,6 +173,16 @@ mod tests {
         assert!(section.contains("LOOM_PRE_COMMIT_HOOK_START"));
         assert!(section.contains("echo test"));
         assert!(section.contains("LOOM_PRE_COMMIT_HOOK_END"));
+    }
+
+    #[test]
+    fn install_pre_commit_hook_refuses_outside_repo() {
+        let temp = TempDir::new().unwrap();
+
+        let result = install_pre_commit_hook(temp.path());
+
+        assert!(result.is_err());
+        assert!(!temp.path().join(".git").exists());
     }
 
     #[test]

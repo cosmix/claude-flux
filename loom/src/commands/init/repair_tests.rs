@@ -155,6 +155,7 @@ fn init_repair_renders_no_line_for_a_clean_workspace() {
     let root = temp.path();
     write_complete_gitignore(root);
     write_complete_settings_json(root);
+    fs::create_dir_all(root.join(".git")).unwrap();
     install_pre_commit_hook(root).unwrap();
 
     // Everything repo-local is now clean. The one check this cannot control

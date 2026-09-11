@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 
+use crate::git::init_blockers;
 use crate::git::runner::{run_git, run_git_bool, run_git_checked};
 use crate::git::worktree::check_git_available;
 
@@ -18,24 +19,32 @@ const BOOTSTRAP_README: &str = "README.md";
 pub struct RepoBootstrapResult {
     pub initialized_repo: bool,
     pub created_initial_commit: bool,
+    pub removed_stale_git_locks: bool,
+    pub backed_up_git_config: bool,
 }
 
 impl RepoBootstrapResult {
     pub fn changed(self) -> bool {
-        self.initialized_repo || self.created_initial_commit
+        self.initialized_repo
+            || self.created_initial_commit
+            || self.removed_stale_git_locks
+            || self.backed_up_git_config
     }
 }
 
 /// Ensure the current directory is a git repository with at least one commit.
 ///
 /// This is the minimum git state Loom needs before it can create worktrees.
-/// If the directory is not yet a git repo, this runs `git init`. If the repo
-/// has no commits, it creates a bootstrap commit containing only `README.md`.
+/// If the directory is not yet a git repo, this runs `git init`, first
+/// clearing any leftover `.git/` contents (stale locks or an unreadable
+/// config, e.g. from a sandbox placeholder or an interrupted git process)
+/// that would make `git init` refuse to run. If the repo has no commits, it
+/// creates a bootstrap commit containing only `README.md`.
 pub fn ensure_repo_ready_for_worktrees(repo_root: &Path) -> Result<RepoBootstrapResult> {
     ensure_repo_ready_with_config(repo_root, &[])
 }
 
-fn ensure_repo_ready_with_config(
+pub(super) fn ensure_repo_ready_with_config(
     repo_root: &Path,
     git_config_args: &[&str],
 ) -> Result<RepoBootstrapResult> {
@@ -44,6 +53,11 @@ fn ensure_repo_ready_with_config(
     let mut result = RepoBootstrapResult::default();
 
     if !is_git_repository(repo_root, git_config_args)? {
+        let git_dir = repo_root.join(".git");
+        if git_dir.is_dir() {
+            result.removed_stale_git_locks = init_blockers::remove_stale_locks(&git_dir)?;
+            result.backed_up_git_config = init_blockers::back_up_unreadable_config(repo_root)?;
+        }
         initialize_repo(repo_root, git_config_args)?;
         result.initialized_repo = true;
     }
@@ -172,6 +186,8 @@ mod tests {
             RepoBootstrapResult {
                 initialized_repo: true,
                 created_initial_commit: true,
+                removed_stale_git_locks: false,
+                backed_up_git_config: false,
             }
         );
         assert!(repo_root.join(".git").exists());
@@ -202,6 +218,8 @@ mod tests {
             RepoBootstrapResult {
                 initialized_repo: false,
                 created_initial_commit: true,
+                removed_stale_git_locks: false,
+                backed_up_git_config: false,
             }
         );
         assert!(

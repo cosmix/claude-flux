@@ -14,7 +14,9 @@ use crate::git::is_pre_commit_hook_installed;
 pub(super) fn check(repo_root: &Path) -> Vec<RepairIssue> {
     let mut issues = Vec::new();
 
-    if !is_pre_commit_hook_installed(repo_root) {
+    // Outside a repository there is nothing to install into; `loom init`
+    // bootstraps git first and installs the hook in its startup repair.
+    if repo_root.join(".git").is_dir() && !is_pre_commit_hook_installed(repo_root) {
         issues.push(RepairIssue {
             severity: Severity::Info,
             description: "Git pre-commit hook not installed".to_string(),
