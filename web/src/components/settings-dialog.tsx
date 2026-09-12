@@ -314,7 +314,6 @@ function Body({
   // Crossing the breakpoint swaps the component, so local UI state inside it
   // (an uncommitted number-field draft) is dropped; write statuses live above
   // it and survive.
-  const Layout = narrow ? SettingsCards : SettingsLanes;
 
   const sections = useMemo(
     () => (load.phase === "ready" ? filterSections(sectionRows(load.data.entries), query) : []),
@@ -326,15 +325,24 @@ function Body({
       <SettingsHeader query={query} onQueryChange={onQueryChange} filterRef={filterRef} />
       <div className="settings-scroll">
         <LoadNotice load={load} onRetry={retry} />
-        {load.phase === "ready" && (
-          <Layout
-            data={load.data}
-            sections={sections}
-            query={query}
-            statuses={statuses}
-            onWrite={write}
-          />
-        )}
+        {load.phase === "ready" &&
+          (narrow ? (
+            <SettingsCards
+              data={load.data}
+              sections={sections}
+              query={query}
+              statuses={statuses}
+              onWrite={write}
+            />
+          ) : (
+            <SettingsLanes
+              data={load.data}
+              sections={sections}
+              query={query}
+              statuses={statuses}
+              onWrite={write}
+            />
+          ))}
       </div>
       <SettingsFooter toast={toast} />
     </>
