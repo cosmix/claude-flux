@@ -1,0 +1,197 @@
+/*
+ * Settings dialog: the per-lane controls rendered by settings-control.tsx —
+ * inputs, selects, switches, and the slot chrome (clear button, tone,
+ * effective underline) that wraps them. Split out of settings.css to stay
+ * under the file line limit; shares the same `@layer components` so cascade
+ * order is unchanged.
+ */
+@layer components {
+  .settings-na {
+    color: var(--muted-foreground);
+    font-size: 12px;
+  }
+
+  /* controls: 28px tall, mono, tabular numerals */
+  .settings-ctl {
+    height: 28px;
+    max-width: 100%;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    padding: 0 9px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    outline: none;
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+  .settings-ctl-num {
+    width: 11ch;
+    text-align: right;
+  }
+  .settings-select {
+    width: 100%;
+    padding-right: 22px;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+  }
+  .settings-select-wrap {
+    position: relative;
+    display: inline-flex;
+    min-width: 0;
+    flex: 1;
+  }
+  .settings-select-chevron {
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--muted-foreground);
+  }
+  .settings-ctl:focus-visible {
+    border-color: var(--ring);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 35%, transparent);
+  }
+  /* a span, not a form control, so its text needs a line box as tall as the
+   * 28px border box (less the two 1px borders) to sit centred like theirs */
+  .settings-ctl-readonly {
+    line-height: 26px;
+    border-color: transparent;
+    background: var(--muted);
+    color: var(--muted-foreground);
+  }
+
+  /* the slot: a control plus its clear button and roundel, toned by lane */
+  .settings-slot {
+    --ctl-tone: var(--lane-user);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+  }
+  .settings-slot[data-lane="project"] {
+    --ctl-tone: var(--lane-project);
+  }
+  .settings-slot[data-provenance="set"] .settings-ctl {
+    border-color: var(--ctl-tone);
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--ctl-tone) 45%, transparent);
+  }
+  .settings-slot[data-provenance="set"] .settings-ctl:hover {
+    background: color-mix(in oklch, var(--ctl-tone) 6%, var(--card));
+  }
+  .settings-slot[data-provenance="inherited"] .settings-ctl {
+    border-style: dashed;
+    color: var(--muted-foreground);
+    background: transparent;
+  }
+  .settings-slot[data-provenance="pending"] .settings-ctl {
+    opacity: 0.55;
+    cursor: progress;
+  }
+  .settings-slot[data-provenance="error"] .settings-ctl {
+    border-color: var(--tone-blocked);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--tone-blocked) 22%, transparent);
+  }
+  .settings-slot[data-effective="true"]::after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    bottom: -5px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--foreground);
+  }
+
+  /* the switch: a pill, hatched when it falls through to the tier below */
+  .settings-switch {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    width: 34px;
+    height: 19px;
+    margin: 0;
+    border-radius: 999px;
+    background: var(--muted);
+    box-shadow: inset 0 0 0 1px var(--border);
+    flex: none;
+    cursor: pointer;
+    transition: background-color 150ms ease;
+  }
+  .settings-switch::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--foreground);
+    opacity: 0.75;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+    transition: transform 150ms ease;
+  }
+  .settings-switch:checked {
+    background: var(--ctl-tone);
+    box-shadow: none;
+  }
+  .settings-switch:checked::after {
+    transform: translateX(15px);
+    background: var(--card);
+    opacity: 1;
+  }
+  .settings-slot[data-provenance="inherited"] .settings-switch {
+    background: repeating-linear-gradient(
+      -45deg,
+      var(--muted) 0 3px,
+      color-mix(in oklch, var(--border) 60%, transparent) 3px 4px
+    );
+  }
+  .settings-slot[data-provenance="inherited"] .settings-switch:checked {
+    background: color-mix(in oklch, var(--ctl-tone) 45%, var(--muted));
+  }
+  .settings-switch:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  .settings-switch:disabled {
+    opacity: 0.6;
+    cursor: progress;
+  }
+
+  .settings-clear {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    display: inline-grid;
+    place-items: center;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 1;
+    border: 0;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    margin-left: -2px;
+  }
+  .settings-clear:hover {
+    background: var(--muted);
+    color: var(--foreground);
+  }
+
+  .settings-error {
+    display: block;
+    margin-top: 5px;
+    font-size: 11px;
+  }
+}

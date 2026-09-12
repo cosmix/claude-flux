@@ -1,0 +1,173 @@
+/*
+ * Settings on a phone: one card per row, the three lanes stacked inside it,
+ * in place of the desktop lanes table. Lane tokens (--lane-builtin/user/
+ * project) and shared control styling (.settings-slot, .settings-ctl, …)
+ * come from settings.css on the dialog root; this file only lays the cards
+ * and tiers out and re-scopes the controls to fit the narrower column.
+ */
+@layer components {
+  /* grid-auto-rows keeps every card at its own height inside the fixed-height
+   * scroll container the dialog gives it — without it, cards collapse. */
+  .settings-cards {
+    display: grid;
+    grid-auto-rows: max-content;
+    gap: 10px;
+    padding: 4px 12px 12px;
+  }
+  .settings-cards .settings-empty {
+    padding: 24px 8px;
+  }
+
+  .settings-cards-key {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+  .settings-cards-key span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .settings-cards-key span::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 2px;
+    background: var(--lane-builtin);
+  }
+  .settings-cards-key span[data-lane="user"]::before {
+    background: var(--lane-user);
+  }
+  .settings-cards-key span[data-lane="project"]::before {
+    background: var(--lane-project);
+  }
+
+  .settings-cards-sec {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 12px 6px 0;
+  }
+
+  .settings-card {
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .settings-card-h {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    padding: 9px 12px 7px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .settings-card-h .settings-res {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+  }
+  .settings-card-h .settings-res b {
+    font-weight: 500;
+    color: var(--foreground);
+  }
+  .settings-key-name {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--foreground);
+  }
+
+  .settings-card-subh {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    padding: 6px 12px 0;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+    font-weight: 500;
+  }
+
+  .settings-tier {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    min-height: 42px;
+    box-shadow: inset 3px 0 0 var(--lane-builtin);
+  }
+  .settings-tier + .settings-tier {
+    border-top: 1px solid var(--hairline);
+  }
+  .settings-tier[data-lane="user"] {
+    background: color-mix(in oklch, var(--muted) 55%, var(--card));
+    box-shadow: inset 3px 0 0 var(--lane-user);
+  }
+  .settings-tier[data-lane="project"] {
+    box-shadow: inset 3px 0 0 var(--lane-project);
+  }
+  .settings-tier-na {
+    min-height: 30px;
+    padding-block: 5px;
+    color: var(--muted-foreground);
+    font-size: 11px;
+    box-shadow: inset 3px 0 0 color-mix(in oklch, var(--lane-project) 35%, transparent);
+  }
+  .settings-tl {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+  }
+  [data-effective="true"] .settings-tl {
+    color: var(--foreground);
+  }
+
+  .settings-tc {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    min-width: 0;
+  }
+  .settings-tc-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .settings-tc .settings-slot {
+    width: 100%;
+    min-width: 0;
+  }
+  /* the card columns are narrow enough to cut a long value; the desktop
+   * table shows its values in full */
+  .settings-tc .settings-ctl {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .settings-tc .settings-select-wrap,
+  .settings-tc .settings-select {
+    width: 100%;
+    min-width: 0;
+  }
+  .settings-tc .settings-ctl-num {
+    width: 11ch;
+    max-width: 100%;
+  }
+
+  /* the built-in tier's read-only value fills its card column; the desktop
+   * table leaves `.settings-ctl-readonly` at its own content width. */
+  .settings-card .settings-ctl-readonly {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+  }
+}
+
+.dark .settings-tier-na {
+  box-shadow: inset 3px 0 0 color-mix(in oklch, var(--lane-project) 45%, transparent);
+}

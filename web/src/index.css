@@ -16,6 +16,7 @@
 @import "@xterm/xterm/css/xterm.css";
 @import "./components/terminal/terminal.css";
 @import "./components/settings.css";
+@import "./components/settings-cards.css";
 
 @font-face {
   font-family: "Inter Variable";
