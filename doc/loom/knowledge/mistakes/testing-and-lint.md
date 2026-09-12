@@ -553,3 +553,24 @@ nothing.
 
 Prevention: before quoting a narrow test filter in a brief or acceptance criterion, run
 `cargo test --lib -- --list | rg <filter>` and confirm a non-zero match count.
+
+## `cargo audit` Git-Fetches Its Database First — It Cannot Pass in a No-Network Stage Sandbox (2026-09-12)
+
+**What happened:** a plan copied `cargo audit -f loom/Cargo.lock -d loom/target/advisory-db`
+verbatim from a sibling plan's pre-push gate into a stage whose sandbox declares "No
+network access." `cargo-audit` git-fetches the RustSec advisory database into that path
+before scanning anything; `loom/target/advisory-db` does not exist in a fresh worktree,
+so the fetch fails ("couldn't fetch advisory database: git operation failed") before the
+audit itself ever runs — the criterion fails regardless of whether the dependency tree
+has any advisories.
+
+**Why:** the criterion was copied from a plan whose stage DOES have network access,
+without checking the destination stage's own network policy.
+
+**Prevention:** a plan step that runs `cargo audit` inside a no-network stage must use
+`cargo audit --no-fetch -d "$HOME/.cargo/advisory-db"` against a database path already
+present on the machine (populated by an earlier `cargo audit` run outside a stage
+sandbox), never a fresh in-worktree path the offline run cannot populate itself. When
+copying a gate list between plans, re-check each criterion against the destination
+stage's own sandbox network policy — a criterion that passed in the source plan is not
+evidence it will pass in the copy.

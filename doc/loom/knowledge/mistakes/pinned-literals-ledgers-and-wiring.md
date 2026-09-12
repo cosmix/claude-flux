@@ -67,11 +67,16 @@ paths and exact literal patterns (e.g. pattern `extract::SourceGraphExtractor` i
 source `loom/src/context/refresh.rs`). Any later change that moves the pattern out of
 that path reports a wiring gap **for a feature that works perfectly**.
 
-Hit twice in one plan, in two different shapes:
+Hit repeatedly across plans, in several shapes:
 
 1. A file split for the 400-line limit deleted the pinned path.
 2. Extracting two field assignments into a well-named helper removed the literal from
    the pinned file. Behaviour unchanged, every test green.
+3. A component rename during a size-limit refactor (`SettingsLanes`/`SettingsCards`
+   aliased to a shared `<Layout>` export, `EmptyState`/`LaneSlot` moved into a sibling
+   `settings-lanes-cells.tsx`) broke the pin although every acceptance criterion still
+   passed — the stage-completion gate's wiring re-verification is the only thing that
+   caught it, after the refactor round was already reported done.
 
 **The misleading signal is that the refactor is genuinely BETTER code** — a helper that
 sets two related fields together reads well and keeps a ledgered file small — so
@@ -80,7 +85,8 @@ nothing in the diff looks wrong.
 **Rules:**
 
 - Treat each pattern+path pair as a **pinned interface**. `rg` them after every
-  refactor round, not only at the start.
+  refactor round, not only at the start — run `loom check <stage> --suggest` before
+  committing, not after the stage-completion gate rejects it.
 - When splitting a file, use the edition-2021 layout `<name>.rs` + `<name>/` subdir —
   never `<name>/mod.rs`, which deletes the pinned path. The context store used to be a
   flat `context/graph_store.rs`; it was renamed to that edition-2021 layout,

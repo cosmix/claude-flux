@@ -606,3 +606,31 @@ RPCs" — and `daemon/protocol.rs` has no such RPC. `loom stage complete` got a 
 the `excluded_commands` escape was removed; `loom memory` did not, and nothing failed loudly.
 Verify an RPC exists before treating a missing write grant as deliberate, and after removing
 a sandbox escape, audit every operation that relied on it.
+
+## A Stage Sandbox Can Deny Loopback TCP Even While the Server Reports Listening — but Not Always (2026-09-12)
+
+**What happened:** in the settings-lanes stage, `loom status --web 7373` and
+`vite --port 5173` both reported listening, but `curl --noproxy '*'` to `127.0.0.1`
+returned HTTP 000 from the same Bash command, and headless Chrome rendered an empty
+`<html>`. The same day, in the integration-verify stage for the same plan,
+`scripts/smoke-web-dashboard.sh` against `loom/target/debug/loom` bound `127.0.0.1` and
+every `curl` in it succeeded.
+
+**Why:** loopback TCP denial is a property of that stage's sandbox network policy, not
+a fixed platform behaviour — two stages in the same plan, run the same day, saw
+opposite results.
+
+**Prevention:** probe loopback with the smoke script (or a plain `curl`) at session
+start, before planning work around its absence. Do not treat one stage's denial as a
+standing rule for the next stage, or one stage's success as proof a sibling stage can
+reach loopback too.
+
+**Workaround when loopback IS denied and a plan step needs the dev server (e.g. a
+visual review):** either add a sandbox network allowance for `127.0.0.1`, or render the
+built bundle via `file://` with `fetch`/`WebSocket` stubbed — see
+[patterns.md](../patterns.md#offline-file-harness-for-a-visual-review-under-a-no-network-sandbox).
+`google-chrome`/headless-shell also needs `XDG_CONFIG_HOME`/`--user-data-dir` pointed at
+the scratchpad (its crashpad handler writes to `~/.config` and dumps core otherwise),
+and the Read tool's worktree guard only opens images inside the worktree — a
+screenshot directory under `node_modules/` gets ignored by tools that read images, so
+write screenshots inside the worktree proper.
