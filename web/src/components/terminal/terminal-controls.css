@@ -1,7 +1,7 @@
 /*
  * The key: one capsule in the header that reads the connection on its left
- * and names what a press does on its right. In control it is the well's
- * status strip in miniature, the same accent and the same bottom rule.
+ * and offers the one action on its right. It is set in the dashboard's body
+ * face at the badge size; only the well itself speaks monospace.
  */
 @layer components {
   .terminal-controls {
@@ -12,34 +12,23 @@
 
   .terminal-key {
     position: relative;
-    display: grid;
-    grid-template-columns: 1fr auto;
+    display: inline-flex;
     align-items: center;
-    width: 236px;
-    min-height: 34px;
-    padding: 0 12px 0 11px;
-    overflow: hidden;
-    border: 1px solid color-mix(in oklch, var(--foreground) 10%, transparent);
-    border-radius: 8px;
-    background: color-mix(in oklch, var(--muted) 72%, transparent);
+    gap: 12px;
+    height: 34px;
+    padding: 3px 3px 3px 13px;
+    border: 1px solid var(--hairline);
+    border-radius: 9px;
+    background: var(--card);
     box-shadow:
-      inset 0 1px 0 color-mix(in oklch, white 4%, transparent),
-      0 1px 2px color-mix(in oklch, black 8%, transparent);
+      0 1px 2px color-mix(in oklch, black 5%, transparent),
+      0 8px 20px -14px color-mix(in oklch, black 30%, transparent);
     text-align: left;
     cursor: pointer;
     transition:
       background-color 200ms ease,
       border-color 200ms ease,
       box-shadow 200ms ease;
-  }
-  .terminal-key::after {
-    content: "";
-    position: absolute;
-    inset: auto 0 0 0;
-    height: 2px;
-    background: var(--tone-executing);
-    opacity: 0;
-    transition: opacity 200ms ease;
   }
   .terminal-key:focus {
     outline: none;
@@ -49,57 +38,62 @@
     outline-offset: 2px;
   }
 
-  /* Left cell: the state. */
+  /* Left cell: the state, a dot and a word. */
   .terminal-key-state {
     display: inline-flex;
     align-items: center;
     min-width: 0;
     gap: 8px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 500;
     line-height: 16px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
     color: var(--muted-foreground);
     transition: color 200ms ease;
   }
   .terminal-key-state svg {
     flex: none;
-    width: 13px;
-    height: 13px;
-    stroke-width: 1.8;
+    width: 14px;
+    height: 14px;
+    stroke-width: 1.75;
+  }
+  .terminal-key[data-phase="live"] .terminal-key-state {
+    color: var(--foreground);
   }
   .terminal-key-word {
     animation: terminal-key-word 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   }
 
-  /* Right cell: the verb. */
+  /* Right cell: the action, a small tinted button inside the capsule. */
   .terminal-key-verb {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    font-size: 11px;
+    gap: 6px;
+    height: 26px;
+    padding: 0 9px 0 11px;
+    border-radius: 6px;
+    background: color-mix(in oklch, var(--tone-executing) 12%, transparent);
+    font-size: 12.5px;
     font-weight: 500;
     line-height: 16px;
     white-space: nowrap;
-    color: var(--muted-foreground);
-    transition: color 200ms ease;
+    color: var(--tone-executing);
+    transition:
+      background-color 160ms ease,
+      color 160ms ease;
   }
   .terminal-key-verb svg {
     flex: none;
-    width: 12px;
-    height: 12px;
-    stroke-width: 1.8;
+    width: 13px;
+    height: 13px;
+    stroke-width: 2;
     transition: transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
   }
 
-  /* Quiet, hovered: the same accent hairline the well takes when hovered. */
   .terminal-key:hover:not(:disabled) {
-    border-color: color-mix(in oklch, var(--tone-executing) 36%, transparent);
+    border-color: color-mix(in oklch, var(--tone-executing) 32%, var(--hairline));
   }
   .terminal-key:hover:not(:disabled) .terminal-key-verb {
-    color: var(--foreground);
+    background: color-mix(in oklch, var(--tone-executing) 20%, transparent);
   }
   .terminal-key[data-mode="view"]:hover:not(:disabled) .terminal-key-verb svg {
     transform: translateX(2px);
@@ -108,22 +102,31 @@
     transform: translateX(-2px);
   }
 
-  /* Armed: control while the switch still works. */
+  /* Armed: control while the switch still works. The capsule takes the
+   * accent and the action turns quiet, since it now only lets go. */
   .terminal-key[aria-checked="true"]:not(:disabled) {
-    border-color: color-mix(in oklch, var(--tone-executing) 45%, transparent);
-    background: color-mix(in oklch, var(--tone-executing) 12%, var(--popover));
-  }
-  .terminal-key[aria-checked="true"]:not(:disabled)::after {
-    opacity: 1;
+    border-color: color-mix(in oklch, var(--tone-executing) 50%, transparent);
+    background: color-mix(in oklch, var(--tone-executing) 9%, var(--card));
+    box-shadow:
+      0 0 0 3px color-mix(in oklch, var(--tone-executing) 10%, transparent),
+      0 8px 20px -14px color-mix(in oklch, var(--tone-executing) 40%, transparent);
   }
   .terminal-key[aria-checked="true"]:not(:disabled) .terminal-key-state {
     color: var(--tone-executing);
   }
+  .terminal-key[aria-checked="true"]:not(:disabled) .terminal-key-verb {
+    background: color-mix(in oklch, var(--foreground) 6%, transparent);
+    color: var(--foreground);
+  }
+  .terminal-key[aria-checked="true"]:hover:not(:disabled) .terminal-key-verb {
+    background: color-mix(in oklch, var(--foreground) 11%, transparent);
+  }
 
-  /* A status must stay legible: dimmed, never faded out. */
+  /* A status must stay legible: the verb goes, the word stays. */
   .terminal-key:disabled {
+    padding-right: 13px;
     cursor: default;
-    opacity: 0.78;
+    box-shadow: none;
   }
 
   /* The dot, shared by the key, the well's cue and its notice. */
@@ -182,7 +185,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .terminal-key,
-  .terminal-key::after,
   .terminal-key-state,
   .terminal-key-verb,
   .terminal-key-verb svg,

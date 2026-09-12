@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { useAtomValue } from "jotai/react";
-import { ExternalLinkIcon } from "lucide-react";
+import { ExternalLinkIcon, KeyboardIcon } from "lucide-react";
 import {
   createContext,
   useContext,
@@ -121,7 +121,7 @@ export function TerminalView({ stage, frame, factory, deps }: TerminalViewProps)
           <div ref={hostRef} className="terminal-host" aria-label="Agent terminal" />
           {mode === "view" && phase === "live" && (
             <span className="terminal-takeover-cue" aria-hidden="true">
-              <span className="terminal-dot" />
+              <KeyboardIcon />
               take control
             </span>
           )}
@@ -255,7 +255,8 @@ function Stamp({
     since === null ? "" : ` · ${formatElapsed(Math.max(0, Math.floor((now - since) / 1000)))} ago`;
   return (
     <div className="terminal-stamp" role="status">
-      <span className="eyebrow">
+      <span className="terminal-stamp-word">
+        <span className="terminal-dot" aria-hidden="true" />
         {word}
         {ago}
       </span>

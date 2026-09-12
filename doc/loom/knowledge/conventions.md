@@ -219,3 +219,7 @@ See [Git and Build Workflow](conventions/git-and-build-workflow.md).
 ## Version and Release Identity
 
 See [Code Style and Structure](conventions/code-style-and-structure.md).
+
+## Web Dashboard Typography
+
+Controls, cues and status words in the dashboard use the body face in sentence case; monospace only for ids and code, uppercase only via `eyebrow`, `.stage-tag` and `.rank-caption`. See [Web Dashboard Typography](conventions/web-dashboard-typography.md).

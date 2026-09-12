@@ -41,8 +41,9 @@ const TYPE_TAG: Partial<Record<StageSummary["stage_type"], string>> = {
   "knowledge-distill": "distill",
 };
 
-/// An index card on the sheet: state and type along the top, name and id,
-/// then the live row. The card re-keys on status so a change washes it.
+/// An index card on the sheet: state and type along the top with the
+/// terminal glyph in the corner, name and id, then the live row. The card
+/// re-keys on status so a change washes it.
 export function StageNode({ data }: NodeProps<StageNodeType>) {
   const { stage, index, emphasis } = data;
   const { open, openTerminal } = useGraphActions();
@@ -71,7 +72,6 @@ export function StageNode({ data }: NodeProps<StageNodeType>) {
       <div key={stage.status} className="stage-card">
         <header className="flex items-center gap-1.5">
           <StateBadge status={stage.status} className="text-xs" />
-          <TerminalGlyph stage={stage} onOpen={openTerminal} className="nodrag" />
           {TYPE_TAG[stage.stage_type] && (
             <span className="stage-tag">{TYPE_TAG[stage.stage_type]}</span>
           )}
@@ -97,6 +97,7 @@ export function StageNode({ data }: NodeProps<StageNodeType>) {
           >
             <MaximizeIcon className="size-3" />
           </button>
+          <TerminalGlyph stage={stage} onOpen={openTerminal} className="nodrag" />
         </header>
         <p className="mt-1.5 truncate text-[15px] leading-5 font-medium text-foreground">
           {stage.name}

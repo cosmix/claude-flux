@@ -5,7 +5,6 @@ import type { TerminalMode, TerminalPhase } from "@/components/terminal/use-term
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /// The word the key shows on its left: the mode while live, else the phase.
-/// Lowercase in the DOM; the stylesheet sets it in caps.
 function stateWord(mode: TerminalMode, phase: TerminalPhase): string {
   if (phase === "live") return mode === "view" ? "viewing" : "controlling";
   return phase;
