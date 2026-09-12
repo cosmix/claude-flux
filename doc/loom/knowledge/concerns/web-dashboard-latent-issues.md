@@ -40,3 +40,24 @@ explicit `0` delegates selection to the OS.
   trade-off — a platform-portable deadline over a readiness-flag detector that cannot see a
   half-closed peer while gated — not an oversight; a busy dashboard could in principle have all
   8 slots pinned by stalled peers for up to ~32s before any reclaim.
+
+## Settings lanes (2026-09-12)
+
+Reviewed during the settings-lanes integration-verify and deliberately left unchanged:
+
+1. **`useSettingsWrites` has no per-key sequence guard.** An architecture-review finding
+   ("out-of-order responses clobber a newer write") is real in principle but unreachable
+   from the current UI — nothing lets a user issue two writes to the same key fast
+   enough to race. Left as a latent risk rather than fixed pre-emptively.
+2. **Phone cards mark BOTH tiers `data-effective` when a row's model and effort resolve
+   at different tiers.** The effective marker is computed per row via
+   `entries.some(...)`, not per lane, so a pair split across user/project tiers shows
+   both cells as "in effect" instead of naming which one actually applies to which key.
+3. **`createConfigClient().write`'s real `POST`/`X-Loom-Csrf` path has no contract
+   test.** Every settings test uses `fakeClient`; the coverage reviewer flagged this and
+   it was left unaddressed for this plan.
+4. **Bundle-size warning persists and grew slightly.** `web/dist/assets/index.js` is
+   852,480 bytes at the pre-plan baseline and 862,753 bytes after settings-lanes —
+   consistent with item 4 above (one committed bundle, code-splitting out of scope);
+   candidate work if bundle size becomes a real budget: dynamic `import()` for the
+   terminal and graph routes.

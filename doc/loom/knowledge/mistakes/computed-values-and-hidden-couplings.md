@@ -156,3 +156,29 @@ the map in two would let one term be simultaneously "too common to score" and
 principled resolution. One shared map, plus a guarantee that the surviving
 set is never empty when anything is rescuable, keeps both rules honest
 against the same reality.
+
+## A Merged Lane-Provenance Value Gated Both Display and a Control's Visibility (2026-09-12)
+
+**What happened:** `LaneSlot` (`web/src/components/settings-control.tsx`) folds a
+write's in-flight status into the lane's displayed provenance — `p = status.phase ===
+"error" ? "error" : status.phase === "pending" ? "pending" : state.provenance` — so the
+UI can show one merged badge. The same merged value also gated the clear (`✕`) button's
+visibility. A rejected write to an already-set key therefore hid the clear button: the
+merged value read `"error"`, not `"set"`, even though the underlying config entry was
+still set and clearable. The brief's own pseudo-code had the same shape, and the
+component it replaced (the old `SettingRow`) gated the same button on
+`provenanceAt(...) === "set"` alone — a single, unmerged source.
+
+**Why:** a value built for one reader (the badge) looks safe to reuse for a second
+reader (the button) once both need "the same kind of state" — but a display merge is
+lossy by design, and the button needed the fact the merge discarded.
+
+**Prevention — detection rule:** before gating a control's behaviour on a value that
+also drives a display string or badge, ask whether that value is a MERGE of more than
+one underlying signal. If it is, `rg` every reader of the pinned model state
+(`state.provenance` here) and gate behaviour on that unmerged state directly, never on
+the display value derived from it. Compare against the component being replaced: what
+did IT gate the same behaviour on?
+
+**Fix:** the clear button now gates on `state.provenance === "set" && !pending`,
+reading the model's own provenance instead of the merged display value.

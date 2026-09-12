@@ -136,3 +136,18 @@ helpers explicitly, and name them by path in every later worker's brief. Absent 
 orchestrator convergence pass after the fan-out returns rather than assuming disjoint files stayed
 consistent. See [Ledger TUI Rendering](mistakes/ledger-tui-rendering.md) for three independent
 instances of this in one stage.
+
+## Offline File Harness for a Visual Review Under a No-Network Sandbox (2026-09-12)
+
+When a stage sandbox denies loopback TCP (see
+[mistakes/sandbox-and-settings.md](mistakes/sandbox-and-settings.md#a-stage-sandbox-can-deny-loopback-tcp-even-while-the-server-reports-listening-but-not-always-2026-09-12))
+but a plan step needs a real browser render for review, build the harness as static
+files instead of a server: `vite build --base ./` produces a bundle loadable via
+`file://`; wire real routes with `createMemoryRouter` at the URL under review (e.g.
+`/?settings=1`); stub `fetch` with the plan's own fixture JSON and stub `WebSocket` so
+the app never tries the network; screenshot with Playwright's `chrome-headless-shell`
+launched with `--allow-file-access-from-files` (required for `file://` fetches of
+sibling assets). Keep the harness itself out of the reviewed bundle (e.g.
+`web/node_modules/.harness/`) and write any screenshots inside the worktree proper, not
+under `node_modules/` — the Read tool's worktree guard opens images by path, and a
+`node_modules`-nested directory is easy to exclude by accident from later tooling.

@@ -112,6 +112,12 @@ File: 400 lines | Function: 50 lines | Struct impl: 300 lines | Exceed = refacto
 exceptions are recorded in `loom/maintainability-baseline.txt` and may only shrink: a new exception
 or an increase above the recorded size fails the gate.
 
+**Scope on the frontend:** the 50-line function limit applies to production functions and to
+vitest `it()` bodies, not to `describe()` grouping callbacks — a `describe` block is a
+namespace, not a function whose length signals complexity. Do not split a test file's grouping
+structure just to satisfy a per-function line count; split it only when an individual `it()`
+body itself exceeds the limit.
+
 ## Dependency Management
 
 Never hand-edit manifests. Use: `cargo add`, `bun add`, `uv add`, `go get`
