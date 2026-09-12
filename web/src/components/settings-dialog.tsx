@@ -297,6 +297,10 @@ function LoadNotice({ load, onRetry }: { load: LoadState; onRetry: () => void })
   return null;
 }
 
+// Both layouts take the same props; below 700px the cards replace the table.
+// Crossing the breakpoint swaps the component, so local UI state inside it
+// (an uncommitted number-field draft) is dropped; write statuses live above
+// it and survive.
 function Body({
   client,
   query,
@@ -310,10 +314,6 @@ function Body({
 }) {
   const { load, statuses, toast, write, retry } = useSettingsWrites(client);
   const narrow = useMediaQuery("(max-width: 699px)");
-  // Both layouts take the same props; below 700px the cards replace the table.
-  // Crossing the breakpoint swaps the component, so local UI state inside it
-  // (an uncommitted number-field draft) is dropped; write statuses live above
-  // it and survive.
 
   const sections = useMemo(
     () => (load.phase === "ready" ? filterSections(sectionRows(load.data.entries), query) : []),
