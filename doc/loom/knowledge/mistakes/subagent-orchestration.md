@@ -343,3 +343,13 @@ exception the change existed to close, on the surface an agent actually reads at
 doctrine block means `rg` for a distinctive phrase of the OLD wording across `loom/src`, `skills/`,
 `agents/`, `hooks/` and `doc/loom/knowledge/` before committing; a green `tests_doctrine` proves the
 two pinned surfaces agree, not that the doctrine is consistent.
+
+## A Coordinator Wave for a Mid-Sized Feature Cost Forty Minutes (2026-09-12)
+
+**What happened:** a configuration feature touching 35 files (fourteen config keys, two project sections, pressure flags, launch and dashboard wiring, docs) was run as one opus coordinator over five sonnet workers in two waves. Wall clock from spawn to a verified tree was about forty minutes; the user called that unacceptable for the size of the work. The coordinator itself spent turns briefing, the second wave could not start until the first returned, and the main agent still had to fix two seams the workers left (a key-level fallback that returned the built-in instead of the user tier, and an integration test that pinned the old dev-build notice).
+
+**Why:** the two-level shape trades wall clock for context isolation. It pays off when the territory is too wide for one brief, not when the work is a handful of well-mapped files per lane. Here every lane was already mapped in the main agent's brief, so the coordinator added a hop without adding judgment.
+
+**Prevention:** when the main agent has already mapped every file and signature, spawn the lanes directly as a flat fan-out and skip the coordinator, even if the user suggested one; say so and proceed. Sequence only what truly depends on a foundation, and give dependent workers the foundation's signatures up front so they start at once. Budget wall clock explicitly: a lane that needs more than fifteen minutes is a lane whose brief was too vague.
+
+**Fix:** none in code. The feature shipped; the lesson is about shape.

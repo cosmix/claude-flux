@@ -223,3 +223,9 @@ See [Code Style and Structure](conventions/code-style-and-structure.md).
 ## Web Dashboard Typography
 
 Controls, cues and status words in the dashboard use the body face in sentence case; monospace only for ids and code, uppercase only via `eyebrow`, `.stage-tag` and `.rank-caption`. See [Web Dashboard Typography](conventions/web-dashboard-typography.md).
+
+## Model and Effort Config
+
+`[pressure]` (the three `loom pressure` steps) and `[models]` (each stage type's main-agent
+session) resolve model and effort per key: per-invocation value → project config → user config
+→ built-in default. See [Model and Effort Config](conventions/model-and-effort-config.md).

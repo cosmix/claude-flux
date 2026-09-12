@@ -11,7 +11,7 @@
 | [architecture.md](architecture.md) | High-level component relationships, data flow, module dependencies | 246 |
 | [entry-points.md](entry-points.md) | Key files agents should read first | 223 |
 | [patterns.md](patterns.md) | Architectural patterns discovered in the codebase | 138 |
-| [conventions.md](conventions.md) | Coding conventions discovered in the codebase | 221 |
+| [conventions.md](conventions.md) | Coding conventions discovered in the codebase | 231 |
 | [mistakes.md](mistakes.md) | Mistakes made and lessons learned - what to avoid | 210 |
 | [stack.md](stack.md) | Dependencies, frameworks, and tooling used in the project | 116 |
 | [concerns.md](concerns.md) | Technical debt, warnings, and issues to address | 197 |
@@ -71,7 +71,7 @@
 | [security-sandbox-and-hooks](patterns/security-sandbox-and-hooks.md) | Hooks, input validation, permission sync, sandbox config, untrusted values. | 94 |
 | [stage-daemon-channels](patterns/stage-daemon-channels.md) | How a stage agent reaches the daemon to change its own stage's state, and why… | 81 |
 | [stage-lifecycle-and-verification](patterns/stage-lifecycle-and-verification.md) | Stage/session states, locked writes, acceptance & verification layers. | 170 |
-| [subagent-hierarchy](patterns/subagent-hierarchy.md) | Flat fan-out vs 2-level coordinator hierarchy vs agent teams: when to use each… | 82 |
+| [subagent-hierarchy](patterns/subagent-hierarchy.md) | Flat fan-out vs 2-level coordinator hierarchy vs agent teams: when to use each… | 86 |
 
 ### conventions
 
@@ -82,6 +82,7 @@
 | [dispute-and-adjudication](conventions/dispute-and-adjudication.md) | Dispute file authority split, adjudicator scope, budgets, and transport | 112 |
 | [git-and-build-workflow](conventions/git-and-build-workflow.md) | Git/worktree ops, cargo fmt/test discipline, the shared maintainability ledger | 132 |
 | [guidance-channels-and-plugin-scope](conventions/guidance-channels-and-plugin-scope.md) | Guidance-channel selection, verification-is-main-agent rule, plugin scope | 94 |
+| [model-and-effort-config](conventions/model-and-effort-config.md) | `[pressure]` and `[models]` config sections, the four-tier precedence chain… | 57 |
 | [plan-yaml-and-hooks](conventions/plan-yaml-and-hooks.md) | Plan YAML schema, hook stdin/stdout contract, skill format, additive fields | 134 |
 | [web-dashboard-typography](conventions/web-dashboard-typography.md) | Topic notes for the conventions knowledge area. | 11 |
 
@@ -115,7 +116,7 @@
 | [shell-command-matchers](mistakes/shell-command-matchers.md) | Separators that never become tokens, forgeable glob lookups, env leakage in… | 246 |
 | [status-broadcast-hardening](mistakes/status-broadcast-hardening.md) | Frame-overflow eviction and read-timeout desync from a widened status broadcast. | 74 |
 | [store-without-consumer](mistakes/store-without-consumer.md) | A store that was written but never read - what happened, why it stayed… | 94 |
-| [subagent-orchestration](mistakes/subagent-orchestration.md) | Liveness signals for subagents, when a missing report is not a missing result… | 345 |
+| [subagent-orchestration](mistakes/subagent-orchestration.md) | Liveness signals for subagents, when a missing report is not a missing result… | 355 |
 | [testing-and-lint](mistakes/testing-and-lint.md) | Lint and test discipline: --all-targets, --no-fail-fast, headless CI, ambient… | 555 |
 | [tests-that-cannot-fail](mistakes/tests-that-cannot-fail.md) | Tests that pass regardless of whether the bug they exist to catch is present… | 223 |
 | [tmux-backend](mistakes/tmux-backend.md) | tmux spawn-failure exit codes, cleanup-on-every-error-path discipline, and PID… | 120 |

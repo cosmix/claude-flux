@@ -40,7 +40,7 @@ validated in transitions.rs. See [patterns.md -- State Machine Pattern](../patte
 - **Standard** (default) -- Regular implementation stages, require goal-backward verification
 - **Knowledge** -- No worktree, commits required (directly to main), auto merged=true, exploration focus
 - **IntegrationVerify** -- Second-to-last quality gate combining code review AND functional verification
-- **KnowledgeDistill** -- Final stage, runs after integration-verify, curates session memories into permanent knowledge (worktree stage; **opus default, `xhigh` reasoning effort** — every `StageType` arm returns opus, see `models/stage/types.rs::default_model`)
+- **KnowledgeDistill** -- Final stage, runs after integration-verify, curates session memories into permanent knowledge (worktree stage; **sonnet default, `high` reasoning effort** — the one `StageType` arm that does not return opus, see `models/stage/types.rs::default_model`; configurable per stage type via `[models]`, see conventions/model-and-effort-config.md)
 
 Signal generation has 4 stable prefix generators in cache.rs (standard, knowledge, integration-verify, knowledge-distill).
 
