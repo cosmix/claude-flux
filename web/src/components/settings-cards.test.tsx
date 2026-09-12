@@ -63,6 +63,13 @@ describe("settings cards", () => {
     expect(within(projectTier as HTMLElement).getAllByRole("combobox")).toHaveLength(2);
     expect(projectTier.getAttribute("data-effective")).toBe("true");
 
+    // The pair's model resolves at project, its effort at user: a tier
+    // carries `data-effective` when any of its entries is the one in effect.
+    expect(userTier.getAttribute("data-effective")).toBe("true");
+    const builtinTier = standard.querySelector('.settings-tier[data-lane="builtin"]');
+    if (!builtinTier) throw new Error("standard card has no built-in tier");
+    expect(builtinTier.getAttribute("data-effective")).toBeNull();
+
     expect(standard.querySelector(".settings-res")?.textContent).toBe("runs sonnet · high");
   });
 
