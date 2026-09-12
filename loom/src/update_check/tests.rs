@@ -32,31 +32,51 @@ fn newer_latest_version_produces_one_notice_naming_both_versions() {
 }
 
 #[test]
-fn dev_build_is_compared_by_semver_precedence() {
+fn dev_build_is_never_notified_and_never_refreshes() {
     let now = Utc::now();
     let current = Version::parse("0.2.1-dev.5+abc1234").unwrap();
 
-    let behind = UpdateState {
+    let newer = UpdateState {
         last_checked: Some(now),
         latest_version: Some("0.2.1".to_string()),
     };
+    let action = decide(Some(&newer), true, 24, now, &current);
     assert!(
-        decide(Some(&behind), true, 24, now, &current)
-            .notice
-            .is_some(),
-        "a dev build ahead of unreleased commits is still behind the actual release"
+        action.notice.is_none(),
+        "a dev build must never be notified, even of a newer release"
     );
+    assert!(!action.refresh);
 
-    let ahead = UpdateState {
+    let older = UpdateState {
         last_checked: Some(now),
         latest_version: Some("0.2.0".to_string()),
     };
+    let action = decide(Some(&older), true, 24, now, &current);
     assert!(
-        decide(Some(&ahead), true, 24, now, &current)
-            .notice
-            .is_none(),
+        action.notice.is_none(),
         "a dev build must not be told it is behind an older release"
     );
+    assert!(!action.refresh);
+
+    let never_checked = UpdateState {
+        last_checked: None,
+        latest_version: Some("0.2.1".to_string()),
+    };
+    let action = decide(Some(&never_checked), true, 24, now, &current);
+    assert!(action.notice.is_none());
+    assert!(
+        !action.refresh,
+        "a dev build must not schedule a refresh even when last_checked is None"
+    );
+
+    let zero = Version::parse("0.0.0-dev+abc1234").unwrap();
+    let ahead = UpdateState {
+        last_checked: None,
+        latest_version: Some("0.2.1".to_string()),
+    };
+    let action = decide(Some(&ahead), true, 24, now, &zero);
+    assert!(action.notice.is_none());
+    assert!(!action.refresh);
 }
 
 /// `notice_for` is the formatter `notify_and_maybe_refresh` prints straight

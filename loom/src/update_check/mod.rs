@@ -33,11 +33,17 @@
 //! a fetch that fails still stamps `last_checked` so a network outage backs
 //! off instead of respawning on every invocation.
 
+mod decide;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use chrono::{DateTime, Duration, Utc};
 use semver::Version;
+
+use decide::decide;
+#[cfg(test)]
+use decide::notice_for;
 
 /// The persisted record at `<loom dir>/update-state.json`, every field
 /// optional so a partial or older record still parses; anything unparseable
@@ -48,13 +54,6 @@ struct UpdateState {
     last_checked: Option<DateTime<Utc>>,
     #[serde(default)]
     latest_version: Option<String>,
-}
-
-/// What the foreground should do this invocation: print at most one line,
-/// and/or hand off to a detached fetcher.
-struct Action {
-    notice: Option<String>,
-    refresh: bool,
 }
 
 /// The loom user directory: the parent of `crate::user_config::config_path()`
@@ -82,71 +81,6 @@ fn lock_path(dir: &Path) -> PathBuf {
 fn read_state(dir: &Path) -> Option<UpdateState> {
     let text = std::fs::read_to_string(state_path(dir)).ok()?;
     serde_json::from_str(&text).ok()
-}
-
-/// The "is there a newer release" half of [`decide`]. A garbage or
-/// unparseable `latest_version`, or one no newer than `current`, reads as
-/// "no notice" rather than an error.
-fn notice_for(state: Option<&UpdateState>, current: &Version) -> Option<String> {
-    state
-        .and_then(|s| s.latest_version.as_deref())
-        .and_then(|v| Version::parse(v.trim_start_matches('v')).ok())
-        .filter(|latest| latest > current)
-        .map(|latest| {
-            format!(
-                "loom {current} is out of date (latest {latest}) - run `loom update` to upgrade."
-            )
-        })
-}
-
-/// The pure decision: given the last-known state, the two `[update]` config
-/// settings, the current time, and the running version, what should this
-/// invocation do? Takes `check_enabled`/`interval_hours` rather than
-/// `&UserConfig` so this function — the one real branch to test — needs no
-/// seam into `user_config` (which this stage may not edit) to exercise the
-/// disabled case.
-fn decide(
-    state: Option<&UpdateState>,
-    check_enabled: bool,
-    interval_hours: u32,
-    now: DateTime<Utc>,
-    current: &Version,
-) -> Action {
-    if !check_enabled {
-        return Action {
-            notice: None,
-            refresh: false,
-        };
-    }
-
-    let notice = notice_for(state, current);
-
-    // Floored the same way `schedule_refresh` floors the lock lifetime (see
-    // `MIN_REFRESH_INTERVAL_MINUTES`): otherwise `check_interval_hours = 0`
-    // (a valid, user-settable config) would make every single invocation
-    // decide to refresh, and since the fetcher releases its lock the moment
-    // it finishes, the next invocation immediately forks another one — one
-    // fetcher plus one unauthenticated GitHub request per loom invocation,
-    // against a 60/hour rate limit, with loom running from every hook.
-    let interval = Duration::hours(i64::from(interval_hours))
-        .max(Duration::minutes(MIN_REFRESH_INTERVAL_MINUTES));
-    let refresh = match state.and_then(|s| s.last_checked) {
-        None => true,
-        Some(last_checked) => {
-            let elapsed = now - last_checked;
-            // A `last_checked` in the future (clock skew, e.g. a VM or CI
-            // host whose clock jumps backwards) must not disable the check
-            // permanently: the writer always stamps its own `now`, so the
-            // very next successful refresh sets `last_checked = now` again
-            // and the record self-heals after exactly one fetch — the
-            // exclusive lock in `schedule_refresh` already bounds that to
-            // one fetch per lock lifetime, so there is no "storm" to guard
-            // against here.
-            elapsed >= interval || elapsed < Duration::zero()
-        }
-    };
-
-    Action { notice, refresh }
 }
 
 /// The floor for two different things: (1) how often a fetch may actually
@@ -364,7 +298,8 @@ pub fn run_refresh() {
 
 /// Entry point for every ordinary foreground invocation: reads the state
 /// file, prints at most one line to stderr, and schedules a detached refresh
-/// when stale. Takes no network call and never fails.
+/// when stale. A dev build (see `decide`) prints nothing and schedules no
+/// refresh. Takes no network call and never fails.
 pub fn notify_and_maybe_refresh() {
     let Some(dir) = resolve_dir() else { return };
     let Ok(current) = Version::parse(env!("LOOM_VERSION")) else {
