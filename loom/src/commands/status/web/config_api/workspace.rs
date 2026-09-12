@@ -1,22 +1,39 @@
 //! The workspace tier of a config key, read once per request.
 //!
-//! # Why this mirrors the section-level fallback rather than reading a key
+//! # Two shadowing rules, because `.loom/work/config.toml` uses both
 //!
-//! `.loom/work/config.toml` overrides `~/.loom/config.toml` a whole SECTION at
-//! a time, not a key at a time (see
-//! [`crate::fs::work_dir::read_context_config`]): a present `[context]` wins
-//! outright, and any key it omits derives from the built-ins rather than
-//! falling through to the user tier. So "what does the project scope say about
-//! `context.ceiling_tokens`" is not "what does that key hold" — it is "what
-//! does the section this key lives in resolve that key to", which for a
-//! present-but-keyless section is the built-in.
+//! `[terminal]` and `[context]` override `~/.loom/config.toml` a whole SECTION
+//! at a time (see [`crate::fs::work_dir::read_context_config`]): a present
+//! section wins outright, and any key it omits derives from the built-ins
+//! rather than falling through to the user tier. Both structs bake that
+//! derivation in — `TerminalConfig`/`ContextConfig` implement `Default`, so
+//! there is no way to tell "this section set nothing" from "this section set
+//! everything but the one key I asked about" once it is deserialized.
 //!
-//! [`Workspace::value_of`] answers that question, and
-//! `config_api::tests` pins it against
+//! `[pressure]` and `[models]` shadow a KEY at a time instead: every field in
+//! them is optional, and a present section that omits a key falls through to
+//! `~/.loom/config.toml` for that key rather than shadowing it with a built-in
+//! the operator never asked for — a plan's stage can leave `standard_effort`
+//! unset while pinning `standard_model`, and the effort must still come from
+//! whatever the user tier (or the built-in) says. [`ProjectTier`] names which
+//! rule a key lives under, [`resolve`] is the one `match` that assigns it, and
+//! [`Workspace::shadows`] is what a caller asks instead of re-deriving the
+//! rule from the key's section.
+//!
+//! [`Workspace::value_of`] answers "what does the project tier's own value for
+//! this key look like" regardless of whether it shadows — for an omitted
+//! section-level key that is the built-in the section would derive; for an
+//! omitted key-level key it is the user tier's value, the one the fallback
+//! leaves in force, while [`Workspace::shadows`] is what keeps the project
+//! tier out of `effective` in that case.
+//!
+//! `config_api::tests` pins all of this against the runtime readers —
 //! [`crate::fs::work_dir::read_terminal_config`] and
-//! [`crate::fs::work_dir::resolve_context_ceiling_tokens`] for all three
-//! sources, because a settings page that disagrees with the daemon about the
-//! value in force is worse than no settings page.
+//! [`crate::fs::work_dir::resolve_context_ceiling_tokens`] for the two
+//! section-level keys, [`crate::fs::work_dir::read_pressure_config`] and
+//! [`crate::fs::work_dir::resolve_stage_model_effort`] for the fourteen
+//! key-level ones — because a settings page that disagrees with the daemon
+//! about the value in force is worse than no settings page.
 
 use std::path::{Path, PathBuf};
 
@@ -26,6 +43,18 @@ use toml_edit::DocumentMut;
 use crate::fs::work_dir::{read_config, ContextConfig, WorkDir};
 use crate::models::session::TerminalConfig;
 use crate::user_config::keys::KeySpec;
+use crate::user_config::UserConfig;
+
+/// How the workspace tier shadows the user tier for one key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ProjectTier {
+    /// A present section wins WHOLE: a key it omits resolves to the built-in
+    /// rather than falling through (`[terminal]`, `[context]`).
+    Section,
+    /// Only a present KEY wins; a section that omits the key falls through to
+    /// the user tier (`[pressure]`, `[models]`).
+    Key,
+}
 
 /// A served tree's `.loom/work` and its parsed `config.toml`.
 pub(super) struct Workspace {
@@ -87,33 +116,65 @@ impl Workspace {
 
     /// What the workspace tier resolves `spec` to.
     ///
-    /// With the section absent this is the built-in the section would derive,
-    /// which is what an operator gets the moment the section appears — not the
-    /// user tier's value, which the section would shadow.
+    /// For a section-level key with the section absent this is the built-in
+    /// the section would derive, which is what an operator gets the moment
+    /// the section appears — not the user tier's value, which the section
+    /// would shadow. For a key-level key the file does not set, it is the
+    /// user tier's value: that is what clearing the key leaves in force.
     pub(super) fn value_of(&self, spec: &KeySpec) -> Result<String> {
         match resolve(spec, self.doc.get(spec.section).cloned()) {
-            Some(value) => value,
+            Some((_, value)) => Ok(value?.unwrap_or_else(|| UserConfig::load().value_of(spec).0)),
             None => bail!("{} has no project scope", spec.name),
+        }
+    }
+
+    /// Whether the project tier is the one in force for `spec`: a present
+    /// section for a section-level key, a present key for a key-level one.
+    pub(super) fn shadows(&self, spec: &KeySpec) -> bool {
+        match tier_of(spec) {
+            Some(ProjectTier::Section) => self.has_section(spec),
+            Some(ProjectTier::Key) => self.has_key(spec),
+            None => false,
         }
     }
 }
 
-/// What the workspace tier resolves `spec` to in `section`, or `None` when the
-/// key has no workspace tier at all.
+/// What the workspace tier resolves `spec` to in `section`, and how it
+/// shadows the user tier — `None` when the key has no workspace tier at all.
 ///
-/// The ONE place the workspace-backed keys are named. [`backs`] asks this
-/// question rather than keeping a second list of key names beside it: a list
-/// and a `match` that must agree drift, and the drift would land as a panic on
-/// a live request rather than as a build failure.
-fn resolve(spec: &KeySpec, section: Option<toml::Value>) -> Option<Result<String>> {
+/// The ONE place the workspace-backed keys are named. [`backs`] and
+/// [`tier_of`] ask this question rather than keeping a second list of key
+/// names beside it: a list and a `match` that must agree drift, and the drift
+/// would land as a panic on a live request rather than as a build failure.
+///
+/// The `_` arm matches on `spec.section` rather than `spec.name` so a key
+/// added to `[pressure]`/`[models]` in the registry picks up the key-level
+/// rule with no edit here — the two exact-name arms above stay name-matched
+/// so a later key added to `[context]` cannot silently inherit
+/// `ContextConfig`'s reading of a DIFFERENT field.
+///
+/// The value is `None` only for a key-level key the section does not name;
+/// [`Workspace::value_of`] fills that in from the user tier.
+fn resolve(
+    spec: &KeySpec,
+    section: Option<toml::Value>,
+) -> Option<(ProjectTier, Result<Option<String>>)> {
     match spec.name {
-        "terminal.backend" => {
-            Some(typed::<TerminalConfig>(section, spec).map(|config| config.backend.to_string()))
-        }
-        "context.ceiling_tokens" => Some(
-            typed::<ContextConfig>(section, spec).map(|config| config.ceiling_tokens.to_string()),
-        ),
-        _ => None,
+        "terminal.backend" => Some((
+            ProjectTier::Section,
+            typed::<TerminalConfig>(section, spec).map(|config| Some(config.backend.to_string())),
+        )),
+        "context.ceiling_tokens" => Some((
+            ProjectTier::Section,
+            typed::<ContextConfig>(section, spec)
+                .map(|config| Some(config.ceiling_tokens.to_string())),
+        )),
+        _ => match spec.section {
+            "pressure" | "models" => {
+                Some((ProjectTier::Key, Ok(section_key(section.as_ref(), spec))))
+            }
+            _ => None,
+        },
     }
 }
 
@@ -121,6 +182,20 @@ fn resolve(spec: &KeySpec, section: Option<toml::Value>) -> Option<Result<String
 /// answers this by having an arm for the key or not.
 pub(super) fn backs(spec: &KeySpec) -> bool {
     resolve(spec, None).is_some()
+}
+
+/// How `spec`'s workspace tier shadows the user tier — see [`resolve`].
+pub(super) fn tier_of(spec: &KeySpec) -> Option<ProjectTier> {
+    resolve(spec, None).map(|(tier, _)| tier)
+}
+
+/// The section's own string for `spec.field`, or `None` when the section
+/// omits it or is itself absent.
+fn section_key(section: Option<&toml::Value>, spec: &KeySpec) -> Option<String> {
+    section
+        .and_then(|section| section.get(spec.field))
+        .and_then(toml::Value::as_str)
+        .map(str::to_owned)
 }
 
 fn parse(text: &str) -> Result<toml::Value> {

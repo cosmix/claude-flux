@@ -301,6 +301,51 @@ fn a_malformed_body_is_rejected_without_naming_a_path() {
     }
 }
 
+/// A project-scope write on a key-level key (`[models]`) creates the section
+/// from nothing and reports the pair the same way the section-level keys do —
+/// the write path is shared, only [`super::super::workspace`]'s shadowing
+/// rule differs.
+#[test]
+fn a_project_scope_write_creates_a_key_level_section() {
+    let scratch = scratch();
+    let updated = post_ok(
+        &scratch,
+        r#"{"scope":"project","name":"models.standard_effort","value":"low"}"#,
+    );
+    assert_eq!(updated.old, "high");
+    assert_eq!(updated.new, "low");
+    assert_eq!(updated.entry.effective.source, Source::Project);
+    let text = project_text(&scratch);
+    assert!(text.contains("standard_effort = \"low\""), "{text}");
+}
+
+/// Unsetting that same key drops it and, since it was the section's only key,
+/// the now-empty `[models]` too — the same `remove_key` behavior
+/// `context.ceiling_tokens` already exercises — leaving the effective value
+/// on the user tier rather than a keyless section winning whole.
+#[test]
+fn a_project_scope_unset_on_a_key_level_key_restores_the_user_tier() {
+    let scratch = scratch();
+    crate::user_config::set(
+        spec("models.standard_effort").unwrap(),
+        toml_edit::Value::from("low"),
+    )
+    .expect("set the user standard effort");
+    post_ok(
+        &scratch,
+        r#"{"scope":"project","name":"models.standard_effort","value":"xhigh"}"#,
+    );
+
+    let updated = post_ok(
+        &scratch,
+        r#"{"scope":"project","name":"models.standard_effort","value":null}"#,
+    );
+    assert_eq!(updated.old, "xhigh");
+    assert_eq!(updated.new, "low");
+    assert_eq!(updated.entry.effective.source, Source::User);
+    assert!(!project_text(&scratch).contains("[models]"));
+}
+
 #[test]
 fn a_write_leaves_the_other_scope_alone() {
     let scratch = scratch();

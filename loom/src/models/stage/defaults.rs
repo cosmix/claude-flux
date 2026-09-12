@@ -74,3 +74,59 @@ impl Default for Stage {
         }
     }
 }
+
+/// Built-in per-[`StageType`] model and reasoning-effort defaults.
+///
+/// This is the LAST tier of a four-tier resolution chain, in precedence
+/// order: a stage's own `model`/`reasoning_effort` plan fields, then
+/// `.loom/work/config.toml`'s `[models]` section, then `~/.loom/config.toml`'s
+/// `[models]` section, then the built-ins below.
+/// [`crate::fs::work_dir::resolve_stage_model_effort`] is the single place
+/// that walks the whole chain. A stage should OMIT `model`/`reasoning_effort`
+/// so the configured tiers apply — it sets them only as a deliberate
+/// per-stage override, not as the default path plans should take.
+///
+/// Every implementation stage's MAIN AGENT is an orchestrator: it reads
+/// context, plans the work, and delegates implementation to subagents (sonnet
+/// or codex terra workers for common implementation and integration tests,
+/// codex luna workers for boilerplate/scaffolding/simple unit tests, opus
+/// workers only where architecture or algorithm judgment is required). Model
+/// choice for the actual implementation work happens at the subagent level,
+/// not here. The one exception is knowledge-distill: a single-agent sonnet
+/// pass over memories that are already compact summaries — no subagents.
+impl StageType {
+    /// Fallback model when neither a plan field nor a config tier sets one.
+    pub fn default_model(&self) -> &'static str {
+        match self {
+            // Knowledge stages: the main agent orchestrates exploration and
+            // delegates to Explore/sonnet subagents, curating their findings itself.
+            StageType::Knowledge => "opus",
+            // KnowledgeDistill curates stage memories into permanent knowledge:
+            // a linear read-synthesize-write pass driven by sonnet with NO
+            // subagents — the memories are already compact summaries, so the
+            // volume and the judgment both fit a single sonnet session.
+            StageType::KnowledgeDistill => "sonnet",
+            // Standard and integration-verify stages: the main agent orchestrates
+            // and delegates implementation/review work to subagents.
+            StageType::Standard | StageType::IntegrationVerify => "opus",
+        }
+    }
+
+    /// Fallback reasoning effort when neither a plan field nor a config tier
+    /// sets one — per stage type, not uniform.
+    pub fn default_reasoning_effort(&self) -> &'static str {
+        match self {
+            // A read-and-summarize pass over the tree: medium keeps the
+            // knowledge bootstrap fast without shortchanging the map it builds.
+            StageType::Knowledge => "medium",
+            // Reconciles conflicting stage memories into permanent knowledge —
+            // worth the deeper pass despite running on sonnet.
+            StageType::KnowledgeDistill => "high",
+            // The final quality gate, combining code review and functional
+            // verification, gets the highest effort available.
+            StageType::IntegrationVerify => "xhigh",
+            // Ordinary orchestration: plan the work, delegate, verify.
+            StageType::Standard => "high",
+        }
+    }
+}

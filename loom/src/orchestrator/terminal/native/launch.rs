@@ -97,7 +97,10 @@ fn resolve_prompt_cache_split_prefix_file(work_dir: &Path, stage: &Stage) -> Opt
 ///   and running it on the disputing stage's model would let a plan pick its
 ///   own judge — so it uses the adjudicator's own model
 ///   (`.loom/work/config.toml::[adjudication] model`, default `opus`).
-/// * Stage and knowledge sessions use the stage's effective values.
+/// * Stage and knowledge sessions resolve through the four-tier chain in
+///   `crate::fs::work_dir::resolve_stage_model_effort`: the stage's own plan
+///   fields, then `.loom/work/config.toml`'s `[models]`, then
+///   `~/.loom/config.toml`'s `[models]`, then the stage type's built-in.
 fn model_and_effort(kind: SessionType, stage: &Stage, work_dir: &Path) -> (String, String) {
     match kind {
         SessionType::Merge | SessionType::BaseConflict => ("opus".to_string(), "high".to_string()),
@@ -105,10 +108,14 @@ fn model_and_effort(kind: SessionType, stage: &Stage, work_dir: &Path) -> (Strin
             crate::orchestrator::adjudication::resolve_model(work_dir),
             "high".to_string(),
         ),
-        SessionType::Stage | SessionType::Knowledge => (
-            stage.effective_model().to_string(),
-            stage.effective_reasoning_effort().to_string(),
-        ),
+        SessionType::Stage | SessionType::Knowledge => {
+            crate::fs::work_dir::resolve_stage_model_effort(
+                work_dir,
+                stage.stage_type,
+                stage.model.as_deref(),
+                stage.reasoning_effort.as_deref(),
+            )
+        }
     }
 }
 

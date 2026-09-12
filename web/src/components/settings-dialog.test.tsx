@@ -20,8 +20,10 @@ function entry(overrides: Partial<ConfigEntry> & Pick<ConfigEntry, "name" | "kin
   };
 }
 
-/// The eight keys the registry serves today, in its order: one project
-/// override in place (ceiling), one two-scope key left to inherit (backend).
+/// A slice of the registry: ceiling has a project override, backend
+/// inherits, pressure.claude_model is user-only, and the models pair covers
+/// both shapes a key-level tier can take - set (standard_model) and left for
+/// the user tier (standard_effort).
 function snapshot(): ConfigSnapshot {
   return {
     csrf_token: "deadbeef",
@@ -65,6 +67,19 @@ function snapshot(): ConfigSnapshot {
         default: "opus",
         user: { value: "opus", set: true },
         effective: { value: "opus", source: "user" },
+      }),
+      entry({
+        name: "models.standard_model",
+        kind: { type: "enum", variants: ["haiku", "sonnet", "opus", "fable"] },
+        scopes: ["user", "project"],
+        project: { value: "sonnet", set: true },
+        effective: { value: "sonnet", source: "project" },
+      }),
+      entry({
+        name: "models.standard_effort",
+        kind: { type: "enum", variants: ["low", "medium", "high", "xhigh", "max"] },
+        scopes: ["user", "project"],
+        project: { value: "x", set: false },
       }),
     ],
   };

@@ -13,6 +13,9 @@
 //!
 //!   [plan_sandbox]   # persisted snapshot of plan-level sandbox at init time
 //!
+//!   [models]     # stage-type model/effort policy, KEY-level fallback to the user tier
+//!   [pressure]   # `loom pressure`'s model/effort slots, KEY-level fallback to the user tier
+//!
 //! Section keys for the persisted plan-level config (see `read_plan_sandbox`).
 
 use anyhow::{Context, Result};
@@ -25,6 +28,13 @@ use crate::plan::schema::SandboxConfig;
 use crate::remote_control::RemoteControlConfig;
 
 use super::ContextConfig;
+
+mod allowed;
+mod models_config;
+mod pressure_config;
+
+pub use models_config::resolve_stage_model_effort;
+pub use pressure_config::{read_pressure_config, PressureConfig};
 
 const PLAN_SANDBOX_SECTION: &str = "plan_sandbox";
 const REMOTE_CONTROL_SECTION: &str = "remote_control";

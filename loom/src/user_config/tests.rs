@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::stage::StageType;
 use keys::{spec, ValueKind};
 
 // Every test here parses a `UserConfig` from an in-memory TOML string and
@@ -104,14 +105,44 @@ fn defaults_when_the_file_is_absent() {
     assert_eq!(config.terminal_backend_set(), None);
     assert_eq!(config.context_ceiling_tokens_set(), None);
     assert_eq!(config.pressure_claude_model(), "opus");
+    assert_eq!(config.pressure_claude_effort(), "xhigh");
     assert_eq!(config.pressure_codex_model(), "gpt-5.6-sol");
+    assert_eq!(config.pressure_codex_effort(), "xhigh");
     assert_eq!(config.pressure_address_model(), "opus");
+    assert_eq!(config.pressure_address_effort(), "high");
+
+    assert_eq!(config.stage_model(StageType::Standard), "opus");
+    assert_eq!(config.stage_reasoning_effort(StageType::Standard), "high");
+    assert_eq!(config.stage_model(StageType::Knowledge), "opus");
+    assert_eq!(
+        config.stage_reasoning_effort(StageType::Knowledge),
+        "medium"
+    );
+    assert_eq!(config.stage_model(StageType::KnowledgeDistill), "sonnet");
+    assert_eq!(
+        config.stage_reasoning_effort(StageType::KnowledgeDistill),
+        "high"
+    );
+    assert_eq!(config.stage_model(StageType::IntegrationVerify), "opus");
+    assert_eq!(
+        config.stage_reasoning_effort(StageType::IntegrationVerify),
+        "xhigh"
+    );
 }
 
 #[test]
 fn parses_every_key_out_of_a_document() {
     let config = parse_document(
-        "[update]\ncheck = false\ncheck_interval_hours = 6\n\n[terminal]\nbackend = \"tmux\"\n\n[context]\nceiling_tokens = 111111\n\n[pressure]\nclaude_model = \"fable\"\ncodex_model = \"gpt-6-astra\"\naddress_model = \"sonnet\"\n",
+        "[update]\ncheck = false\ncheck_interval_hours = 6\n\n\
+         [terminal]\nbackend = \"tmux\"\n\n\
+         [context]\nceiling_tokens = 111111\n\n\
+         [pressure]\nclaude_model = \"fable\"\nclaude_effort = \"low\"\n\
+         codex_model = \"gpt-6-astra\"\ncodex_effort = \"medium\"\n\
+         address_model = \"sonnet\"\naddress_effort = \"low\"\n\n\
+         [models]\nstandard_model = \"sonnet\"\nstandard_effort = \"low\"\n\
+         knowledge_model = \"fable\"\nknowledge_effort = \"medium\"\n\
+         knowledge_distill_model = \"opus\"\nknowledge_distill_effort = \"xhigh\"\n\
+         integration_verify_model = \"haiku\"\nintegration_verify_effort = \"max\"\n",
     )
     .unwrap();
     assert!(!config.update_check());
@@ -119,8 +150,29 @@ fn parses_every_key_out_of_a_document() {
     assert_eq!(config.terminal_backend(), SessionBackendKind::Tmux);
     assert_eq!(config.context_ceiling_tokens(), 111111);
     assert_eq!(config.pressure_claude_model(), "fable");
+    assert_eq!(config.pressure_claude_effort(), "low");
     assert_eq!(config.pressure_codex_model(), "gpt-6-astra");
+    assert_eq!(config.pressure_codex_effort(), "medium");
     assert_eq!(config.pressure_address_model(), "sonnet");
+    assert_eq!(config.pressure_address_effort(), "low");
+
+    assert_eq!(config.stage_model(StageType::Standard), "sonnet");
+    assert_eq!(config.stage_reasoning_effort(StageType::Standard), "low");
+    assert_eq!(config.stage_model(StageType::Knowledge), "fable");
+    assert_eq!(
+        config.stage_reasoning_effort(StageType::Knowledge),
+        "medium"
+    );
+    assert_eq!(config.stage_model(StageType::KnowledgeDistill), "opus");
+    assert_eq!(
+        config.stage_reasoning_effort(StageType::KnowledgeDistill),
+        "xhigh"
+    );
+    assert_eq!(config.stage_model(StageType::IntegrationVerify), "haiku");
+    assert_eq!(
+        config.stage_reasoning_effort(StageType::IntegrationVerify),
+        "max"
+    );
 }
 
 #[test]
@@ -146,6 +198,32 @@ fn pressure_keys_reject_an_unknown_model_variant() {
 }
 
 #[test]
+fn pressure_and_models_keys_reject_an_unknown_effort_variant() {
+    // "max" is a valid Claude effort but not a Codex one - exercises that the
+    // two effort value sets are validated independently.
+    let err = parse_document("[pressure]\ncodex_effort = \"max\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("pressure.codex_effort"), "{err}");
+    assert!(err.contains("max"), "{err}");
+
+    let err = parse_document("[models]\nstandard_effort = \"carrier-pigeon\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("models.standard_effort"), "{err}");
+    assert!(err.contains("carrier-pigeon"), "{err}");
+}
+
+#[test]
+fn models_keys_reject_an_unknown_model_variant() {
+    let err = parse_document("[models]\nknowledge_distill_model = \"gpt-5.6-sol\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("models.knowledge_distill_model"), "{err}");
+    assert!(err.contains("gpt-5.6-sol"), "{err}");
+}
+
+#[test]
 fn origin_is_set_only_for_keys_the_document_wrote() {
     let config = parse_document("[update]\ncheck_interval_hours = 6\n").unwrap();
 
@@ -162,14 +240,46 @@ fn origin_is_set_only_for_keys_the_document_wrote() {
 
 #[test]
 fn origin_of_pressure_keys_reflects_set_versus_unset() {
-    let config = parse_document("[pressure]\nclaude_model = \"fable\"\n").unwrap();
+    let config =
+        parse_document("[pressure]\nclaude_model = \"fable\"\nclaude_effort = \"low\"\n").unwrap();
 
     let (value, origin) = config.value_of(spec("pressure.claude_model").unwrap());
     assert_eq!(value, "fable");
     assert_eq!(origin, Origin::Set);
 
+    let (value, origin) = config.value_of(spec("pressure.claude_effort").unwrap());
+    assert_eq!(value, "low");
+    assert_eq!(origin, Origin::Set);
+
     let (value, origin) = config.value_of(spec("pressure.codex_model").unwrap());
     assert_eq!(value, "gpt-5.6-sol");
+    assert_eq!(origin, Origin::Default);
+
+    let (value, origin) = config.value_of(spec("pressure.codex_effort").unwrap());
+    assert_eq!(value, "xhigh");
+    assert_eq!(origin, Origin::Default);
+}
+
+#[test]
+fn origin_of_models_keys_reflects_set_versus_unset() {
+    let config =
+        parse_document("[models]\nstandard_model = \"sonnet\"\nstandard_effort = \"low\"\n")
+            .unwrap();
+
+    let (value, origin) = config.value_of(spec("models.standard_model").unwrap());
+    assert_eq!(value, "sonnet");
+    assert_eq!(origin, Origin::Set);
+
+    let (value, origin) = config.value_of(spec("models.standard_effort").unwrap());
+    assert_eq!(value, "low");
+    assert_eq!(origin, Origin::Set);
+
+    let (value, origin) = config.value_of(spec("models.knowledge_model").unwrap());
+    assert_eq!(value, "opus");
+    assert_eq!(origin, Origin::Default);
+
+    let (value, origin) = config.value_of(spec("models.knowledge_effort").unwrap());
+    assert_eq!(value, "medium");
     assert_eq!(origin, Origin::Default);
 }
 
@@ -178,32 +288,44 @@ fn to_toml_string_renders_every_key_resolved() {
     let config = parse_document("[context]\nceiling_tokens = 55555\n").unwrap();
     let rendered = config.to_toml_string();
 
-    // Section order: context, pressure, terminal, update.
+    // Section order: context, models, pressure, terminal, update.
     let context_at = rendered.find("[context]").unwrap();
+    let models_at = rendered.find("[models]").unwrap();
     let pressure_at = rendered.find("[pressure]").unwrap();
     let terminal_at = rendered.find("[terminal]").unwrap();
     let update_at = rendered.find("[update]").unwrap();
     assert!(
-        context_at < pressure_at && pressure_at < terminal_at && terminal_at < update_at,
+        context_at < models_at
+            && models_at < pressure_at
+            && pressure_at < terminal_at
+            && terminal_at < update_at,
         "{rendered}"
     );
 
-    assert!(rendered.contains("ceiling_tokens = 55555"));
-    assert!(rendered.contains("claude_model = \"opus\""));
-    assert!(rendered.contains("codex_model = \"gpt-5.6-sol\""));
-    assert!(rendered.contains("address_model = \"opus\""));
-    assert!(rendered.contains("backend = \"native\""));
-    assert!(rendered.contains("check = true"));
-    assert!(rendered.contains("check_interval_hours = 24"));
+    // Every key's resolved `field = ` line must appear somewhere in the
+    // rendered blob - a loop over the real registry means a key added to
+    // `keys::KEYS` without a matching render can never go unnoticed.
+    for key in keys::KEYS {
+        let (value, _) = config.value_of(key);
+        let expected = match key.kind {
+            ValueKind::Bool | ValueKind::U32 => format!("{} = {value}", key.field),
+            ValueKind::Enum(_) => format!("{} = \"{value}\"", key.field),
+        };
+        assert!(
+            rendered.contains(&expected),
+            "rendered config missing {expected:?} for {}: {rendered}",
+            key.name
+        );
+    }
 }
 
 #[test]
 fn value_of_has_an_arm_for_every_registered_key() {
     // `value_of`'s match on `spec.name` has an `unreachable!()` fallback arm
-    // that nothing checks at compile time - a fifth key added to
-    // `keys::KEYS` without a matching arm would panic `loom config --list`
-    // at runtime. Looping over the real registry here means that panic
-    // happens in this test instead of in the field.
+    // that nothing checks at compile time - a key added to `keys::KEYS`
+    // without a matching arm would panic `loom config --list` at runtime.
+    // Looping over the real registry here means that panic happens in this
+    // test instead of in the field.
     let config = UserConfig::default();
     for key in keys::KEYS {
         let (value, origin) = config.value_of(key);
@@ -216,8 +338,19 @@ fn value_of_has_an_arm_for_every_registered_key() {
                 assert_eq!(value, DEFAULT_CONTEXT_CEILING_TOKENS.to_string())
             }
             "pressure.claude_model" => assert_eq!(value, "opus"),
+            "pressure.claude_effort" => assert_eq!(value, "xhigh"),
             "pressure.codex_model" => assert_eq!(value, "gpt-5.6-sol"),
+            "pressure.codex_effort" => assert_eq!(value, "xhigh"),
             "pressure.address_model" => assert_eq!(value, "opus"),
+            "pressure.address_effort" => assert_eq!(value, "high"),
+            "models.standard_model" => assert_eq!(value, "opus"),
+            "models.standard_effort" => assert_eq!(value, "high"),
+            "models.knowledge_model" => assert_eq!(value, "opus"),
+            "models.knowledge_effort" => assert_eq!(value, "medium"),
+            "models.knowledge_distill_model" => assert_eq!(value, "sonnet"),
+            "models.knowledge_distill_effort" => assert_eq!(value, "high"),
+            "models.integration_verify_model" => assert_eq!(value, "opus"),
+            "models.integration_verify_effort" => assert_eq!(value, "xhigh"),
             other => panic!("no expected default wired up for key {other}"),
         }
     }

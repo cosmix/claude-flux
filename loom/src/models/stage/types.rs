@@ -28,43 +28,6 @@ pub enum StageType {
     KnowledgeDistill,
 }
 
-impl StageType {
-    /// Fallback model when the plan does not specify one.
-    /// Plans SHOULD always set `model` explicitly per stage — the plan writer
-    /// picks the model per the playbook below. This fallback is a safety net,
-    /// not the intended path.
-    ///
-    /// Under the model playbook, every implementation stage's MAIN AGENT is an
-    /// opus orchestrator: it reads context, plans the work, and delegates
-    /// implementation to subagents (sonnet or codex terra workers for common
-    /// implementation and integration tests, codex luna workers for
-    /// boilerplate/scaffolding/simple unit tests, opus workers only where
-    /// architecture or algorithm judgment is required). Model choice for the
-    /// actual implementation work happens at the subagent level, not here.
-    /// The one exception is knowledge-distill: a single-agent sonnet pass over
-    /// memories that are already compact summaries — no subagents.
-    pub fn default_model(&self) -> &'static str {
-        match self {
-            // Knowledge stages: the main agent orchestrates exploration and
-            // delegates to Explore/sonnet subagents, curating their findings itself.
-            StageType::Knowledge => "opus",
-            // KnowledgeDistill curates stage memories into permanent knowledge:
-            // a linear read-synthesize-write pass driven by sonnet with NO
-            // subagents — the memories are already compact summaries, so the
-            // volume and the judgment both fit a single sonnet session.
-            StageType::KnowledgeDistill => "sonnet",
-            // Standard and integration-verify stages: the main agent orchestrates
-            // and delegates implementation/review work to subagents.
-            StageType::Standard | StageType::IntegrationVerify => "opus",
-        }
-    }
-
-    /// Default reasoning effort for every stage type and model.
-    pub fn default_reasoning_effort(&self) -> &'static str {
-        "high"
-    }
-}
-
 /// Hint for how the stage should be executed.
 ///
 /// This is an advisory field for orchestration tooling:

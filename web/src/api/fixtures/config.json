@@ -91,15 +91,40 @@
         "type": "enum",
         "variants": ["haiku", "sonnet", "opus", "fable"]
       },
-      "scopes": ["user"],
+      "scopes": ["user", "project"],
       "default": "opus",
       "user": {
         "value": "opus",
         "set": false
       },
-      "project": null,
+      "project": {
+        "value": "opus",
+        "set": false
+      },
       "effective": {
         "value": "opus",
+        "source": "default"
+      }
+    },
+    {
+      "name": "pressure.claude_effort",
+      "help": "Claude reasoning effort loom pressure uses for the /pressure step",
+      "kind": {
+        "type": "enum",
+        "variants": ["low", "medium", "high", "xhigh", "max"]
+      },
+      "scopes": ["user", "project"],
+      "default": "xhigh",
+      "user": {
+        "value": "xhigh",
+        "set": false
+      },
+      "project": {
+        "value": "xhigh",
+        "set": false
+      },
+      "effective": {
+        "value": "xhigh",
         "source": "default"
       }
     },
@@ -110,15 +135,40 @@
         "type": "enum",
         "variants": ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
       },
-      "scopes": ["user"],
+      "scopes": ["user", "project"],
       "default": "gpt-5.6-sol",
       "user": {
         "value": "gpt-5.6-sol",
         "set": false
       },
-      "project": null,
+      "project": {
+        "value": "gpt-5.6-sol",
+        "set": false
+      },
       "effective": {
         "value": "gpt-5.6-sol",
+        "source": "default"
+      }
+    },
+    {
+      "name": "pressure.codex_effort",
+      "help": "Codex reasoning effort loom pressure uses for the $pressure step",
+      "kind": {
+        "type": "enum",
+        "variants": ["low", "medium", "high", "xhigh"]
+      },
+      "scopes": ["user", "project"],
+      "default": "xhigh",
+      "user": {
+        "value": "xhigh",
+        "set": false
+      },
+      "project": {
+        "value": "xhigh",
+        "set": false
+      },
+      "effective": {
+        "value": "xhigh",
         "source": "default"
       }
     },
@@ -129,15 +179,216 @@
         "type": "enum",
         "variants": ["haiku", "sonnet", "opus", "fable"]
       },
-      "scopes": ["user"],
+      "scopes": ["user", "project"],
       "default": "opus",
       "user": {
         "value": "opus",
         "set": false
       },
-      "project": null,
+      "project": {
+        "value": "opus",
+        "set": false
+      },
       "effective": {
         "value": "opus",
+        "source": "default"
+      }
+    },
+    {
+      "name": "pressure.address_effort",
+      "help": "Claude reasoning effort loom pressure uses for the /address reconciliation step",
+      "kind": {
+        "type": "enum",
+        "variants": ["low", "medium", "high", "xhigh", "max"]
+      },
+      "scopes": ["user", "project"],
+      "default": "high",
+      "user": {
+        "value": "high",
+        "set": false
+      },
+      "project": {
+        "value": "high",
+        "set": false
+      },
+      "effective": {
+        "value": "high",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.standard_model",
+      "help": "Model a standard stage's main agent session runs on",
+      "kind": {
+        "type": "enum",
+        "variants": ["haiku", "sonnet", "opus", "fable"]
+      },
+      "scopes": ["user", "project"],
+      "default": "opus",
+      "user": {
+        "value": "opus",
+        "set": false
+      },
+      "project": {
+        "value": "opus",
+        "set": false
+      },
+      "effective": {
+        "value": "opus",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.standard_effort",
+      "help": "Reasoning effort a standard stage's main agent session runs at",
+      "kind": {
+        "type": "enum",
+        "variants": ["low", "medium", "high", "xhigh", "max"]
+      },
+      "scopes": ["user", "project"],
+      "default": "high",
+      "user": {
+        "value": "high",
+        "set": false
+      },
+      "project": {
+        "value": "high",
+        "set": false
+      },
+      "effective": {
+        "value": "high",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.knowledge_model",
+      "help": "Model a knowledge stage's main agent session runs on",
+      "kind": {
+        "type": "enum",
+        "variants": ["haiku", "sonnet", "opus", "fable"]
+      },
+      "scopes": ["user", "project"],
+      "default": "opus",
+      "user": {
+        "value": "opus",
+        "set": false
+      },
+      "project": {
+        "value": "opus",
+        "set": false
+      },
+      "effective": {
+        "value": "opus",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.knowledge_effort",
+      "help": "Reasoning effort a knowledge stage's main agent session runs at",
+      "kind": {
+        "type": "enum",
+        "variants": ["low", "medium", "high", "xhigh", "max"]
+      },
+      "scopes": ["user", "project"],
+      "default": "medium",
+      "user": {
+        "value": "medium",
+        "set": false
+      },
+      "project": {
+        "value": "medium",
+        "set": false
+      },
+      "effective": {
+        "value": "medium",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.knowledge_distill_model",
+      "help": "Model a knowledge-distill stage's main agent session runs on",
+      "kind": {
+        "type": "enum",
+        "variants": ["haiku", "sonnet", "opus", "fable"]
+      },
+      "scopes": ["user", "project"],
+      "default": "sonnet",
+      "user": {
+        "value": "sonnet",
+        "set": false
+      },
+      "project": {
+        "value": "sonnet",
+        "set": false
+      },
+      "effective": {
+        "value": "sonnet",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.knowledge_distill_effort",
+      "help": "Reasoning effort a knowledge-distill stage's main agent session runs at",
+      "kind": {
+        "type": "enum",
+        "variants": ["low", "medium", "high", "xhigh", "max"]
+      },
+      "scopes": ["user", "project"],
+      "default": "high",
+      "user": {
+        "value": "high",
+        "set": false
+      },
+      "project": {
+        "value": "high",
+        "set": false
+      },
+      "effective": {
+        "value": "high",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.integration_verify_model",
+      "help": "Model an integration-verify stage's main agent session runs on",
+      "kind": {
+        "type": "enum",
+        "variants": ["haiku", "sonnet", "opus", "fable"]
+      },
+      "scopes": ["user", "project"],
+      "default": "opus",
+      "user": {
+        "value": "opus",
+        "set": false
+      },
+      "project": {
+        "value": "opus",
+        "set": false
+      },
+      "effective": {
+        "value": "opus",
+        "source": "default"
+      }
+    },
+    {
+      "name": "models.integration_verify_effort",
+      "help": "Reasoning effort an integration-verify stage's main agent session runs at",
+      "kind": {
+        "type": "enum",
+        "variants": ["low", "medium", "high", "xhigh", "max"]
+      },
+      "scopes": ["user", "project"],
+      "default": "xhigh",
+      "user": {
+        "value": "xhigh",
+        "set": false
+      },
+      "project": {
+        "value": "xhigh",
+        "set": false
+      },
+      "effective": {
+        "value": "xhigh",
         "source": "default"
       }
     }

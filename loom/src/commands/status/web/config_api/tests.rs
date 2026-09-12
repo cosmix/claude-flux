@@ -19,7 +19,7 @@ use crate::user_config::keys::{spec, KEYS};
 use crate::user_config::{redirect_user_config, UserConfigRedirect};
 
 use super::wire::{ConfigKind, ConfigPayload, Source};
-use super::{entries, payload};
+use super::{entries, payload, workspace};
 
 mod resolution;
 mod updates;
@@ -135,10 +135,12 @@ fn only_the_workspace_backed_keys_carry_a_project_scope() {
     let scratch = scratch();
     let payload = parse(&scratch.base);
     for entry in &payload.entries {
-        let project = matches!(
-            entry.name.as_str(),
-            "terminal.backend" | "context.ceiling_tokens"
-        );
+        let key = KEYS.iter().find(|key| key.name == entry.name).unwrap();
+        let project = matches!(key.section, "pressure" | "models")
+            || matches!(
+                entry.name.as_str(),
+                "terminal.backend" | "context.ceiling_tokens"
+            );
         let expected = if project {
             vec!["user".to_owned(), "project".to_owned()]
         } else {
@@ -273,12 +275,42 @@ fn every_entry_reports_the_registrys_own_default() {
     }
 }
 
+/// The project scope covers the two section-level keys plus every
+/// `[pressure]`/`[models]` key (sixteen total), and each carries the tier its
+/// section implies. The key-level set is derived from [`KEYS`] rather than
+/// typed out fourteen times, so this test keeps testing the right thing when
+/// a fifteenth key-level key is added.
 #[test]
-fn project_scoped_covers_exactly_the_two_workspace_keys() {
+fn project_scoped_covers_the_section_level_pair_and_every_key_level_key() {
+    let key_level: Vec<&str> = KEYS
+        .iter()
+        .filter(|key| matches!(key.section, "pressure" | "models"))
+        .map(|key| key.name)
+        .collect();
+    let expected: Vec<&str> = ["terminal.backend", "context.ceiling_tokens"]
+        .into_iter()
+        .chain(key_level.iter().copied())
+        .collect();
+
     let named: Vec<&str> = KEYS
         .iter()
         .filter(|key| entries::project_scoped(key))
         .map(|key| key.name)
         .collect();
-    assert_eq!(named, ["terminal.backend", "context.ceiling_tokens"]);
+    assert_eq!(named, expected);
+
+    for name in ["terminal.backend", "context.ceiling_tokens"] {
+        assert_eq!(
+            workspace::tier_of(spec(name).unwrap()),
+            Some(workspace::ProjectTier::Section),
+            "{name}"
+        );
+    }
+    for name in key_level {
+        assert_eq!(
+            workspace::tier_of(spec(name).unwrap()),
+            Some(workspace::ProjectTier::Key),
+            "{name}"
+        );
+    }
 }

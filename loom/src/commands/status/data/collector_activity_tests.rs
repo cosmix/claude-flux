@@ -276,3 +276,31 @@ fn test_build_stage_summary_flags_an_adjudication_session_adopted_as_worker() {
     assert_eq!(summary.session_type, Some(SessionType::Adjudication));
     assert!(summary.incoherence.is_some());
 }
+
+/// Anti-drift pin: the model the dashboard names for a stage must be the
+/// same model `resolve_stage_model_effort` gives the spawn for that stage -
+/// never the plan-field/built-in pair `Stage::effective_model()` stops at.
+#[test]
+fn stage_summary_model_matches_the_resolver_the_spawn_uses() {
+    let (_tmp, work_dir) = temp_work_dir();
+    std::fs::write(
+        work_dir.root().join("config.toml"),
+        "[models]\nstandard_model = \"sonnet\"\nstandard_effort = \"low\"\n",
+    )
+    .unwrap();
+    let stage = make_test_stage("test-stage", StageStatus::Queued);
+
+    let summary = build_stage_summary(&stage, &[], &work_dir);
+
+    let (expected_model, _) = crate::fs::work_dir::resolve_stage_model_effort(
+        work_dir.root(),
+        stage.stage_type,
+        stage.model.as_deref(),
+        stage.reasoning_effort.as_deref(),
+    );
+    assert_eq!(summary.model, expected_model);
+    assert_eq!(
+        summary.model, "sonnet",
+        "the summary must show the project config tier's override, not the built-in"
+    );
+}

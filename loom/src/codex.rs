@@ -24,6 +24,15 @@ pub const CODEX_MODELS: &[&str] = &[
 /// Codex model the pressure run defaults to.
 pub const DEFAULT_PRESSURE_CODEX_MODEL: &str = "gpt-5.6-sol";
 
+/// Reasoning efforts the Codex CLI accepts, cheapest first. `loom pressure`
+/// validates `--codex-effort` and `pressure.codex_effort` against this list
+/// because the value reaches the command line as
+/// `-c model_reasoning_effort=<value>`.
+pub const CODEX_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh"];
+
+/// Codex reasoning effort the pressure run defaults to.
+pub const DEFAULT_PRESSURE_CODEX_EFFORT: &str = "xhigh";
+
 /// Paths the codex lane must be able to WRITE from inside the Bash sandbox.
 ///
 /// Codex is a subprocess, not a Claude tool, and it keeps its state outside the

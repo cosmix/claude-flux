@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 use crate::claude::find_claude_path;
 use crate::cli::types_pressure::PressureArgs;
 use crate::codex::find_codex_path;
+use crate::fs::work_dir::{read_pressure_config, PressureConfig};
 use crate::user_config::UserConfig;
 
 mod models;
@@ -105,13 +106,16 @@ fn render_dry_run(
          Codex report:            {}\n\
          Codex log (captured):    {}\n\
          Claude auto-close marker: {}\n\
-         Models:                  claude={}  codex={}  address={}\n\n",
+         Models:                  claude={}/{}  codex={}/{}  address={}/{}\n\n",
         report.display(),
         codex_log.display(),
         marker.display(),
         models.claude,
+        models.claude_effort,
         models.codex,
-        models.address
+        models.codex_effort,
+        models.address,
+        models.address_effort
     );
     for (n, step) in plan_steps(rounds, invocation, report)
         .into_iter()
@@ -143,17 +147,17 @@ fn render_dry_run_step(
             ));
             out.push_str(&format!(
                 "       {AGENT_TEAMS_ENV}=1 claude {}\n",
-                claude_args(&claude, marker, &models.claude).join(" ")
+                claude_args(&claude, marker, &models.claude, &models.claude_effort).join(" ")
             ));
             out.push_str(&format!(
                 "       codex {}\n",
-                codex_args(repo_root, &codex, &models.codex).join(" ")
+                codex_args(repo_root, &codex, &models.codex, &models.codex_effort).join(" ")
             ));
         }
         Step::Address(slash) => {
             out.push_str(&format!(
                 "  {n}. {AGENT_TEAMS_ENV}=1 claude {}\n",
-                claude_args(&slash, marker, &models.address).join(" ")
+                claude_args(&slash, marker, &models.address, &models.address_effort).join(" ")
             ));
         }
     }
@@ -183,11 +187,14 @@ fn print_run_header(rounds: u32, invocation: &str, models: &PressureModels) {
         invocation.cyan()
     );
     println!(
-        "{} models: claude={}  codex={}  address={}\n",
+        "{} models: claude={}/{}  codex={}/{}  address={}/{}\n",
         "→".cyan().bold(),
         models.claude,
+        models.claude_effort,
         models.codex,
-        models.address
+        models.codex_effort,
+        models.address,
+        models.address_effort
     );
 }
 
@@ -204,6 +211,7 @@ fn run_pressure_step(ctx: &StepContext, claude: &str, codex: &str) -> Result<boo
         codex,
         ctx.codex_log,
         &ctx.models.codex,
+        &ctx.models.codex_effort,
     )?;
     println!(
         "{} codex review started in background (log: {})",
@@ -216,6 +224,7 @@ fn run_pressure_step(ctx: &StepContext, claude: &str, codex: &str) -> Result<boo
         claude,
         ctx.marker,
         &ctx.models.claude,
+        &ctx.models.claude_effort,
     )?;
     let claude_stop = claude_should_stop(claude_outcome);
     let codex_status = wait_codex(codex_child, ctx.codex_log)?;
@@ -259,6 +268,7 @@ fn run_pipeline(ctx: &StepContext, rounds: u32, invocation: &str, report: &Path)
                     &slash,
                     ctx.marker,
                     &ctx.models.address,
+                    &ctx.models.address_effort,
                 )?;
                 claude_should_stop(outcome)
             }
@@ -272,22 +282,32 @@ fn run_pipeline(ctx: &StepContext, rounds: u32, invocation: &str, report: &Path)
     Ok(())
 }
 
+/// The project tier for this run: `.loom/work/config.toml`'s `[pressure]`
+/// section when the repo has a workspace, else nothing set. A repo that never
+/// ran `loom init` has no workspace, and `loom pressure` still works there -
+/// so an absent workspace is "no project tier", not an error.
+fn project_pressure_config(repo_root: &Path) -> PressureConfig {
+    crate::fs::work_dir::WorkDir::new(repo_root)
+        .ok()
+        .map(|work_dir| read_pressure_config(work_dir.root()))
+        .unwrap_or_default()
+}
+
 /// Execute the pressure pipeline.
 pub fn execute(args: PressureArgs) -> Result<()> {
     let PressureArgs {
         plan,
         rounds,
         dry_run,
-        claude_model,
-        codex_model,
-        address_model,
+        models: flags,
     } = args;
-
-    let config = UserConfig::load();
-    let models = PressureModels::resolve(claude_model, codex_model, address_model, &config);
 
     let repo_root = resolve_repo_root()?;
     let repo_root = repo_root.canonicalize().unwrap_or(repo_root);
+    let project = project_pressure_config(&repo_root);
+    let user = UserConfig::load();
+    let models = PressureModels::resolve(flags, &project, &user);
+
     let resolved = resolve_plan_path(&plan, &repo_root)?;
     let report = codex_report_path(&resolved.fs_path);
     let marker = claude_marker_path(&repo_root);

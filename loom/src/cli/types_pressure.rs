@@ -23,15 +23,36 @@ pub struct PressureArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    #[command(flatten)]
+    pub models: PressureModelFlags,
+}
+
+/// The six per-invocation model/effort overrides for one pressure run. Each
+/// beats both config tiers; an omitted flag falls through to
+/// `.loom/work/config.toml`, then `~/.loom/config.toml`, then the built-in.
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct PressureModelFlags {
     /// Claude model for the /pressure step (default: opus, or pressure.claude_model)
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::claude::CLAUDE_MODELS))]
     pub claude_model: Option<String>,
+
+    /// Claude reasoning effort for the /pressure step (default: xhigh, or pressure.claude_effort)
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::models::stage::ALLOWED_REASONING_EFFORTS))]
+    pub claude_effort: Option<String>,
 
     /// Codex model for the $pressure step (default: gpt-5.6-sol, or pressure.codex_model)
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::codex::CODEX_MODELS))]
     pub codex_model: Option<String>,
 
+    /// Codex reasoning effort for the $pressure step (default: xhigh, or pressure.codex_effort)
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::codex::CODEX_EFFORTS))]
+    pub codex_effort: Option<String>,
+
     /// Claude model for the /address step (default: opus, or pressure.address_model)
     #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::claude::CLAUDE_MODELS))]
     pub address_model: Option<String>,
+
+    /// Claude reasoning effort for the /address step (default: high, or pressure.address_effort)
+    #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::models::stage::ALLOWED_REASONING_EFFORTS))]
+    pub address_effort: Option<String>,
 }

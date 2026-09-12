@@ -2,9 +2,14 @@
 //! user, project) — the property that keeps the settings page from
 //! disagreeing with the daemon about the value actually in force.
 
-use crate::fs::work_dir::{read_terminal_config, resolve_context_ceiling_tokens};
+use crate::fs::work_dir::{
+    read_pressure_config, read_terminal_config, resolve_context_ceiling_tokens,
+    resolve_stage_model_effort,
+};
 use crate::models::constants::DEFAULT_CONTEXT_CEILING_TOKENS;
+use crate::models::stage::StageType;
 use crate::user_config::keys::spec;
+use crate::user_config::UserConfig;
 
 use super::super::wire::Source;
 use super::{entry, parse, scratch, Scratch};
@@ -135,4 +140,86 @@ fn a_present_but_keyless_section_still_wins_whole() {
         ceiling.effective.value,
         resolve_context_ceiling_tokens(&scratch.work(), None).to_string()
     );
+}
+
+/// `[pressure]`/`[models]` shadow a KEY at a time, not a section at a time —
+/// the case a section-level fallback would get wrong. The project section
+/// sets ONLY `claude_model`; the user file sets `claude_model` AND
+/// `codex_model`. `codex_model` must resolve to the USER value, not the
+/// built-in a section-level fallback would report the moment any key in
+/// `[pressure]` is present, and it must agree with the exact chain
+/// [`read_pressure_config`]'s accessors and [`UserConfig`]'s pressure getters
+/// implement.
+#[test]
+fn pressure_falls_through_key_by_key_not_section_by_section() {
+    let scratch = scratch();
+    crate::user_config::set(
+        spec("pressure.claude_model").unwrap(),
+        toml_edit::Value::from("haiku"),
+    )
+    .expect("set the user claude model");
+    crate::user_config::set(
+        spec("pressure.codex_model").unwrap(),
+        toml_edit::Value::from("gpt-5.6-terra"),
+    )
+    .expect("set the user codex model");
+    scratch.write_project("pressure", "claude_model", toml_edit::Value::from("sonnet"));
+
+    let payload = parse(&scratch.base);
+    let claude = entry(&payload, "pressure.claude_model");
+    assert_eq!(claude.effective.source, Source::Project);
+    assert_eq!(claude.effective.value, "sonnet");
+
+    let codex = entry(&payload, "pressure.codex_model");
+    assert_eq!(codex.effective.source, Source::User);
+    assert_eq!(codex.effective.value, "gpt-5.6-terra");
+
+    let project = read_pressure_config(&scratch.work());
+    let user = UserConfig::load();
+    assert_eq!(
+        claude.effective.value,
+        project
+            .claude_model()
+            .unwrap_or_else(|| user.pressure_claude_model())
+    );
+    assert_eq!(
+        codex.effective.value,
+        project
+            .codex_model()
+            .unwrap_or_else(|| user.pressure_codex_model())
+    );
+}
+
+/// The same key-level fallback for `[models]`: the project section sets ONLY
+/// `standard_model`, so `standard_effort` must come from the user file rather
+/// than the built-in — pinned against [`resolve_stage_model_effort`], the
+/// single chain every stage-launching caller resolves through.
+#[test]
+fn models_falls_through_key_by_key_not_section_by_section() {
+    let scratch = scratch();
+    crate::user_config::set(
+        spec("models.standard_model").unwrap(),
+        toml_edit::Value::from("haiku"),
+    )
+    .expect("set the user standard model");
+    crate::user_config::set(
+        spec("models.standard_effort").unwrap(),
+        toml_edit::Value::from("low"),
+    )
+    .expect("set the user standard effort");
+    scratch.write_project("models", "standard_model", toml_edit::Value::from("sonnet"));
+
+    let payload = parse(&scratch.base);
+    let model = entry(&payload, "models.standard_model");
+    assert_eq!(model.effective.source, Source::Project);
+    assert_eq!(model.effective.value, "sonnet");
+
+    let effort = entry(&payload, "models.standard_effort");
+    assert_eq!(effort.effective.source, Source::User);
+    assert_eq!(effort.effective.value, "low");
+
+    let (expected_model, expected_effort) =
+        resolve_stage_model_effort(&scratch.work(), StageType::Standard, None, None);
+    assert_eq!(model.effective.value, expected_model);
+    assert_eq!(effort.effective.value, expected_effort);
 }

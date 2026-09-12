@@ -152,7 +152,11 @@ fn test_ensure_marker_dir_creates_parent_and_is_idempotent() {
 }
 
 fn default_models() -> PressureModels {
-    PressureModels::resolve(None, None, None, &crate::user_config::UserConfig::default())
+    PressureModels::resolve(
+        crate::cli::types_pressure::PressureModelFlags::default(),
+        &crate::fs::work_dir::PressureConfig::default(),
+        &crate::user_config::UserConfig::default(),
+    )
 }
 
 #[test]
@@ -172,7 +176,7 @@ fn test_render_dry_run_shows_real_argv() {
     );
     assert!(out.contains("Dry run: 1 round"));
     // The preview must show the REAL argv so it matches what spawns.
-    assert!(out.contains("--permission-mode auto --model opus"));
+    assert!(out.contains("--permission-mode auto --model opus --effort xhigh"));
     // The auto-close instruction is injected via --append-system-prompt.
     assert!(out.contains("--append-system-prompt"));
     assert!(out.contains("/pressure doc/plans/PLAN-foo.md"));
@@ -187,8 +191,10 @@ fn test_render_dry_run_shows_real_argv() {
     assert!(out.contains("[parallel]"));
     assert!(out.contains("loom-pressure-codex-1.log"));
     assert!(out.contains(".loom/work/pressure/claude-1.done"));
-    // The resolved model selection is surfaced in the header.
-    assert!(out.contains("Models:                  claude=opus  codex=gpt-5.6-sol  address=opus"));
+    // The resolved model+effort selection is surfaced in the header.
+    assert!(out.contains(
+        "Models:                  claude=opus/xhigh  codex=gpt-5.6-sol/xhigh  address=opus/high"
+    ));
 }
 
 #[test]
@@ -201,8 +207,11 @@ fn test_render_dry_run_shows_a_non_default_model_selection_per_step() {
     let codex_log = PathBuf::from("/tmp/loom-pressure-codex-1.log");
     let models = PressureModels {
         claude: "fable".to_string(),
+        claude_effort: "low".to_string(),
         codex: "gpt-6-astra".to_string(),
+        codex_effort: "medium".to_string(),
         address: "sonnet".to_string(),
+        address_effort: "max".to_string(),
     };
     let out = render_dry_run(
         1,
@@ -213,32 +222,53 @@ fn test_render_dry_run_shows_a_non_default_model_selection_per_step() {
         &codex_log,
         &models,
     );
-    assert!(
-        out.contains("Models:                  claude=fable  codex=gpt-6-astra  address=sonnet")
-    );
-    // /pressure step: claude model = fable, codex model = gpt-6-astra.
-    assert!(out.contains("--permission-mode auto --model fable"));
+    // The header shows model AND effort for all three slots.
+    assert!(out.contains(
+        "Models:                  claude=fable/low  codex=gpt-6-astra/medium  address=sonnet/max"
+    ));
+    // /pressure step: claude model = fable, codex model = gpt-6-astra, each
+    // with its own resolved effort.
+    assert!(out.contains("--permission-mode auto --model fable --effort low"));
     assert!(out.contains("-m gpt-6-astra"));
-    // /address step's model is independent of /pressure's — sonnet, not fable.
-    assert!(out.contains("--model sonnet --append-system-prompt"));
+    assert!(out.contains("-c model_reasoning_effort=medium"));
+    // /address step's model+effort are independent of /pressure's — sonnet/max,
+    // not fable/low.
+    assert!(out.contains("--model sonnet --effort max --append-system-prompt"));
 }
 
 #[test]
 fn test_claude_args_shape() {
     let marker = PathBuf::from("/repo/.loom/work/pressure/claude-1.done");
-    let args = claude_args("/pressure doc/plans/PLAN-foo.md", &marker, "opus");
+    let args = claude_args("/pressure doc/plans/PLAN-foo.md", &marker, "opus", "xhigh");
     // Interactive (no -p): keeps subscription billing. Auto permission mode.
     assert!(!args.iter().any(|a| a == "-p" || a == "--print"));
     assert_eq!(args[0], "--permission-mode");
     assert_eq!(args[1], "auto");
     assert_eq!(args[2], "--model");
     assert_eq!(args[3], "opus");
+    assert_eq!(args[4], "--effort");
+    assert_eq!(args[5], "xhigh");
     // The slash invocation is the final positional argument.
     assert_eq!(args.last().unwrap(), "/pressure doc/plans/PLAN-foo.md");
     // The appended system prompt names the marker so the driver can auto-close.
     let joined = args.join(" ");
     assert!(joined.contains("--append-system-prompt"));
     assert!(joined.contains("/repo/.loom/work/pressure/claude-1.done"));
+}
+
+#[test]
+fn test_codex_args_shape() {
+    let repo = Path::new("/repo");
+    let args = codex_args(
+        repo,
+        "$pressure doc/plans/PLAN-foo.md",
+        "gpt-5.6-sol",
+        "high",
+    );
+    assert_eq!(args[0], "exec");
+    assert!(args.contains(&"gpt-5.6-sol".to_string()));
+    assert!(args.contains(&"model_reasoning_effort=high".to_string()));
+    assert_eq!(args.last().unwrap(), "$pressure doc/plans/PLAN-foo.md");
 }
 
 #[test]

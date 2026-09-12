@@ -63,8 +63,8 @@ impl Stage {
         stage
     }
 
-    /// Returns the effective model for this stage.
-    /// Uses the explicit override if set, otherwise falls back to the stage-type default.
+    /// The stage's own `model` if the plan set one, else the stage-type default.
+    /// A launched session resolves further, through `crate::fs::work_dir::resolve_stage_model_effort`.
     pub fn effective_model(&self) -> &str {
         self.model
             .as_deref()
@@ -73,7 +73,7 @@ impl Stage {
 
     /// Returns the effective reasoning effort for this stage.
     /// Uses the explicit override if set, otherwise falls back to the stage-type
-    /// default (which is always high).
+    /// default, which varies per type — see `crate::fs::work_dir::resolve_stage_model_effort`.
     pub fn effective_reasoning_effort(&self) -> &str {
         if let Some(effort) = self.reasoning_effort.as_deref() {
             return effort;

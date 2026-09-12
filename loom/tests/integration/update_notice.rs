@@ -1,4 +1,5 @@
-//! An update notice must never leak into `--json` stdout.
+//! An update notice must never leak into `--json` stdout, and a dev build
+//! must never print one at all.
 
 use std::fs;
 use tempfile::TempDir;
@@ -30,16 +31,20 @@ loom:
 }
 
 #[test]
-fn test_json_stdout_stays_pure_when_an_update_notice_is_pending() {
-    // The invariant: an update notice always goes to stderr
+fn test_dev_build_prints_no_update_notice_and_json_stdout_stays_pure() {
+    // Two invariants at once. An update notice only ever goes to stderr
     // (`update_check::notify_and_maybe_refresh`'s `eprintln!`), so `--json`
-    // stdout stays pure JSON even when a newer release is on record.
+    // stdout stays pure JSON whatever the update state says. And the binary
+    // under test is a dev build (`build.rs` derives a prerelease version for
+    // anything but a tagged release), which `update_check::decide` exempts
+    // from the notice altogether: a dev build can never act on it, so even a
+    // far-future release on record must print nothing on either stream.
     // `loom_cmd()`'s shared scratch `LOOM_HOME` opts out of the check
-    // entirely (`check = false`) so the notice never fires for every other
-    // test in this suite; this test deliberately opts back in with its own
-    // scratch home naming a far-future version. Its `last_checked` stamp is
-    // "now" so `decide()` never schedules a detached refresh fetch either —
-    // that would be a real network spawn this test must not trigger.
+    // entirely (`check = false`); this test deliberately opts back in with
+    // its own scratch home. Its `last_checked` stamp is "now" so `decide()`
+    // would never schedule a detached refresh fetch either, were the dev-build
+    // exemption ever lost — that would be a real network spawn this test must
+    // not trigger.
     let loom_home = TempDir::new().unwrap();
     let state = format!(
         r#"{{"last_checked":"{}","latest_version":"99.0.0"}}"#,
@@ -62,14 +67,10 @@ fn test_json_stdout_stays_pure_when_an_update_notice_is_pending() {
     let stderr = String::from_utf8_lossy(&out.stderr);
 
     serde_json::from_str::<serde_json::Value>(&stdout)
-        .expect("stdout must be pure JSON even with a pending update notice");
+        .expect("stdout must be pure JSON even with a newer release on record");
     assert!(!stdout.contains("loom update"), "stdout: {stdout}");
-    assert!(!stdout.contains("newer version"), "stdout: {stdout}");
-
-    // Prove the notice actually fired, so the assertions above are not
-    // vacuously true because the notice never ran at all.
     assert!(
-        stderr.contains("loom update"),
-        "expected the update notice on stderr, got: {stderr}"
+        !stderr.contains("loom update"),
+        "a dev build must not print the update notice, got: {stderr}"
     );
 }

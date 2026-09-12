@@ -156,6 +156,22 @@ fn session_facts<'a>(
     }
 }
 
+/// The model this stage's session actually launches on.
+///
+/// `Stage::effective_model()` stops at the plan-field/stage-type tier and
+/// ignores both config tiers, so it would show the dashboard a name the real
+/// spawn (`native::launch::model_and_effort`) has already overridden — use
+/// the same resolver that spawn calls instead.
+fn resolved_model(stage: &Stage, work_dir: &WorkDir) -> String {
+    crate::fs::work_dir::resolve_stage_model_effort(
+        work_dir.root(),
+        stage.stage_type,
+        stage.model.as_deref(),
+        stage.reasoning_effort.as_deref(),
+    )
+    .0
+}
+
 /// Build a StageSummary from a Stage and optional associated Session.
 ///
 fn build_stage_summary(stage: &Stage, sessions: &[Session], work_dir: &WorkDir) -> StageSummary {
@@ -190,7 +206,7 @@ fn build_stage_summary(stage: &Stage, sessions: &[Session], work_dir: &WorkDir) 
         max_retries: stage.max_retries,
         pid: facts.pid,
         session_alive: facts.session_alive,
-        model: stage.effective_model().to_string(),
+        model: resolved_model(stage, work_dir),
         session_type: facts.session_type,
         incoherence: facts.incoherence,
         execution_models: extras.execution_models,

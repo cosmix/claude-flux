@@ -4,11 +4,22 @@ use anyhow::{bail, Result};
 use std::path::PathBuf;
 
 /// Claude model aliases `loom pressure` accepts for its foreground steps,
-/// cheapest tier first (mirrors hooks/spawn-guard.sh's tier ranking).
+/// cheapest tier first (mirrors hooks/spawn-guard.sh's tier ranking). The
+/// matching reasoning-effort value set is
+/// `crate::models::stage::ALLOWED_REASONING_EFFORTS` — defined there because a
+/// stage's own `reasoning_effort` field validates against it too, so there is
+/// no separate `CLAUDE_EFFORTS` constant here.
 pub const CLAUDE_MODELS: &[&str] = &["haiku", "sonnet", "opus", "fable"];
 
 /// Claude model both pressure-run steps default to.
 pub const DEFAULT_PRESSURE_CLAUDE_MODEL: &str = "opus";
+
+/// Claude reasoning effort the `/pressure` step defaults to.
+pub const DEFAULT_PRESSURE_CLAUDE_EFFORT: &str = "xhigh";
+
+/// Claude reasoning effort the `/address` reconciliation step defaults to:
+/// reconciling a written report is cheaper work than producing it.
+pub const DEFAULT_PRESSURE_ADDRESS_EFFORT: &str = "high";
 
 /// Find the absolute path to the claude binary
 ///

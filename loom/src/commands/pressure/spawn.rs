@@ -60,28 +60,29 @@ pub(super) fn completion_instruction(marker: &Path) -> String {
 
 /// argv (after the binary) for a Claude spawn. `slash` is the full positional
 /// slash invocation; `marker` is injected into the appended system prompt so
-/// the agent can signal completion; `model` is the resolved
-/// [`super::models::PressureModels`] slot for this step.
-pub(super) fn claude_args(slash: &str, marker: &Path, model: &str) -> Vec<String> {
+/// the agent can signal completion; `model` and `effort` are the resolved
+/// [`super::models::PressureModels`] slots for this step — the same
+/// `--model`/`--effort` pair the daemon's own Claude launcher uses.
+pub(super) fn claude_args(slash: &str, marker: &Path, model: &str, effort: &str) -> Vec<String> {
     vec![
         "--permission-mode".to_string(),
         "auto".to_string(),
         "--model".to_string(),
         model.to_string(),
+        "--effort".to_string(),
+        effort.to_string(),
         "--append-system-prompt".to_string(),
         completion_instruction(marker),
         slash.to_string(),
     ]
 }
 
-/// Reasoning effort for Codex pressure-test runs. No dedicated CLI flag
-/// exists, so it is delivered via `-c model_reasoning_effort=<value>`.
-pub(super) const CODEX_REASONING_EFFORT: &str = "xhigh";
-
 /// argv (after the binary) for a Codex spawn. `skill` is the full positional
-/// skill invocation, e.g. `$pressure doc/plans/PLAN-foo.md`; `model` is the
-/// resolved [`super::models::PressureModels`] slot for this step.
-pub(super) fn codex_args(repo_root: &Path, skill: &str, model: &str) -> Vec<String> {
+/// skill invocation, e.g. `$pressure doc/plans/PLAN-foo.md`; `model` and
+/// `effort` are the resolved [`super::models::PressureModels`] slots for this
+/// step. Codex has no dedicated effort flag, so `effort` travels as a `-c`
+/// override instead.
+pub(super) fn codex_args(repo_root: &Path, skill: &str, model: &str, effort: &str) -> Vec<String> {
     vec![
         "exec".to_string(),
         "--sandbox".to_string(),
@@ -89,7 +90,7 @@ pub(super) fn codex_args(repo_root: &Path, skill: &str, model: &str) -> Vec<Stri
         "-m".to_string(),
         model.to_string(),
         "-c".to_string(),
-        format!("model_reasoning_effort={CODEX_REASONING_EFFORT}"),
+        format!("model_reasoning_effort={effort}"),
         "-C".to_string(),
         repo_root.display().to_string(),
         skill.to_string(),
@@ -137,6 +138,7 @@ pub(super) fn run_claude_foreground(
     slash: &str,
     marker: &Path,
     model: &str,
+    effort: &str,
 ) -> Result<ClaudeOutcome> {
     // Clear any stale marker from a previous step before spawning. The parent
     // dir (`.loom/work/pressure/`) may not exist yet in a repo without `loom init`;
@@ -145,7 +147,7 @@ pub(super) fn run_claude_foreground(
     delete_file(marker)?;
 
     let mut cmd = Command::new(claude_path);
-    cmd.args(claude_args(slash, marker, model));
+    cmd.args(claude_args(slash, marker, model, effort));
     cmd.env(AGENT_TEAMS_ENV, "1");
     cmd.current_dir(repo_root);
     cmd.stdin(Stdio::inherit());
@@ -202,6 +204,7 @@ pub(super) fn spawn_codex_background(
     skill: &str,
     log_path: &Path,
     model: &str,
+    effort: &str,
 ) -> Result<Child> {
     let log = std::fs::File::create(log_path)
         .with_context(|| format!("failed to create codex log {}", log_path.display()))?;
@@ -209,7 +212,7 @@ pub(super) fn spawn_codex_background(
         .try_clone()
         .context("failed to clone codex log handle")?;
     let mut cmd = Command::new(codex_path);
-    cmd.args(codex_args(repo_root, skill, model));
+    cmd.args(codex_args(repo_root, skill, model, effort));
     cmd.current_dir(repo_root);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::from(log));

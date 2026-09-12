@@ -4,10 +4,12 @@
 //! `<repo>/.loom/work/config.toml` (see [`crate::fs::work_dir::Config`], the
 //! `.loom/work/` type). This file holds settings that make sense per operator
 //! rather than per plan: whether loom checks for updates, which terminal
-//! backend `loom run` defaults to, the default context ceiling, and the
-//! Claude/Codex models `loom pressure` spawns absent a CLI flag. `loom
-//! config` (`crate::commands::config`) is the only writer; every other
-//! consumer reads through [`UserConfig::load`], which never fails.
+//! backend `loom run` defaults to, the default context ceiling, the
+//! Claude/Codex models and reasoning efforts `loom pressure` spawns absent a
+//! CLI flag, and the model and reasoning effort each stage type's main-agent
+//! session launches with absent a plan field. `loom config`
+//! (`crate::commands::config`) is the only writer; every other consumer
+//! reads through [`UserConfig::load`], which never fails.
 //!
 //! # Reads must not create `~/.loom/`
 //!
@@ -67,7 +69,9 @@ pub mod keys;
 
 use keys::KeySpec;
 
+mod models;
 mod parse;
+mod pressure;
 mod render;
 mod write;
 
@@ -89,8 +93,8 @@ mod tests;
 /// Where a resolved key's value came from.
 ///
 /// `loom config` reads only the user config, never a workspace config, so
-/// these two are the whole space — a workspace `[terminal]`/`[context]`
-/// section is a separate resolution tier that
+/// these two are the whole space — a workspace `[terminal]`/`[context]`/
+/// `[pressure]`/`[models]` section is a separate resolution tier that
 /// [`crate::fs::work_dir::read_terminal_config`]/
 /// [`crate::fs::work_dir::read_context_config`] merge in themselves, above
 /// this module.
@@ -126,9 +130,8 @@ pub struct UserConfig {
     update_check_interval_hours: Option<u32>,
     terminal_backend: Option<SessionBackendKind>,
     context_ceiling_tokens: Option<u32>,
-    pressure_claude_model: Option<String>,
-    pressure_codex_model: Option<String>,
-    pressure_address_model: Option<String>,
+    pressure: pressure::PressureSection,
+    models: models::ModelsSection,
 }
 
 /// The absolute path to `~/.loom/config.toml`.
@@ -261,31 +264,6 @@ impl UserConfig {
     pub fn context_ceiling_tokens_set(&self) -> Option<u32> {
         self.context_ceiling_tokens
     }
-
-    /// Claude model `loom pressure` uses for the `/pressure` step, absent a
-    /// `--claude-model` flag. Default: [`crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL`].
-    pub fn pressure_claude_model(&self) -> &str {
-        self.pressure_claude_model
-            .as_deref()
-            .unwrap_or(crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL)
-    }
-
-    /// Codex model `loom pressure` uses for the `$pressure` step, absent a
-    /// `--codex-model` flag. Default: [`crate::codex::DEFAULT_PRESSURE_CODEX_MODEL`].
-    pub fn pressure_codex_model(&self) -> &str {
-        self.pressure_codex_model
-            .as_deref()
-            .unwrap_or(crate::codex::DEFAULT_PRESSURE_CODEX_MODEL)
-    }
-
-    /// Claude model `loom pressure` uses for the `/address` reconciliation
-    /// step, absent an `--address-model` flag. Default:
-    /// [`crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL`].
-    pub fn pressure_address_model(&self) -> &str {
-        self.pressure_address_model
-            .as_deref()
-            .unwrap_or(crate::claude::DEFAULT_PRESSURE_CLAUDE_MODEL)
-    }
 }
 
 /// Parse `text` as `~/.loom/config.toml`, validating every present key
@@ -299,23 +277,7 @@ pub(crate) fn parse_document(text: &str) -> Result<UserConfig> {
         update_check_interval_hours: parse::get_u32(&doc, "update", "check_interval_hours")?,
         terminal_backend: parse::get_backend(&doc)?,
         context_ceiling_tokens: parse::get_u32(&doc, "context", "ceiling_tokens")?,
-        pressure_claude_model: parse::get_enum(
-            &doc,
-            "pressure",
-            "claude_model",
-            crate::claude::CLAUDE_MODELS,
-        )?,
-        pressure_codex_model: parse::get_enum(
-            &doc,
-            "pressure",
-            "codex_model",
-            crate::codex::CODEX_MODELS,
-        )?,
-        pressure_address_model: parse::get_enum(
-            &doc,
-            "pressure",
-            "address_model",
-            crate::claude::CLAUDE_MODELS,
-        )?,
+        pressure: pressure::PressureSection::parse(&doc)?,
+        models: models::ModelsSection::parse(&doc)?,
     })
 }

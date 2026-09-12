@@ -49,8 +49,9 @@ pub(super) fn entry(
         }),
         None => None,
     };
-    // The section, not the key: a present-but-keyless section still wins whole.
-    let project_wins = workspace.is_some_and(|workspace| workspace.has_section(spec));
+    // Section-level: a present-but-keyless section still wins whole.
+    // Key-level: only a present key wins, so an omitted one falls through.
+    let project_wins = workspace.is_some_and(|workspace| workspace.shadows(spec));
     Ok(ConfigEntry {
         name: spec.name.to_owned(),
         help: spec.help.to_owned(),
@@ -67,8 +68,11 @@ pub(super) fn entry(
 ///
 /// Read through the resolved getters against an all-`None` [`UserConfig`],
 /// which is where each default is spelled out — never a second table of
-/// default values here, which would be one more thing to drift.
-fn built_in(spec: &KeySpec) -> String {
+/// default values here, which would be one more thing to drift. `pub(super)`
+/// because `workspace`'s key-level resolution needs this exact value for a
+/// key a present section omits, rather than writing the expression a second
+/// time.
+pub(super) fn built_in(spec: &KeySpec) -> String {
     UserConfig::default().value_of(spec).0
 }
 

@@ -26,7 +26,7 @@ file src/git/worktree/base.rs 545
 file src/git/worktree/settings.rs 706
 file src/hooks/tests.rs 514
 file src/models/stage/methods.rs 739
-file src/models/stage/types.rs 1166
+file src/models/stage/types.rs 1129
 file src/orchestrator/core/merge_handler.rs 1328
 file src/orchestrator/core/orchestrator.rs 547
 file src/orchestrator/core/recovery.rs 1569

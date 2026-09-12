@@ -2,6 +2,7 @@
 //! 400-line ceiling (CLAUDE.md Rule 17), matching `native/tests.rs`.
 
 use super::*;
+use crate::models::stage::StageType;
 use crate::orchestrator::terminal::native::build_claude_command;
 use crate::orchestrator::terminal::native::capsule::capsule_from;
 use crate::remote_control::RemoteControlInvocation;
@@ -223,6 +224,79 @@ fn stage_sessions_still_run_on_the_stage_model() {
         (merge_model.as_str(), merge_effort.as_str()),
         ("opus", "high")
     );
+}
+
+/// A stage with no plan-level model/effort resolves through the project
+/// config tier — the same tier the dashboard's summary reads — not just the
+/// plan-field/built-in pair `Stage::effective_model()` stops at.
+#[test]
+fn stage_sessions_resolve_the_project_config_tier_when_the_plan_sets_nothing() {
+    let (_temp, work_dir) = work_dir_without_config();
+    std::fs::write(
+        work_dir.join("config.toml"),
+        "[models]\nstandard_model = \"sonnet\"\nstandard_effort = \"low\"\n",
+    )
+    .unwrap();
+    let stage = stage_named("my-stage", "My Stage");
+
+    let (model, effort) = model_and_effort(SessionType::Stage, &stage, &work_dir);
+    assert_eq!(model, "sonnet");
+    assert_eq!(effort, "low");
+}
+
+/// An explicit plan field still wins over the project config tier — a
+/// project-wide default must never override a stage's own choice.
+#[test]
+fn a_plan_field_wins_over_the_project_config_tier() {
+    let (_temp, work_dir) = work_dir_without_config();
+    std::fs::write(
+        work_dir.join("config.toml"),
+        "[models]\nstandard_model = \"sonnet\"\nstandard_effort = \"low\"\n",
+    )
+    .unwrap();
+    let mut stage = stage_named("my-stage", "My Stage");
+    stage.model = Some("haiku".to_string());
+    stage.reasoning_effort = Some("xhigh".to_string());
+
+    let (model, effort) = model_and_effort(SessionType::Stage, &stage, &work_dir);
+    assert_eq!(model, "haiku");
+    assert_eq!(effort, "xhigh");
+}
+
+/// A project section that sets only `standard_model` must not shadow
+/// `standard_effort` for the whole section — the fallback to the built-in is
+/// key-level.
+#[test]
+fn a_project_model_alone_leaves_effort_at_the_built_in() {
+    let (_temp, work_dir) = work_dir_without_config();
+    std::fs::write(
+        work_dir.join("config.toml"),
+        "[models]\nstandard_model = \"sonnet\"\n",
+    )
+    .unwrap();
+    let stage = stage_named("my-stage", "My Stage");
+
+    let (model, effort) = model_and_effort(SessionType::Stage, &stage, &work_dir);
+    assert_eq!(model, "sonnet");
+    assert_eq!(effort, "high");
+}
+
+/// Pin the stage-type built-ins a bare spawn launches on, so a later edit to
+/// the defaults table cannot silently change what a plan-field-free stage
+/// runs on.
+#[test]
+fn integration_verify_and_knowledge_stages_launch_on_their_built_ins() {
+    let (_temp, work_dir) = work_dir_without_config();
+
+    let mut verify_stage = stage_named("verify-stage", "Verify");
+    verify_stage.stage_type = StageType::IntegrationVerify;
+    let (model, effort) = model_and_effort(SessionType::Stage, &verify_stage, &work_dir);
+    assert_eq!((model.as_str(), effort.as_str()), ("opus", "xhigh"));
+
+    let mut knowledge_stage = stage_named("knowledge-stage", "Knowledge");
+    knowledge_stage.stage_type = StageType::Knowledge;
+    let (model, effort) = model_and_effort(SessionType::Knowledge, &knowledge_stage, &work_dir);
+    assert_eq!((model.as_str(), effort.as_str()), ("opus", "medium"));
 }
 
 #[test]
