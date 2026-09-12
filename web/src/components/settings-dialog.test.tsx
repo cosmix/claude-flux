@@ -74,6 +74,21 @@ describe("settings dialog", () => {
     const modelProjectSlot = modelProject.closest(".settings-slot");
     expect(modelProjectSlot?.getAttribute("data-provenance")).toBe("set");
     expect(modelProjectSlot?.getAttribute("data-effective")).toBe("true");
+    if (!(modelProjectSlot instanceof HTMLElement)) throw new Error("no slot for standard_model");
+    expect(within(modelProjectSlot).getByText("in effect")).toBeTruthy();
+
+    const effortUser = within(standard).getByRole("combobox", {
+      name: "standard_effort at user scope",
+    });
+    const effortUserSlot = effortUser.closest(".settings-slot");
+    if (!(effortUserSlot instanceof HTMLElement)) throw new Error("no slot for standard_effort");
+    expect(effortUserSlot.getAttribute("data-effective")).toBe("true");
+    expect(within(effortUserSlot).getByText("in effect")).toBeTruthy();
+
+    const effortProject = within(standard).getByRole("combobox", {
+      name: "standard_effort at project scope",
+    });
+    expect(effortProject.closest(".settings-slot")?.getAttribute("data-effective")).toBeNull();
   });
 
   it("draws a user-only section's pane once and lets a project-capable section write there too", async () => {
@@ -82,6 +97,9 @@ describe("settings dialog", () => {
 
     const check = row("check");
     expect(within(check).getByText("User-only keys")).toBeTruthy();
+    const checkSection = check.closest("tbody");
+    if (!checkSection) throw new Error("check row has no section tbody");
+    expect(within(checkSection).getAllByText("User-only keys")).toHaveLength(1);
 
     const checkInterval = row("check_interval_hours");
     expect(within(checkInterval).queryByRole("textbox", { name: /at project scope/ })).toBeNull();
@@ -324,5 +342,39 @@ describe("settings dialog", () => {
       ),
     );
     expect(screen.getByText("saving")).toBeTruthy();
+  });
+
+  it("hides the clear button for a project-scope key while its own write is pending", async () => {
+    const client: ConfigClient = {
+      load: async () => snapshot(),
+      write: () => new Promise<WriteResult>(() => {}),
+    };
+    renderAt("?settings=1", client);
+    await screen.findByRole("switch", { name: "check at user scope" });
+
+    expect(
+      within(row("ceiling_tokens")).getByRole("button", {
+        name: "clear ceiling_tokens at project scope",
+      }),
+    ).toBeTruthy();
+
+    const input = within(row("ceiling_tokens")).getByRole("textbox", {
+      name: "ceiling_tokens at project scope",
+    });
+    fireEvent.change(input, { target: { value: "123" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(
+        within(row("ceiling_tokens")).getByRole("textbox", {
+          name: "ceiling_tokens at project scope",
+        }),
+      ).toHaveProperty("disabled", true),
+    );
+    expect(
+      within(row("ceiling_tokens")).queryByRole("button", {
+        name: "clear ceiling_tokens at project scope",
+      }),
+    ).toBeNull();
   });
 });

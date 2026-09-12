@@ -19,7 +19,7 @@ import { providerRows } from "@/lib/quota";
 import { snapshotAtom } from "@/state/atoms";
 
 /// Header, routed body, footer, the stage dialog (`?stage=<id>` on any
-/// route), the settings dialog (`?settings=<scope>`), and the legend dialog
+/// route), the settings dialog (`?settings=1`), and the legend dialog
 /// with its `?` shortcut. Each route sets its
 /// own width: the overview runs wide, the ledger and stage pages are bounded.
 export function Shell() {
