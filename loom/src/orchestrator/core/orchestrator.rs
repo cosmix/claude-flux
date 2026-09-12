@@ -1,31 +1,23 @@
 //! Main Orchestrator struct and public interface
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::fs::work_integrity::validate_work_dir_state;
 use crate::language::{detect_project_languages, DetectedLanguage};
 use crate::models::session::Session;
-use crate::models::stage::StageStatus;
 use crate::models::worktree::Worktree;
 use crate::orchestrator::adjudication::AdjudicatorRegistry;
 use crate::orchestrator::monitor::{Monitor, MonitorConfig};
-use crate::orchestrator::tick;
 use crate::plan::schema::SandboxConfig;
 use crate::plan::ExecutionGraph;
 use crate::skills::SkillIndex;
-use crate::utils::{cleanup_terminal, install_terminal_panic_hook};
 
 use super::clear_status_line;
-use super::event_handler::EventHandler;
-use super::persistence::Persistence;
-use super::recovery::Recovery;
-use super::stage_executor::StageExecutor;
 use crate::orchestrator::liveness::LivenessService;
 use crate::orchestrator::terminal::backend::SessionBackend;
 
@@ -234,254 +226,6 @@ impl Orchestrator {
                 None
             }
         }
-    }
-
-    /// Main run loop - executes until all stages complete or error
-    pub fn run(&mut self) -> Result<OrchestratorResult> {
-        // Install panic hook to restore terminal on panic
-        install_terminal_panic_hook();
-
-        // Record start time
-        let started_at = Utc::now();
-
-        // Validate .loom/work directory integrity before starting
-        validate_work_dir_state(&self.config.repo_root)
-            .context("Work directory integrity check failed")?;
-
-        // Reconcile any active main-repo merge BEFORE syncing graph and
-        // BEFORE recovering orphaned sessions. Recovery deletes orphaned
-        // session files; attribution depends on their metadata. Sync reads
-        // stage files into the graph; if reconcile flips the disk state
-        // AFTER sync, the graph keeps the stale view and would queue
-        // dependents based on a phantom merge.
-        self.reconcile_and_update_graph()
-            .context("Failed to reconcile active main-repo merge")?;
-
-        // Sync graph with existing stage states and recover orphaned sessions
-        self.sync_graph_with_stage_files()
-            .context("Failed to sync graph with existing stage files")?;
-
-        let recovered = self
-            .recover_orphaned_sessions()
-            .context("Failed to recover orphaned sessions")?;
-
-        if recovered > 0 {
-            println!("Recovered {recovered} orphaned session(s) - stages reset to Ready");
-        }
-
-        // After recovery, ensure ready status is updated for all stages
-        self.graph.refresh_ready_status();
-
-        // Sync queued status from graph back to files so status display is accurate
-        self.sync_queued_status_to_files()
-            .context("Failed to sync queued status to files")?;
-
-        // Adjudicator hooks: poll for pending disputes and apply any verdict
-        // a session has written. Idempotent + cheap when there are no
-        // disputes on disk.
-        self.check_pending_disputes()
-            .context("Failed to check pending disputes")?;
-        self.apply_pending_verdicts()
-            .context("Failed to apply pending verdicts")?;
-
-        // Spawn merge resolution sessions for stages stuck in MergeConflict/MergeBlocked
-        let initial_merge_sessions = self
-            .spawn_merge_resolution_sessions()
-            .context("Failed to spawn merge resolution sessions")?;
-
-        let mut total_sessions_spawned = initial_merge_sessions;
-        let mut completed_stages = Vec::new();
-        let mut failed_stages = Vec::new();
-        let mut needs_handoff = Vec::new();
-        let mut last_status_update = Instant::now();
-        let mut printed_view_instructions = false;
-
-        loop {
-            // Check shutdown flag at start of each iteration
-            if let Some(ref flag) = self.config.shutdown_flag {
-                if flag.load(Ordering::Relaxed) {
-                    println!("Orchestrator shutdown requested");
-                    break;
-                }
-            }
-
-            // Stamp loop liveness. The daemon's socket thread answers `loom
-            // status` independently of this loop, so without a tick a frozen
-            // scheduler is indistinguishable from a healthy idle one — stages
-            // simply stay Queued forever. The phase is recorded per section so
-            // a stall report names where it stopped.
-            tick::record(&self.config.work_dir, tick::Phase::Sync);
-
-            // Reconcile main-repo active merge BEFORE sync each iteration.
-            // This catches `--no-verify --force-unsafe` produced phantom
-            // merges and any state-divergence that a manual git operation
-            // introduced between polls.
-            self.reconcile_and_update_graph()
-                .context("Failed to reconcile active main-repo merge")?;
-
-            // Re-sync with stage files to pick up external changes
-            // (e.g., stages verified via `loom verify` command)
-            self.sync_graph_with_stage_files()
-                .context("Failed to sync graph with stage files")?;
-
-            // Sync queued status back to files so status display is accurate
-            self.sync_queued_status_to_files()
-                .context("Failed to sync queued status to files")?;
-
-            // Adjudicator hooks (every tick): scan for new disputes and apply
-            // ready verdicts. The calls are no-ops when there are no pending
-            // disputes on disk.
-            self.check_pending_disputes()
-                .context("Failed to check pending disputes")?;
-            self.apply_pending_verdicts()
-                .context("Failed to apply pending verdicts")?;
-
-            // Spawn merge resolution sessions for stages stuck in MergeConflict/MergeBlocked
-            let merge_sessions_spawned = self
-                .spawn_merge_resolution_sessions()
-                .context("Failed to spawn merge resolution sessions")?;
-            total_sessions_spawned += merge_sessions_spawned;
-
-            // Drain sandboxed-worktree memory spools (see spool_drain.rs).
-            // Placed after the graph sync above and outside the manual-mode
-            // gate below, so `loom run --manual` still drains; never
-            // returns Err, so a spool problem can't abort this loop (O-4).
-            self.drain_stage_spools();
-
-            tick::record(&self.config.work_dir, tick::Phase::Spawning);
-
-            let started = self
-                .start_ready_stages()
-                .context("Failed to start ready stages")?;
-            total_sessions_spawned += started;
-
-            // Print instructions on how to view sessions (once, after first batch starts)
-            if started > 0 && !printed_view_instructions && !self.config.manual_mode {
-                printed_view_instructions = true;
-                println!();
-                println!("Sessions are now running. To view progress:");
-                println!("  loom status               View overall progress");
-                println!();
-            }
-
-            if !self.config.manual_mode {
-                // Collect stage IDs BEFORE handle_events() to avoid missing completed stages
-                // that get removed from active_sessions during event handling
-                let stage_ids: Vec<String> = self.active_sessions.keys().cloned().collect();
-
-                tick::record(&self.config.work_dir, tick::Phase::Events);
-
-                let events = self
-                    .monitor
-                    .poll()
-                    .context("Failed to poll monitor for events")?;
-
-                self.handle_events(events)
-                    .context("Failed to handle monitor events")?;
-
-                for stage_id in &stage_ids {
-                    match self.load_stage(stage_id) {
-                        Ok(stage) => match stage.status {
-                            StageStatus::Completed if !completed_stages.contains(stage_id) => {
-                                completed_stages.push(stage_id.clone());
-                            }
-                            StageStatus::Blocked if !failed_stages.contains(stage_id) => {
-                                failed_stages.push(stage_id.clone());
-                            }
-                            StageStatus::NeedsHandoff if !needs_handoff.contains(stage_id) => {
-                                needs_handoff.push(stage_id.clone());
-                            }
-                            _ => {}
-                        },
-                        Err(e) => {
-                            // A-4: a corrupt stage file must not be silently
-                            // skipped (and must NOT abort the loop — O-4). Log
-                            // with the file path; the stage stays tracked.
-                            let path = crate::fs::stage_files::find_stage_file(
-                                &self.config.work_dir.join("stages"),
-                                stage_id,
-                            )
-                            .ok()
-                            .flatten();
-                            tracing::error!(
-                                stage_id = %stage_id,
-                                path = ?path,
-                                error = %e,
-                                "Failed to load stage during result collection; skipping (corrupt stage file?)"
-                            );
-                        }
-                    }
-                }
-
-                // Print periodic status updates to show progress
-                if last_status_update.elapsed() >= self.config.status_update_interval {
-                    self.print_status_update();
-                    last_status_update = Instant::now();
-                }
-            }
-
-            // Exit conditions depend on mode
-            if self.config.manual_mode {
-                // Manual mode: exit after first batch
-                break;
-            }
-
-            if self.config.watch_mode {
-                // Watch mode: only exit when all stages are terminal
-                if self.all_stages_terminal() {
-                    println!();
-                    println!("All stages are in terminal state (verified/blocked/held).");
-                    break;
-                }
-            } else {
-                // Normal mode: exit only when all stages are Completed or Skipped
-                // Stages with failures do NOT trigger exit - orchestrator keeps running
-                // for user intervention via `loom stage retry` or `loom status`
-                if self.graph.is_complete() {
-                    break;
-                }
-            }
-
-            tick::record(&self.config.work_dir, tick::Phase::Idle);
-
-            // Use shorter sleep intervals to check shutdown flag more frequently
-            let poll_interval = self.config.poll_interval;
-            let check_interval = Duration::from_millis(100);
-            let mut elapsed = Duration::ZERO;
-
-            while elapsed < poll_interval {
-                if let Some(ref flag) = self.config.shutdown_flag {
-                    if flag.load(Ordering::Relaxed) {
-                        break;
-                    }
-                }
-                std::thread::sleep(check_interval);
-                elapsed += check_interval;
-            }
-        }
-
-        // An adjudication session outlives this loop the way a merge
-        // resolution session does: it is an agent in a terminal, not a thread
-        // this process owns, and the verdict it writes is picked up by
-        // whichever daemon is running when it lands.
-
-        // The loop is done turning; drop the tick and the scheduling report so
-        // a later `loom status` cannot read a stopped daemon's last state as a
-        // live stall or a live block.
-        tick::clear(&self.config.work_dir);
-        crate::orchestrator::scheduling_report::clear(&self.config.work_dir);
-
-        // Restore terminal state before returning (clears \r-based status line)
-        cleanup_terminal();
-
-        Ok(OrchestratorResult {
-            completed_stages,
-            failed_stages,
-            needs_handoff,
-            total_sessions_spawned,
-            started_at,
-            completed_at: Utc::now(),
-        })
     }
 
     /// Count currently running sessions

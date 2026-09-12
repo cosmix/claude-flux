@@ -21,6 +21,8 @@ mod orchestrator;
 mod orphan_adoption;
 mod persistence;
 mod recovery;
+mod run;
+mod run_result;
 mod session_adoption;
 mod session_lifecycle;
 mod spawn_setup;

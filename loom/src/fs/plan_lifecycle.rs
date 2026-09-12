@@ -190,64 +190,62 @@ pub fn mark_plan_in_progress(work_dir: &WorkDir) -> Result<Option<PathBuf>> {
 /// Mark the plan file as done by replacing `IN_PROGRESS-` with `DONE-` prefix.
 ///
 /// This is called after the orchestrator completes successfully.
-/// Only renames if all stages are merged. If not all merged, leaves as `IN_PROGRESS-`.
+/// Generates the final review before renaming, once all stages are merged.
+/// Repeated calls regenerate the review for an already-DONE plan. Review errors
+/// propagate and leave an in-progress plan available for retry.
 ///
 /// Returns the new path if renamed, None if no rename was needed.
 pub fn mark_plan_done_if_all_merged(work_dir: &WorkDir) -> Result<Option<PathBuf>> {
     let Some(current_path) = get_plan_source_path(work_dir)? else {
         return Ok(None);
     };
-
-    // Only process IN_PROGRESS files
-    if !has_prefix(&current_path, IN_PROGRESS_PREFIX) {
+    let already_done = has_prefix(&current_path, DONE_PREFIX);
+    if !already_done && !has_prefix(&current_path, IN_PROGRESS_PREFIX) {
+        return Ok(None);
+    }
+    if !all_stages_merged(work_dir)? || !current_path.exists() {
         return Ok(None);
     }
 
-    // Check if all stages are merged
-    if !all_stages_merged(work_dir)? {
-        println!(
-            "  {} Not all stages merged, leaving plan as IN_PROGRESS",
-            "→".yellow().bold()
-        );
+    // Use the plan's project, never the daemon's or caller's ambient checkout.
+    let root = work_dir
+        .main_project_root()
+        .context("Cannot determine plan project root")?;
+    // Rebuild from final memories before archiving/renaming. Failure keeps IN_PROGRESS retryable.
+    crate::fs::plan_review::generate(work_dir.root(), &root, &root, false)
+        .context("Failed to generate final plan review")?;
+    if already_done {
         return Ok(None);
     }
 
-    // Check file exists before renaming
-    if !current_path.exists() {
-        return Ok(None);
-    }
-
-    // Remove IN_PROGRESS- and add DONE-
     let without_prefix = remove_prefix_from_filename(&current_path, IN_PROGRESS_PREFIX);
     let new_path = add_prefix_to_filename(&without_prefix, DONE_PREFIX);
     archive_run_state_before_done(work_dir);
+    rename_completed_plan(work_dir, &current_path, &new_path)?;
+    Ok(Some(new_path))
+}
 
-    // Rename the file
-    fs::rename(&current_path, &new_path).with_context(|| {
+fn rename_completed_plan(work_dir: &WorkDir, current_path: &Path, new_path: &Path) -> Result<()> {
+    fs::rename(current_path, new_path).with_context(|| {
         format!(
             "Failed to rename plan file from {} to {}",
             current_path.display(),
             new_path.display()
         )
     })?;
-
-    // Update config.toml with new path
-    update_plan_source_path(work_dir, &new_path)?;
-
+    update_plan_source_path(work_dir, new_path)?;
     println!(
         "  {} Plan marked as done: {}",
         "✓".green().bold(),
         new_path.file_name().unwrap_or_default().to_string_lossy()
     );
-    // Commit tracked changes to leave the default branch clean
-    if let Err(e) = commit_post_completion_changes(work_dir, &current_path, &new_path) {
+    if let Err(e) = commit_post_completion_changes(work_dir, current_path, new_path) {
         eprintln!(
             "  {} Warning: Failed to commit post-completion changes: {e}",
             "⚠".yellow().bold()
         );
     }
-
-    Ok(Some(new_path))
+    Ok(())
 }
 
 /// Archive the run's state before the DONE rename. Best-effort: a missing

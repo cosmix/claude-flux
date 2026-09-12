@@ -10,7 +10,6 @@
 file src/commands/graph/tests.rs 425
 file src/commands/init/tests.rs 570
 file src/commands/plan/verify.rs 599
-file src/commands/review/generate.rs 422
 file src/commands/stage/complete.rs 771
 file src/commands/stage/merge.rs 546
 file src/commands/stage/tests/complete.rs 544
@@ -28,7 +27,6 @@ file src/hooks/tests.rs 514
 file src/models/stage/methods.rs 739
 file src/models/stage/types.rs 1129
 file src/orchestrator/core/merge_handler.rs 1328
-file src/orchestrator/core/orchestrator.rs 547
 file src/orchestrator/core/recovery.rs 1569
 file src/orchestrator/core/stage_executor.rs 790
 file src/orchestrator/merge_attribution.rs 543
@@ -83,9 +81,6 @@ function src/commands/plan/verify.rs print_human 110
 function src/commands/repair.rs execute 99
 function src/commands/repair/tests.rs repair_fixes_a_stale_knowledge_directory_deny_in_a_worktree 62
 function src/commands/resume.rs execute 57
-function src/commands/review/generate.rs execute 137
-function src/commands/review/generate.rs load_stage_infos 59
-function src/commands/review/generate.rs render_stage_section 59
 function src/commands/run/foreground.rs print_result 58
 function src/commands/self_update/install.rs install_binary 52
 function src/commands/sessions.rs kill 54
@@ -136,7 +131,6 @@ function src/fs/permissions/sync.rs merge_permissions_with_lock 70
 function src/fs/permissions/sync.rs sync_worktree_permissions_with_working_dir 75
 function src/fs/permissions/sync.rs transform_worktree_path 65
 function src/fs/permissions/tests/sync_tests.rs test_sync_preserves_other_fields 57
-function src/fs/plan_lifecycle.rs mark_plan_done_if_all_merged 56
 function src/fs/safe_fs.rs safe_replace_outside_workdir 138
 function src/fs/session_files.rs find_session_file 55
 function src/fs/work_integrity.rs validate_work_dir_state 60
@@ -169,7 +163,6 @@ function src/orchestrator/core/merge_handler.rs spawn_merge_resolution_sessions 
 function src/orchestrator/core/merge_handler.rs try_auto_merge 228
 function src/orchestrator/core/merge_handler.rs verify_and_finalize_merge 65
 function src/orchestrator/core/orchestrator.rs new 67
-function src/orchestrator/core/orchestrator.rs run 246
 function src/orchestrator/core/recovery.rs orphan_with_commits_ahead_signals_handoff_input 64
 function src/orchestrator/core/recovery.rs recover_orphaned_sessions 164
 function src/orchestrator/core/recovery.rs recovery_commit_and_merge_reconciliation_preserve_each_other 57

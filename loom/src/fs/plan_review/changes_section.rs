@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::fs::memory::{MemoryEntry, MemoryEntryType};
 
-use super::generate::{render_stage_section, StageInfo};
+use super::stages::{render_stage_section, StageInfo};
 
 /// Append the "Changes by Stage" section: one subsection per stage with
 /// recorded memory entries, skipping any stage that has none.

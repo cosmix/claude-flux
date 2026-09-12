@@ -66,7 +66,6 @@ fn execute_foreground(
 ) -> Result<()> {
     let (graph, plan_sandbox) = build_execution_graph(work_dir)?;
 
-    // Parse config.toml to extract base_branch
     let base_branch = crate::fs::parse_base_branch_from_config(work_dir.root())?;
 
     let config = OrchestratorConfig {
@@ -95,9 +94,11 @@ fn execute_foreground(
     announce_run_mode(watch);
     let result = orchestrator.run()?;
 
+    if manual {
+        return Ok(());
+    }
     report_completion(work_dir, &result);
 
-    // If successful, check if all stages are merged and mark plan as done
     if result.is_success() {
         plan_lifecycle::mark_plan_done_if_all_merged(work_dir)?;
         Ok(())

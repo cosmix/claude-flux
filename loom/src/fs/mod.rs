@@ -3,6 +3,7 @@ pub mod locking;
 pub mod memory;
 pub mod permissions;
 pub mod plan_lifecycle;
+pub mod plan_review;
 pub mod safe_fs;
 pub mod safe_read;
 pub mod safe_write;

@@ -313,3 +313,46 @@ fn test_full_lifecycle_plan_to_done() {
     assert!(!in_progress.exists());
     assert!(done.exists());
 }
+
+#[test]
+fn finalization_generates_review_and_can_repair_a_missing_review() {
+    let temp = TempDir::new().unwrap();
+    let work = create_test_work_dir(&temp);
+    let plan = create_plan_file(&temp, "IN_PROGRESS-PLAN-feature.md");
+    write_config(&work, &plan);
+    create_stage_file(&work, "test", true);
+    let entry = crate::fs::memory::MemoryEntry::new(
+        crate::fs::memory::MemoryEntryType::Note,
+        "Recovered blocked stage".into(),
+    );
+    crate::fs::memory::append_entry(work.root(), "test", &entry).unwrap();
+    let done = mark_plan_done_if_all_merged(&work).unwrap().unwrap();
+    let review = temp.path().join("doc/plans/REVIEW-test.md");
+    assert!(fs::read_to_string(&review)
+        .unwrap()
+        .contains("Recovered blocked stage"));
+    fs::remove_file(&review).unwrap();
+    assert!(mark_plan_done_if_all_merged(&work).unwrap().is_none());
+    assert!(review.exists());
+    assert!(done.exists());
+}
+
+#[test]
+fn review_failure_prevents_done_and_retry_finishes() {
+    let temp = TempDir::new().unwrap();
+    let work = create_test_work_dir(&temp);
+    let plan = create_plan_file(&temp, "IN_PROGRESS-PLAN-feature.md");
+    write_config(&work, &plan);
+    create_stage_file(&work, "test", true);
+    let review = temp.path().join("doc/plans/REVIEW-test.md");
+    fs::create_dir(&review).unwrap();
+    assert!(mark_plan_done_if_all_merged(&work).is_err());
+    assert!(plan.exists());
+    assert_eq!(get_plan_source_path(&work).unwrap().unwrap(), plan);
+    fs::remove_dir(&review).unwrap();
+    assert!(mark_plan_done_if_all_merged(&work)
+        .unwrap()
+        .unwrap()
+        .exists());
+    assert!(review.is_file());
+}
