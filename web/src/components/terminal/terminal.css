@@ -43,6 +43,8 @@
     --well-fg: #d8dce3;
     --well-dim: #89919e;
     --well-rule: oklch(1 0 0 / 0.08);
+    /* The well is always dark, so the input tone is fixed to its light face. */
+    --tone-control: oklch(0.7 0.19 25);
     position: relative;
     height: 100%;
     border-radius: 8px;
@@ -125,31 +127,38 @@
     transform: translateY(0);
   }
 
-  .terminal-bar {
+  /* The tape: diagonal red stripes masked to a ring just inside the edge,
+   * held still while keys reach the agent. Fades out on release. */
+  .terminal-tape {
     position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     z-index: 2;
-    height: 2px;
-    background: var(--tone-executing);
+    padding: 6px;
+    border-radius: inherit;
+    background: repeating-linear-gradient(
+      -45deg,
+      color-mix(in oklch, var(--tone-control) 62%, transparent) 0 6px,
+      transparent 6px 13px
+    );
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
     opacity: 0;
-    transition: opacity 300ms ease;
+    transition: opacity 320ms ease;
   }
 
-  /* Control: a quiet accent marks the active input surface. */
-  .terminal-well[data-mode="control"] .terminal-bar {
+  /* Control: only the tape marks the input surface. */
+  .terminal-well[data-mode="control"] .terminal-tape {
     opacity: 1;
-  }
-  .terminal-well[data-mode="control"] {
-    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--tone-executing) 70%, transparent);
   }
 
   /* Ended: the last screen stays and drifts grey. */
   .terminal-well[data-phase="ended"] .terminal-host {
     filter: grayscale(0.6) opacity(0.85);
   }
-  .terminal-well[data-phase="ended"] .terminal-bar {
+  .terminal-well[data-phase="ended"] .terminal-tape {
     opacity: 0;
   }
 
@@ -241,7 +250,7 @@
     gap: 6px;
   }
   .terminal-hint[data-control] {
-    color: var(--tone-executing);
+    color: var(--tone-control);
   }
 
   /* ── The entry glyph on cards and rows ── */
@@ -301,7 +310,7 @@
     animation: none;
   }
   .terminal-well,
-  .terminal-bar,
+  .terminal-tape,
   .terminal-host,
   .terminal-takeover-cue {
     transition: none;

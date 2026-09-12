@@ -12,11 +12,11 @@
 
   .terminal-key {
     position: relative;
-    display: inline-flex;
-    align-items: center;
-    gap: 12px;
+    isolation: isolate;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     height: 34px;
-    padding: 3px 3px 3px 13px;
+    padding: 3px;
     border: 1px solid var(--hairline);
     border-radius: 9px;
     background: var(--card);
@@ -26,9 +26,9 @@
     text-align: left;
     cursor: pointer;
     transition:
-      background-color 200ms ease,
-      border-color 200ms ease,
-      box-shadow 200ms ease;
+      background-color 300ms ease,
+      border-color 300ms ease,
+      box-shadow 300ms ease;
   }
   .terminal-key:focus {
     outline: none;
@@ -38,7 +38,41 @@
     outline-offset: 2px;
   }
 
-  /* Left cell: the state, a dot and a word. */
+  /* The sweep: a red fill that wipes in from the left when control is taken
+   * and retreats the same way when it is released. It sits between the
+   * capsule's own background and its content. */
+  .terminal-key::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background: color-mix(in oklch, var(--tone-control) 11%, var(--card));
+    clip-path: inset(0 100% 0 0 round 9px);
+    transition: clip-path 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+
+  /* The knob: a tinted tile under the left cell that slides to the right
+   * cell when control is taken, and turns quiet there since the cell it
+   * covers now only lets go. */
+  .terminal-key-knob {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    left: 3px;
+    width: calc(50% - 3px);
+    border-radius: 6px;
+    background: color-mix(in oklch, var(--tone-executing) 12%, transparent);
+    transition:
+      transform 380ms cubic-bezier(0.2, 0.7, 0.2, 1),
+      background-color 300ms ease;
+  }
+  .terminal-key[aria-checked="true"] .terminal-key-knob {
+    transform: translateX(100%);
+    background: color-mix(in oklch, var(--foreground) 6%, transparent);
+  }
+
+  /* The disabled indicator: a dot and a word, left as a plain status. */
   .terminal-key-state {
     display: inline-flex;
     align-items: center;
@@ -63,68 +97,92 @@
     animation: terminal-key-word 200ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
   }
 
-  /* Right cell: the action, a small tinted button inside the capsule. */
-  .terminal-key-verb {
+  /* Each cell stacks its two labels in the same grid cell, so the cell is
+   * as wide as its wider label and the capsule never changes width. */
+  .terminal-key-cell {
+    position: relative;
+    display: grid;
+    place-items: center;
+    height: 26px;
+    padding: 0 10px;
+  }
+  .terminal-key-label {
+    grid-area: 1 / 1;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 26px;
-    padding: 0 9px 0 11px;
-    border-radius: 6px;
-    background: color-mix(in oklch, var(--tone-executing) 12%, transparent);
     font-size: 12.5px;
     font-weight: 500;
     line-height: 16px;
     white-space: nowrap;
-    color: var(--tone-executing);
+    color: var(--foreground);
     transition:
-      background-color 160ms ease,
-      color 160ms ease;
+      opacity 200ms ease,
+      transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1),
+      color 300ms ease;
   }
-  .terminal-key-verb svg {
+  .terminal-key-label[data-active="false"] {
+    opacity: 0;
+    transform: translateY(3px);
+    pointer-events: none;
+  }
+  .terminal-key-label svg {
     flex: none;
     width: 13px;
     height: 13px;
     stroke-width: 2;
     transition: transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
   }
+  .terminal-key-label[data-kind="verb"] {
+    color: var(--tone-executing);
+  }
+  .terminal-key[aria-checked="true"] .terminal-key-label[data-kind="verb"] {
+    color: var(--foreground);
+  }
+  .terminal-key[aria-checked="true"] .terminal-key-label[data-kind="state"] {
+    color: var(--tone-control);
+  }
 
   .terminal-key:hover:not(:disabled) {
     border-color: color-mix(in oklch, var(--tone-executing) 32%, var(--hairline));
   }
-  .terminal-key:hover:not(:disabled) .terminal-key-verb {
+  .terminal-key:hover:not(:disabled) .terminal-key-knob {
     background: color-mix(in oklch, var(--tone-executing) 20%, transparent);
   }
-  .terminal-key[data-mode="view"]:hover:not(:disabled) .terminal-key-verb svg {
+  .terminal-key[aria-checked="false"]:hover:not(:disabled)
+    .terminal-key-label[data-kind="verb"]
+    svg {
     transform: translateX(2px);
   }
-  .terminal-key[data-mode="control"]:hover:not(:disabled) .terminal-key-verb svg {
+  .terminal-key[aria-checked="true"]:hover:not(:disabled)
+    .terminal-key-label[data-kind="verb"]
+    svg {
     transform: translateX(-2px);
   }
 
-  /* Armed: control while the switch still works. The capsule takes the
-   * accent and the action turns quiet, since it now only lets go. */
+  /* Armed: control while the switch still works. The capsule goes red as
+   * the sweep wipes across behind the sliding knob. */
   .terminal-key[aria-checked="true"]:not(:disabled) {
-    border-color: color-mix(in oklch, var(--tone-executing) 50%, transparent);
-    background: color-mix(in oklch, var(--tone-executing) 9%, var(--card));
+    border-color: color-mix(in oklch, var(--tone-control) 55%, transparent);
     box-shadow:
-      0 0 0 3px color-mix(in oklch, var(--tone-executing) 10%, transparent),
-      0 8px 20px -14px color-mix(in oklch, var(--tone-executing) 40%, transparent);
+      0 0 0 3px color-mix(in oklch, var(--tone-control) 12%, transparent),
+      0 8px 20px -14px color-mix(in oklch, var(--tone-control) 45%, transparent);
   }
-  .terminal-key[aria-checked="true"]:not(:disabled) .terminal-key-state {
-    color: var(--tone-executing);
+  .terminal-key[aria-checked="true"]:not(:disabled)::before {
+    clip-path: inset(0 0 0 0 round 9px);
   }
-  .terminal-key[aria-checked="true"]:not(:disabled) .terminal-key-verb {
-    background: color-mix(in oklch, var(--foreground) 6%, transparent);
-    color: var(--foreground);
+  .terminal-key[aria-checked="true"]:hover:not(:disabled) {
+    border-color: color-mix(in oklch, var(--tone-control) 72%, transparent);
   }
-  .terminal-key[aria-checked="true"]:hover:not(:disabled) .terminal-key-verb {
+  .terminal-key[aria-checked="true"]:hover:not(:disabled) .terminal-key-knob {
     background: color-mix(in oklch, var(--foreground) 11%, transparent);
   }
 
-  /* A status must stay legible: the verb goes, the word stays. */
+  /* A status must stay legible: the toggle goes, the word stays. */
   .terminal-key:disabled {
-    padding-right: 13px;
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 13px;
     cursor: default;
     box-shadow: none;
   }
@@ -185,9 +243,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .terminal-key,
+  .terminal-key::before,
+  .terminal-key-knob,
   .terminal-key-state,
-  .terminal-key-verb,
-  .terminal-key-verb svg,
+  .terminal-key-label,
+  .terminal-key-label svg,
   .terminal-dot {
     transition: none;
   }
@@ -195,7 +255,7 @@
   .terminal-key .terminal-dot {
     animation: none;
   }
-  .terminal-key:hover:not(:disabled) .terminal-key-verb svg {
+  .terminal-key:hover:not(:disabled) .terminal-key-label svg {
     transform: none;
   }
 }

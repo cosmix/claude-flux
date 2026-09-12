@@ -42,6 +42,7 @@
   --tone-warning: oklch(0.6 0.14 70);
   --tone-merged: oklch(0.55 0.08 150);
   --tone-dimmed: oklch(0.6 0.018 255);
+  --tone-control: oklch(0.55 0.21 27);
   --tone-neutral: var(--foreground);
   --hairline: color-mix(in oklch, var(--border) 85%, transparent);
 }
@@ -55,6 +56,7 @@
   --tone-warning: oklch(0.8 0.13 80);
   --tone-merged: oklch(0.7 0.08 155);
   --tone-dimmed: oklch(0.58 0.022 255);
+  --tone-control: oklch(0.72 0.17 25);
 }
 
 @theme inline {

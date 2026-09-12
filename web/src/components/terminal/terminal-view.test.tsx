@@ -287,7 +287,11 @@ describe("terminal view", () => {
   it("releases control when the key is pressed again", async () => {
     const { factory } = await live();
     const key = () => screen.getByRole("switch", { name: "Take control" });
-    await waitFor(() => expect(key().textContent).toBe("viewingtake control"));
+    const shown = () =>
+      Array.from(key().querySelectorAll('[data-active="true"]'))
+        .map((label) => label.textContent)
+        .join("|");
+    await waitFor(() => expect(shown()).toBe("take control|viewing"));
     expect(key().getAttribute("aria-checked")).toBe("false");
 
     fireEvent.click(key());
@@ -295,7 +299,7 @@ describe("terminal view", () => {
     act(() => FakeSocket.instances[1].open());
     await waitFor(() => expect(key().getAttribute("aria-checked")).toBe("true"));
     expect(well().dataset.mode).toBe("control");
-    expect(key().textContent).toBe("controllingrelease");
+    expect(shown()).toBe("controlling|release");
 
     fireEvent.click(key());
     await waitFor(() => expect(well().dataset.mode).toBe("view"));

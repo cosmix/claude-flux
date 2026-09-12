@@ -117,7 +117,7 @@ export function TerminalView({ stage, frame, factory, deps }: TerminalViewProps)
           onClick={takeControl}
           onKeyDown={onKeyDown}
         >
-          <div className="terminal-bar" aria-hidden="true" />
+          <div className="terminal-tape" aria-hidden="true" />
           <div ref={hostRef} className="terminal-host" aria-label="Agent terminal" />
           {mode === "view" && phase === "live" && (
             <span className="terminal-takeover-cue" aria-hidden="true">
