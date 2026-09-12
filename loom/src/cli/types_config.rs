@@ -20,7 +20,8 @@ pub struct ConfigArgs {
     pub value: Option<String>,
 
     /// List every key with its value and origin (~/.loom/config.toml alone;
-    /// a workspace `[terminal]`/`[context]` section, when present, overrides it)
+    /// a workspace .loom/work/config.toml, when present, overrides it: whole
+    /// `[terminal]`/`[context]` sections, `[pressure]`/`[models]` key by key)
     #[arg(long, conflicts_with_all = ["key", "value"])]
     pub list: bool,
 

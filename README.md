@@ -240,6 +240,48 @@ Each of the three steps spawns with an independently selectable model and reason
 
 `loom status --web [PORT] [--terminals]` starts a web dashboard bound to `127.0.0.1` and serves the live ledger over a WebSocket in the browser. Without `PORT`, it starts at port 7373 and automatically tries the next available port when a candidate is occupied. Supplying a nonzero `PORT` requests that exact port; `PORT` 0 asks the OS for any free port. It works without the daemon by polling `.work/` files directly when the daemon socket is unreachable. Besides the ledger, it exposes a settings dialog for editing loom's configuration (see below) and, with `--terminals`, a way to open a stage's terminal from the browser (see [Web Dashboard Terminals](#web-dashboard-terminals)).
 
+### Configuration
+
+Loom keeps its settings in two TOML files. A project file overrides the user file, and an explicit per-invocation value (a stage's own `model` field in the plan, a `loom pressure` flag) overrides both:
+
+| Tier      | File                            | Applies to                      |
+| --------- | ------------------------------- | ------------------------------- |
+| `user`    | `~/.loom/config.toml`           | Every workspace on this machine |
+| `project` | `<repo>/.loom/work/config.toml` | This workspace only             |
+
+Neither file needs to exist: every key has a built-in default. `LOOM_HOME` relocates the user file (`$LOOM_HOME/config.toml`).
+
+There are three ways to change a setting:
+
+1. **`loom config`.** Run bare in a terminal it opens a settings screen; with flags it is scriptable. `loom config -k <key>` prints one key, `loom config -k <key> <value>` writes it (validated against the key's type and value set), `loom config --list` prints every key with its value and where it came from, and `loom config --print` prints the resolved user config as TOML. It reads and writes the user file only.
+2. **Edit the files.** Both files use the same `[section]` / `key = value` layout as the table below; project sections may be partial. `loom init` writes a `[context]` section into the project file, everything else is opt-in.
+3. **The dashboard.** `loom status --web` has a settings dialog that edits both files, one key at a time, with the resolution shown per key ([Web Dashboard Settings](#web-dashboard-settings)).
+
+The keys, with their built-in defaults:
+
+| Key                               | Default       | Values                                                    | Project tier |
+| --------------------------------- | ------------- | --------------------------------------------------------- | ------------ |
+| `update.check`                    | `true`        | `true`, `false`                                           | no           |
+| `update.check_interval_hours`     | `24`          | integer                                                   | no           |
+| `terminal.backend`                | `native`      | `native`, `tmux`                                          | whole section |
+| `context.ceiling_tokens`          | `800000`      | integer                                                   | whole section |
+| `pressure.claude_model`           | `opus`        | `haiku`, `sonnet`, `opus`, `fable`                        | per key      |
+| `pressure.claude_effort`          | `xhigh`       | `low`, `medium`, `high`, `xhigh`, `max`                   | per key      |
+| `pressure.codex_model`            | `gpt-5.6-sol` | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | per key  |
+| `pressure.codex_effort`           | `xhigh`       | `low`, `medium`, `high`, `xhigh`                          | per key      |
+| `pressure.address_model`          | `opus`        | `haiku`, `sonnet`, `opus`, `fable`                        | per key      |
+| `pressure.address_effort`         | `high`        | `low`, `medium`, `high`, `xhigh`, `max`                   | per key      |
+| `models.standard_model`           | `opus`        | `haiku`, `sonnet`, `opus`, `fable`                        | per key      |
+| `models.standard_effort`          | `high`        | `low`, `medium`, `high`, `xhigh`, `max`                   | per key      |
+| `models.knowledge_model`          | `opus`        | `haiku`, `sonnet`, `opus`, `fable`                        | per key      |
+| `models.knowledge_effort`         | `medium`      | `low`, `medium`, `high`, `xhigh`, `max`                   | per key      |
+| `models.knowledge_distill_model`  | `sonnet`      | `haiku`, `sonnet`, `opus`, `fable`                        | per key      |
+| `models.knowledge_distill_effort` | `high`        | `low`, `medium`, `high`, `xhigh`, `max`                   | per key      |
+| `models.integration_verify_model` | `opus`        | `haiku`, `sonnet`, `opus`, `fable`                        | per key      |
+| `models.integration_verify_effort` | `xhigh`      | `low`, `medium`, `high`, `xhigh`, `max`                   | per key      |
+
+"Whole section" means a project `[terminal]` or `[context]` section replaces the user tier's section outright, so a key it omits takes the built-in. "Per key" means a project `[pressure]` or `[models]` section overrides only the keys it names and the rest fall through to the user file. The `pressure.*` keys are explained under [Primary Commands](#primary-commands), the `models.*` keys under [Model Allocation](#model-allocation).
+
 ### Web Dashboard Settings
 
 The dashboard header has a settings button; opening it (or navigating to `?settings=user` or `?settings=project`) edits loom's configuration in place, so the browser's back button closes the dialog. It edits every key in the registry `loom config` does — eighteen keys across `update`, `terminal`, `context`, `pressure`, and `models`: `update.check` / `update.check_interval_hours` (loom's self-update check), `terminal.backend` (see [Terminal Backends](#terminal-backends)), `context.ceiling_tokens` (see [Plan-Level Context Fields](#plan-level-context-fields)), the six `pressure.*` model and effort picks described under [Primary Commands](#primary-commands), and the eight `models.*` model and effort picks described under [Model Allocation](#model-allocation). `loom config --list` prints every key with its current value and origin. Every control here writes immediately on change, one key at a time; there is no separate Save step, and validation errors from the server surface next to the control that triggered them.
@@ -343,6 +385,7 @@ loom hook user-prompt                                                        # U
 loom repair [--fix]
 loom clean [--all|--worktrees|--sessions|--state]
 loom update
+loom config [-k <key> [<value>] | --list | --print]                          # Read or write ~/.loom/config.toml; bare in a terminal it opens the settings screen (see Configuration)
 loom install-assets [--claude-dir <path>] [--codex-dir <path>] [--skills core|all]  # Install loom's agents, skills, commands, hooks and doctrine files
 loom completions [<shell>] [--install] [--migrate]
 ```
