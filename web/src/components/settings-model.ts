@@ -2,17 +2,6 @@ import type { ConfigEntry, ConfigKind, ConfigScope } from "@/api/config";
 
 export const USER_CONFIG_PATH = "~/.loom/config.toml";
 
-/// The two files a key can be written to, in layering order: the project
-/// file overrides the user file, which overrides loom's built-in.
-export const SCOPES: { scope: ConfigScope; path: string; blurb: string }[] = [
-  { scope: "user", path: USER_CONFIG_PATH, blurb: "every loom project on this machine" },
-  { scope: "project", path: ".loom/work/config.toml", blurb: "this workspace only" },
-];
-
-export function scopePath(scope: ConfigScope, projectPath: string): string {
-  return scope === "project" ? projectPath : USER_CONFIG_PATH;
-}
-
 /// Key names are dotted `section.field`; entries arrive in registry order
 /// and keep it, with sections in order of first appearance.
 export function sectionOf(name: string): string {

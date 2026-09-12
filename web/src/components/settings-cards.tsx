@@ -3,11 +3,10 @@ import type { ReactElement } from "react";
 import { useId } from "react";
 
 import type { ConfigEntry, ConfigScope, ConfigSnapshot } from "@/api/config";
-import { BuiltinValue, LaneSlot } from "@/components/settings-control";
+import { BuiltinValue, LaneSlot, PairSummary } from "@/components/settings-control";
 import {
   LANES,
   effectiveLane,
-  formatValue,
   laneScope,
   rowEntries,
   rowLabel,
@@ -136,8 +135,7 @@ function SettingsCardHeader({
       </span>
       {row.kind === "pair" && (
         <span className="settings-res">
-          runs <b>{formatValue(row.model.kind, row.model.effective.value)}</b> ·{" "}
-          <b>{formatValue(row.effort.kind, row.effort.effective.value)}</b>
+          <PairSummary row={row} />
         </span>
       )}
     </header>

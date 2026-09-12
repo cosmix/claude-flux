@@ -11,6 +11,7 @@ import {
   formatValue,
   laneState,
   type LaneProvenance,
+  type PairRow,
   type WriteStatus,
 } from "@/components/settings-model";
 
@@ -140,6 +141,17 @@ function EnumSelect({
       </select>
       <ChevronDownIcon aria-hidden="true" className="settings-select-chevron" />
     </span>
+  );
+}
+
+/// A pair row's "runs `<model>` · `<effort>`" summary, shared by the lanes
+/// table's key cell and the cards layout's card header.
+export function PairSummary({ row }: { row: PairRow }): ReactElement {
+  return (
+    <>
+      runs <b>{formatValue(row.model.kind, row.model.effective.value)}</b> ·{" "}
+      <b>{formatValue(row.effort.kind, row.effort.effective.value)}</b>
+    </>
   );
 }
 

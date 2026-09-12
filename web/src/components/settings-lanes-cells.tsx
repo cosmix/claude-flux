@@ -1,9 +1,8 @@
 import { cn } from "cn";
 import type { ReactElement } from "react";
 
-import { LaneSlot } from "@/components/settings-control";
+import { LaneSlot, PairSummary } from "@/components/settings-control";
 import {
-  formatValue,
   statusFor,
   type OnWrite,
   type PairRow,
@@ -27,8 +26,7 @@ export function PairKeyCell({ row }: { row: PairRow }): ReactElement {
       </span>
       {row.caption && <span className="settings-help">{row.caption}</span>}
       <span className="settings-res">
-        runs <b>{formatValue(row.model.kind, row.model.effective.value)}</b> ·{" "}
-        <b>{formatValue(row.effort.kind, row.effort.effective.value)}</b>
+        <PairSummary row={row} />
       </span>
     </td>
   );
