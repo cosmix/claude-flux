@@ -68,47 +68,215 @@ export function fallbackFor(
   return { tier: "built-in", value: entry.default };
 }
 
-/// One stop on the resolution rail: built-in, then user, then project.
-export interface RailStop {
-  tier: "built-in" | "user" | "project";
-  /// null when the tier has nothing to report: an unset user/project tier,
-  /// or a project tier the key cannot use.
-  value: string | null;
-  set: boolean;
-  effective: boolean;
-  applicable: boolean;
-}
-
-export function railStops(entry: ConfigEntry): RailStop[] {
-  const source = entry.effective.source;
-  const projectAllowed = entry.scopes.includes("project");
-  return [
-    {
-      tier: "built-in",
-      value: entry.default,
-      set: true,
-      effective: source === "default",
-      applicable: true,
-    },
-    {
-      tier: "user",
-      value: entry.user.set ? entry.user.value : null,
-      set: entry.user.set,
-      effective: source === "user",
-      applicable: true,
-    },
-    {
-      tier: "project",
-      value: entry.project?.set ? entry.project.value : null,
-      set: entry.project?.set ?? false,
-      effective: source === "project",
-      applicable: projectAllowed && entry.project !== null,
-    },
-  ];
-}
-
 /// Values are strings on the wire; booleans read better as words.
 export function displayValue(kind: ConfigKind, value: string): string {
   if (kind.type === "bool") return value === "true" ? "on" : "off";
   return value;
+}
+
+/// The three files a key can resolve from, left (weakest) to right
+/// (strongest): built-in, then user, then project.
+export type Lane = "builtin" | "user" | "project";
+
+export const LANES: readonly { lane: Lane; label: string; path: string | null; blurb: string }[] = [
+  { lane: "builtin", label: "built-in", path: null, blurb: "loom's defaults" },
+  {
+    lane: "user",
+    label: "user",
+    path: USER_CONFIG_PATH,
+    blurb: "every loom project on this machine",
+  },
+  {
+    lane: "project",
+    label: "project",
+    path: ".loom/work/config.toml",
+    blurb: "this workspace only",
+  },
+];
+
+/// The lane whose value loom actually uses.
+export function effectiveLane(entry: ConfigEntry): Lane {
+  return entry.effective.source === "default" ? "builtin" : entry.effective.source;
+}
+
+/// A lane's provenance is a scope's `Provenance`, plus `"readonly"` for the
+/// built-in lane, which no control ever writes to.
+export type LaneProvenance = Provenance | "readonly";
+
+export interface LaneState {
+  lane: Lane;
+  /// What a control in this lane shows: the value the file sets, or the
+  /// value falling through from the tier below; null only when provenance
+  /// is "unavailable".
+  value: string | null;
+  provenance: LaneProvenance;
+  effective: boolean;
+}
+
+export function laneState(entry: ConfigEntry, lane: Lane): LaneState {
+  if (lane === "builtin") {
+    return {
+      lane,
+      value: entry.default,
+      provenance: "readonly",
+      effective: effectiveLane(entry) === "builtin",
+    };
+  }
+  return {
+    lane,
+    value: valueAt(entry, lane),
+    provenance: provenanceAt(entry, lane),
+    effective: effectiveLane(entry) === lane,
+  };
+}
+
+export function laneScope(lane: Lane): ConfigScope | null {
+  return lane === "builtin" ? null : lane;
+}
+
+export interface PairRow {
+  kind: "pair";
+  label: string;
+  caption: string | null;
+  model: ConfigEntry;
+  effort: ConfigEntry;
+}
+
+export interface SingleRow {
+  kind: "single";
+  entry: ConfigEntry;
+}
+
+export type SettingsRow = PairRow | SingleRow;
+
+export interface SectionRows {
+  section: string;
+  caption: string | null;
+  projectAllowed: boolean;
+  rows: SettingsRow[];
+}
+
+export const SECTION_CAPTIONS: Readonly<Record<string, string>> = {
+  pressure: "who runs each step of loom pressure",
+  models: "a stage's main agent session, by stage type",
+};
+
+export const ROW_CAPTIONS: Readonly<Record<string, string>> = {
+  "pressure.claude": "/pressure, Claude",
+  "pressure.codex": "$pressure, Codex",
+  "pressure.address": "/address reconciliation",
+};
+
+/// A `_model`/`_effort` suffix's prefix, or null when the field doesn't end
+/// in either.
+function pairPrefix(field: string): string | null {
+  if (field.endsWith("_model")) return field.slice(0, -"_model".length);
+  if (field.endsWith("_effort")) return field.slice(0, -"_effort".length);
+  return null;
+}
+
+export function sectionRows(entries: ConfigEntry[]): SectionRows[] {
+  return groupBySection(entries).map(({ section, entries: sectionEntries }) => {
+    const byField = new Map(sectionEntries.map((entry) => [fieldOf(entry.name), entry]));
+    const rows: SettingsRow[] = [];
+    const paired = new Set<string>();
+    for (const entry of sectionEntries) {
+      const field = fieldOf(entry.name);
+      if (paired.has(field)) continue;
+      const prefix = pairPrefix(field);
+      const model = prefix !== null ? byField.get(`${prefix}_model`) : undefined;
+      const effort = prefix !== null ? byField.get(`${prefix}_effort`) : undefined;
+      if (prefix !== null && model && effort) {
+        paired.add(`${prefix}_model`);
+        paired.add(`${prefix}_effort`);
+        rows.push({
+          kind: "pair",
+          label: prefix,
+          caption: ROW_CAPTIONS[`${section}.${prefix}`] ?? null,
+          model,
+          effort,
+        });
+      } else {
+        rows.push({ kind: "single", entry });
+      }
+    }
+    return {
+      section,
+      caption: SECTION_CAPTIONS[section] ?? null,
+      projectAllowed: sectionEntries.some((entry) => entry.scopes.includes("project")),
+      rows,
+    };
+  });
+}
+
+export function rowEntries(row: SettingsRow): ConfigEntry[] {
+  return row.kind === "pair" ? [row.model, row.effort] : [row.entry];
+}
+
+export function rowLabel(row: SettingsRow): string {
+  return row.kind === "pair" ? row.label : fieldOf(row.entry.name);
+}
+
+function rowHaystack(section: SectionRows, row: SettingsRow): string {
+  const parts = [section.section, section.caption ?? "", rowLabel(row)];
+  if (row.kind === "pair") parts.push(row.caption ?? "");
+  for (const entry of rowEntries(row)) {
+    parts.push(
+      entry.name,
+      fieldOf(entry.name),
+      entry.help,
+      entry.default,
+      displayValue(entry.kind, entry.default),
+      entry.user.value,
+      displayValue(entry.kind, entry.user.value),
+      entry.effective.value,
+      displayValue(entry.kind, entry.effective.value),
+    );
+    if (entry.project !== null) {
+      parts.push(entry.project.value, displayValue(entry.kind, entry.project.value));
+    }
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+export function filterSections(sections: SectionRows[], query: string): SectionRows[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return sections;
+  return sections
+    .map((section) => ({
+      ...section,
+      rows: section.rows.filter((row) => rowHaystack(section, row).includes(needle)),
+    }))
+    .filter((section) => section.rows.length > 0);
+}
+
+export function formatValue(kind: ConfigKind, value: string): string {
+  if (kind.type === "bool") return displayValue(kind, value);
+  if (kind.type === "u32" && /^\d+$/.test(value)) return Number(value).toLocaleString("en-US");
+  return value;
+}
+
+/// Writes one key's value at one scope, or clears it (`null`) to fall back
+/// to the tier below.
+export type OnWrite = (scope: ConfigScope, name: string, value: string | null) => void;
+
+/// One key's write in flight or just settled; the control shows the pending
+/// value until the server answers, then the entry it returned.
+export type WriteStatus =
+  | { phase: "idle" }
+  | { phase: "pending"; value: string | null }
+  | { phase: "saved" }
+  | { phase: "error"; message: string };
+
+export function statusKey(scope: ConfigScope, name: string): string {
+  return `${scope}:${name}`;
+}
+
+/// The status of one key's write at one scope, or idle when none is in flight.
+export function statusFor(
+  statuses: Record<string, WriteStatus>,
+  scope: ConfigScope,
+  name: string,
+): WriteStatus {
+  return statuses[statusKey(scope, name)] ?? { phase: "idle" };
 }

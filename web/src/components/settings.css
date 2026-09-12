@@ -1,16 +1,17 @@
 /*
- * Settings dialog: a config ledger ruled by hairlines, with a resolution
- * rail under every key. Colours come from aurora-ui's tokens and loom's
- * `--tone-*`; the scope being edited sets `--scope-tone`, and a control the
- * current file actually sets is drawn solid in that tone, one that falls
- * through to the tier below is drawn dashed and muted.
+ * Settings dialog: the three writable-file lanes (built-in, user, project)
+ * as table columns, model/effort pairs as rows. A key reads left to right
+ * in loom's own resolution order; the rightmost lane that sets a value
+ * carries the effective underline. Colours come from aurora-ui's tokens
+ * and loom's `--tone-*`.
  */
+@import "./settings-control.css";
+
 @layer components {
   .settings-dialog {
-    --scope-tone: var(--tone-pending);
-  }
-  .settings-dialog.scope-project {
-    --scope-tone: var(--tone-queued);
+    --lane-user: var(--tone-executing);
+    --lane-project: var(--tone-completed);
+    --lane-builtin: var(--tone-dimmed);
   }
 
   .settings-head {
@@ -18,336 +19,46 @@
     border-bottom: 1px solid var(--hairline);
   }
 
-  /* Two-cell scope selector; the radio itself is visually hidden and the
-   * label draws the cell, so keyboard focus lands on the cell outline. */
-  .settings-scopes {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-    margin: 0;
-    padding: 0;
-    border: 0;
-  }
-  .settings-scope {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px 12px;
-    border-radius: var(--radius-md);
-    background: var(--muted);
-    box-shadow: inset 0 0 0 1px var(--hairline);
-    color: var(--muted-foreground);
-    cursor: pointer;
-    transition:
-      color 150ms ease,
-      background-color 150ms ease,
-      box-shadow 150ms ease;
-  }
-  .settings-scope:hover {
-    color: var(--foreground);
-  }
-  .settings-scope.is-active {
-    background: var(--card);
-    color: var(--foreground);
-    box-shadow:
-      inset 3px 0 0 var(--scope-tone),
-      0 1px 2px rgb(0 0 0 / 0.08),
-      0 0 0 1px var(--hairline);
-  }
-  .settings-scope:has(input:focus-visible) {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-  }
-  .settings-scope-name {
+  .settings-filter {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-  }
-  .settings-scope-path {
-    font-family: var(--font-mono);
-    font-size: 11px;
-  }
-  .settings-scope-blurb {
-    font-size: 11px;
-    color: var(--muted-foreground);
-  }
-
-  .settings-writing {
-    margin: 0;
-    padding: 10px 20px;
-    font-size: 12px;
-    color: var(--muted-foreground);
-    border-bottom: 1px solid var(--hairline);
-  }
-  .settings-writing code {
-    color: var(--foreground);
-    font-size: 11px;
-  }
-
-  .settings-section-head {
-    padding: 14px 20px 6px;
-  }
-  .settings-rows {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-  .settings-row {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px 20px;
-    border-top: 1px solid var(--hairline);
-  }
-  .settings-row-main {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 16px;
-  }
-  .settings-row-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .settings-label {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--foreground);
-  }
-  .settings-help {
-    margin: 0;
-    font-size: 12px;
-    color: var(--muted-foreground);
-    text-wrap: pretty;
-  }
-  .settings-row-control {
-    display: flex;
-    justify-content: flex-end;
-    min-width: 0;
-  }
-
-  /* Text and select share one frame: mono, hairline, scope-toned when the
-   * file sets the value, dashed when the value falls through. */
-  .settings-input {
     height: 30px;
-    width: 12ch;
-    padding: 0 10px;
-    border-radius: var(--radius-md);
+    width: 240px;
+    flex: none;
     border: 1px solid var(--border);
-    background: var(--card);
-    color: var(--foreground);
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-    outline: none;
-    transition:
-      border-color 150ms ease,
-      box-shadow 150ms ease;
-  }
-  .settings-select {
-    text-align: left;
-    width: auto;
-    min-width: 12ch;
-    padding-right: 28px;
-    appearance: none;
-  }
-  .settings-select-wrap {
-    position: relative;
-    display: inline-flex;
-  }
-  .settings-select-chevron {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    width: 14px;
-    height: 14px;
-    transform: translateY(-50%);
-    pointer-events: none;
+    border-radius: var(--radius-md);
+    padding: 0 8px 0 10px;
     color: var(--muted-foreground);
+    font-size: 12.5px;
+    background: var(--background);
+    cursor: text;
   }
-  .settings-input:focus-visible {
+  .settings-filter:focus-within {
     border-color: var(--ring);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 35%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 30%, transparent);
   }
-  .settings-input:disabled {
-    opacity: 0.6;
-    cursor: progress;
-  }
-  .settings-input[aria-invalid="true"] {
-    border-color: var(--tone-blocked);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--tone-blocked) 25%, transparent);
-  }
-  .settings-row[data-provenance="set"] .settings-input {
-    border-color: var(--scope-tone);
-    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--scope-tone) 45%, transparent);
-  }
-  .settings-row[data-provenance="inherited"] .settings-input {
-    border-style: dashed;
-    color: var(--muted-foreground);
-    background: transparent;
-  }
-
-  /* Native checkbox drawn as a pill switch; role="switch" is on the input. */
-  .settings-switch {
-    appearance: none;
-    position: relative;
-    width: 36px;
-    height: 20px;
-    margin: 5px 0;
-    border-radius: 999px;
-    background: var(--muted);
-    box-shadow: inset 0 0 0 1px var(--border);
-    cursor: pointer;
-    transition: background-color 150ms ease;
-  }
-  .settings-switch::after {
-    content: "";
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--card);
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
-    transition: transform 150ms ease;
-  }
-  .settings-switch:checked {
-    background: var(--scope-tone);
-    box-shadow: none;
-  }
-  .settings-switch:checked::after {
-    transform: translateX(16px);
-  }
-  .settings-switch:focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 2px;
-  }
-  .settings-switch:disabled {
-    opacity: 0.6;
-    cursor: progress;
-  }
-  .settings-row[data-provenance="inherited"] .settings-switch {
-    box-shadow: inset 0 0 0 1px var(--border);
-    background: repeating-linear-gradient(
-      -45deg,
-      var(--muted) 0 3px,
-      color-mix(in oklch, var(--border) 60%, transparent) 3px 4px
-    );
-  }
-  .settings-row[data-provenance="inherited"] .settings-switch:checked {
-    background: color-mix(in oklch, var(--scope-tone) 45%, var(--muted));
-  }
-
-  .settings-unavailable {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--muted-foreground);
-    text-align: right;
-  }
-
-  .settings-row-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px 16px;
-  }
-  .settings-row-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 24px;
-  }
-  .settings-tag {
-    font-size: 11px;
-    color: var(--muted-foreground);
-    letter-spacing: 0.01em;
-  }
-  .settings-clear {
-    font-size: 11px;
-  }
-
-  /* The rail: three stops joined by hairline ties. A filled dot is a tier
-   * that sets the key; the ringed dot is the tier in effect. */
-  .settings-rail {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 2px 0;
-    margin: 0;
+  .settings-filter input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: none;
+    outline: none;
+    font: inherit;
+    color: var(--foreground);
     padding: 0;
-    list-style: none;
-    font-family: var(--font-mono);
-    font-size: 11px;
+  }
+  .settings-filter input::placeholder {
     color: var(--muted-foreground);
   }
-  .settings-stop {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    white-space: nowrap;
-  }
-  .settings-stop + .settings-stop::before {
-    content: "";
-    width: 14px;
-    height: 1px;
-    margin: 0 8px;
-    background: var(--border);
-  }
-  .settings-stop-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    box-shadow: inset 0 0 0 1px currentColor;
-    transition: box-shadow 150ms ease;
-  }
-  .settings-stop[data-set="true"] .settings-stop-dot {
-    background: currentColor;
-  }
-  .settings-stop[data-applicable="false"] {
-    opacity: 0.55;
-  }
-  .settings-stop[data-applicable="false"] .settings-stop-dot {
-    box-shadow: inset 0 0 0 1px var(--border);
-  }
-  .settings-stop-value {
-    color: var(--foreground);
-  }
-  .settings-stop[data-applicable="false"] .settings-stop-value,
-  .settings-stop[data-set="false"] .settings-stop-value {
-    color: inherit;
-  }
-  .settings-stop[aria-current="true"] {
-    color: var(--foreground);
-  }
-  .settings-stop[aria-current="true"] .settings-stop-dot {
-    background: var(--tone-executing);
-    box-shadow: 0 0 0 3px color-mix(in oklch, var(--tone-executing) 28%, transparent);
-  }
-  .settings-stop[aria-current="true"] .settings-stop-tier {
-    font-weight: 600;
+  .settings-filter input::-webkit-search-cancel-button {
+    -webkit-appearance: none;
   }
 
-  /* Always one line tall so a landing write never moves the rows below. */
-  .settings-status {
-    margin: 0;
-    min-height: 1.25rem;
-    font-size: 12px;
-    line-height: 1.25rem;
-    color: var(--muted-foreground);
-    text-wrap: pretty;
+  .settings-scroll {
+    max-height: min(660px, 72dvh);
+    overflow: auto;
   }
-
   .settings-notice {
     display: flex;
     align-items: center;
@@ -359,38 +70,207 @@
     color: var(--muted-foreground);
   }
 
-  @media (max-width: 560px) {
-    .settings-scopes {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .settings-row-main {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .settings-row-control {
-      justify-content: flex-start;
-    }
-    .settings-unavailable {
-      text-align: left;
-    }
+  /* ── the table: lanes as columns, alternating ground, a hairline at every lane boundary ── */
+  .settings-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+    table-layout: fixed;
+  }
+  .settings-table th,
+  .settings-table td {
+    text-align: left;
+    font-weight: inherit;
+    padding: 0;
+    vertical-align: middle;
+  }
+  .settings-ls {
+    border-left: 1px solid var(--hairline);
+  }
+  .settings-lane-user {
+    background: color-mix(in oklch, var(--muted) 55%, var(--card));
+  }
+  .settings-lane-project {
+    background: color-mix(in oklch, var(--lane-project) 4%, transparent);
+  }
+
+  /* sticky head, a 3px tone bar over each lane */
+  .settings-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--card);
+    border-bottom: 1px solid var(--hairline);
+    padding: 12px 12px 10px;
+    font-size: 12px;
+  }
+  .settings-table thead th.settings-lane-user {
+    background: color-mix(in oklch, var(--muted) 55%, var(--card));
+  }
+  .settings-table thead th.settings-lane-builtin::before,
+  .settings-table thead th.settings-lane-user::before,
+  .settings-table thead th.settings-lane-project::before {
+    content: "";
+    position: absolute;
+    left: -1px;
+    right: 0;
+    top: 0;
+    height: 3px;
+    background: var(--lane-builtin);
+  }
+  .settings-table thead th.settings-lane-user::before {
+    background: var(--lane-user);
+  }
+  .settings-table thead th.settings-lane-project::before {
+    background: var(--lane-project);
+  }
+  .settings-table thead th:first-child {
+    padding-left: 22px;
+  }
+  .settings-table thead th b {
+    font-weight: 600;
+    display: block;
+  }
+
+  /* section rows: an eyebrow + caption, and empty lane placeholders that
+   * either label the model/effort sub-columns or stay blank for singles */
+  .settings-sech th {
+    border-top: 1px solid var(--hairline);
+    padding: 12px 8px 4px 12px;
+    vertical-align: bottom;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+  .settings-table > tbody:first-of-type > tr.settings-sech th {
+    border-top: 0;
+  }
+  .settings-sech th.settings-key {
+    padding-left: 22px;
+  }
+  .settings-sech th.settings-key .settings-help {
+    display: block;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 11.5px;
+    margin-top: 2px;
+  }
+
+  .settings-table tbody td {
+    border-top: 1px solid var(--hairline);
+    padding: 8px 8px 8px 12px;
+    height: 52px;
+  }
+  .settings-table tbody td + td:not(.settings-ls) {
+    padding-left: 4px;
+  }
+  .settings-table td.settings-key {
+    padding-left: 22px;
+    padding-right: 12px;
+  }
+  .settings-key-name {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .settings-help {
+    display: block;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    text-wrap: pretty;
+  }
+  .settings-res {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted-foreground);
+    margin-top: 1px;
+  }
+  .settings-res b {
+    font-weight: 500;
+    color: var(--foreground);
+  }
+  .settings-empty {
+    height: 120px;
+    color: var(--muted-foreground);
+    text-align: center;
+  }
+
+  /* the user-only pane: aurora-ui's EmptyState, bare and dense, inside the lane */
+  .settings-table td.settings-project-cell {
+    position: relative;
+    padding: 0;
+  }
+  .settings-pane {
+    position: absolute;
+    inset: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    text-align: center;
+    border: 1px dashed color-mix(in oklch, var(--border) 70%, transparent);
+    border-radius: 12px;
+    background: color-mix(in oklch, var(--card) 40%, transparent);
+    padding: 8px 14px;
+  }
+  .settings-pane-short {
+    flex-direction: row;
+    text-align: left;
+    gap: 10px;
+  }
+
+  .settings-tag {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    letter-spacing: 0.01em;
+  }
+  /* footer legend and toast: `flex-wrap` plus `min-width: 0` on both
+   * children are the difference between wrapping to a second line and
+   * overflowing the dialog's own width on a narrow phone. */
+  .settings-foot {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 4px 12px;
+    padding: 9px 18px;
+    border-top: 1px solid var(--hairline);
+    background: color-mix(in oklch, var(--muted) 55%, transparent);
+    font-size: 11.5px;
+    color: var(--muted-foreground);
+  }
+  .settings-foot > span {
+    min-width: 0;
+  }
+  .settings-legend-eff {
+    display: inline-block;
+    width: 14px;
+    height: 2px;
+    background: var(--foreground);
+    vertical-align: middle;
+    margin-right: 5px;
+    border-radius: 1px;
+  }
+  .settings-toast {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    color: var(--muted-foreground);
   }
 }
 
-.dark .settings-scope.is-active {
-  box-shadow:
-    inset 3px 0 0 var(--scope-tone),
-    0 1px 2px rgb(0 0 0 / 0.4),
-    0 0 0 1px var(--hairline);
-}
-.dark .settings-switch::after {
-  background: var(--foreground);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .settings-scope,
-  .settings-input,
+  .settings-ctl,
   .settings-switch,
   .settings-switch::after,
-  .settings-stop-dot {
+  .settings-filter {
     transition: none;
   }
 }
