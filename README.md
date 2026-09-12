@@ -58,7 +58,7 @@ Knowledge lives in `doc/loom/knowledge/`; agents write it through loom, and `loo
 
 Loom's savings come from **delegation, not downgrade**:
 
-- **Orchestration is always Opus at `xhigh` effort.** Every stage's main agent plans, decomposes, verifies, and commits — the judgment-heavy work that is worst to economize on.
+- **Orchestration's model and effort come from the stage type's default** — every stage's main agent plans, decomposes, verifies, and commits, the judgment-heavy work that is worst to economize on — and both are overridable, in `[models]` in either config file or per stage; see [Model Allocation](#model-allocation).
 - **Implementation is always delegated**, spawned by agent type so the choice is explicit rather than inherited: Fable for major bugs, visual/UI design, and extremely challenging algorithmic design (no agent type pins it — the model override is stated explicitly at spawn); Opus for mainstream architecture and algorithm implementation; Sonnet or Codex GPT-5.6 Terra for common implementation and integration tests; Codex GPT-5.6 Luna for boilerplate, scaffolding, and simple unit tests. The codex tiers are licensed only on stages listing codex in `implementers`, and additionally require the `codex` CLI and its plugin to be installed — when either is missing, `loom run` prints an advisory warning at startup (it never aborts) and terra-/luna-tier work falls back to Sonnet.
 - **Signals are built for cache reuse.** Each signal is a four-section layout with a per-stage-type stable prefix that is byte-identical across sessions, so the large doctrine block is a cache hit rather than a re-read.
 - **Context budgets prevent compaction**, which is the expensive failure: an uncached re-read that costs more and produces worse work.
@@ -220,12 +220,21 @@ loom stop
 loom resume <stage-id>
 loom check <stage-id> [--suggest]
 loom diagnose <stage-id>
-loom pressure <plan-path> [--rounds N] [--claude-model M] [--codex-model M] [--address-model M] [--dry-run]
+loom pressure <plan-path> [--rounds N] [--claude-model M] [--claude-effort E] [--codex-model M] [--codex-effort E] [--address-model M] [--address-effort E] [--dry-run]
 ```
 
 `loom pressure` hardens a plan before you run it by combining two external agents over `--rounds` rounds (default 2). Each round runs both pressure-tests in parallel: Claude `/pressure` edits the plan in place in the foreground (you watch it live), while Codex `$pressure` writes an independent review next to it (`codex-<plan>.md`) in the background (its output is captured to a temp log to keep the terminal clean). Once both finish, Claude `/address` folds the review back in. Claude stays interactive (subscription billing) and auto-closes when done; Codex runs from the repo root. Requires both the `claude` and `codex` CLIs on PATH. `--dry-run` prints the exact commands without spawning anything.
 
-Each of the three steps spawns with an independently selectable model: `--claude-model` for `/pressure` and `--address-model` for `/address` (both accept `haiku`, `sonnet`, `opus`, or `fable`; default `opus`), and `--codex-model` for `$pressure` (accepts `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, or `gpt-5.6-luna`; default `gpt-5.6-sol`). Absent a flag, each falls back to `pressure.claude_model`, `pressure.codex_model`, or `pressure.address_model` in `~/.loom/config.toml` (`loom config -k pressure.claude_model <value>`), then to its built-in default.
+Each of the three steps spawns with an independently selectable model and reasoning effort: `--claude-model`/`--claude-effort` for `/pressure` (model accepts `haiku`, `sonnet`, `opus`, or `fable`; effort accepts `low`, `medium`, `high`, `xhigh`, or `max`), `--address-model`/`--address-effort` for `/address` (same value sets), and `--codex-model`/`--codex-effort` for `$pressure` (model accepts `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, or `gpt-5.6-luna`; effort accepts `low`, `medium`, `high`, or `xhigh` — no `max`, that value is Claude-only). Absent a flag, each key falls back independently: the project config's `.loom/work/config.toml` `[pressure]` section first (if it sets that key), then `~/.loom/config.toml` (`loom config -k pressure.claude_model <value>`), then its built-in default. `[pressure]` resolves per key, so a project section that sets only `claude_model` still lets `codex_effort` fall through to your user config.
+
+| Key                       | Default       |
+| ------------------------- | ------------- |
+| `pressure.claude_model`   | `opus`        |
+| `pressure.claude_effort`  | `xhigh`       |
+| `pressure.codex_model`    | `gpt-5.6-sol` |
+| `pressure.codex_effort`   | `xhigh`       |
+| `pressure.address_model`  | `opus`        |
+| `pressure.address_effort` | `high`        |
 
 `loom status --live` renders a live ledger dashboard: one row per stage across eight columns (STATE, STAGE, DEPENDS ON, MODELS, ACTIVITY, CONTEXT, TIME, MERGE). MODELS lists the orchestrator's own model first, then the models any subagents it spawned ran on. Columns drop in priority order as the terminal narrows; below a 64x16 (columns x rows) terminal a notice replaces the dashboard entirely. Press `?` to toggle a legend overlay explaining every state icon.
 
@@ -233,18 +242,18 @@ Each of the three steps spawns with an independently selectable model: `--claude
 
 ### Web Dashboard Settings
 
-The dashboard header has a settings button; opening it (or navigating to `?settings=user` or `?settings=project`) edits loom's configuration in place, so the browser's back button closes the dialog. It edits the same seven keys `loom config` does: `update.check` / `update.check_interval_hours` (loom's self-update check), `terminal.backend` (see [Terminal Backends](#terminal-backends)), `context.ceiling_tokens` (see [Plan-Level Context Fields](#plan-level-context-fields)), and the three `pressure.claude_model` / `pressure.codex_model` / `pressure.address_model` picks described under [Primary Commands](#primary-commands). `loom config --list` prints every key with its current value and origin. Every control here writes immediately on change, one key at a time; there is no separate Save step, and validation errors from the server surface next to the control that triggered them.
+The dashboard header has a settings button; opening it (or navigating to `?settings=user` or `?settings=project`) edits loom's configuration in place, so the browser's back button closes the dialog. It edits every key in the registry `loom config` does — eighteen keys across `update`, `terminal`, `context`, `pressure`, and `models`: `update.check` / `update.check_interval_hours` (loom's self-update check), `terminal.backend` (see [Terminal Backends](#terminal-backends)), `context.ceiling_tokens` (see [Plan-Level Context Fields](#plan-level-context-fields)), the six `pressure.*` model and effort picks described under [Primary Commands](#primary-commands), and the eight `models.*` model and effort picks described under [Model Allocation](#model-allocation). `loom config --list` prints every key with its current value and origin. Every control here writes immediately on change, one key at a time; there is no separate Save step, and validation errors from the server surface next to the control that triggered them.
 
 Two scopes:
 
-| Scope     | File                        | Applies to                       |
-| --------- | ---------------------------- | --------------------------------- |
-| `user`    | `~/.loom/config.toml`       | Every workspace on this machine   |
-| `project` | `<repo>/.loom/work/config.toml`  | This workspace only               |
+| Scope     | File                            | Applies to                      |
+| --------- | ------------------------------- | ------------------------------- |
+| `user`    | `~/.loom/config.toml`           | Every workspace on this machine |
+| `project` | `<repo>/.loom/work/config.toml` | This workspace only             |
 
-Only `terminal.backend` and `context.ceiling_tokens` have a project tier; the dialog marks the other five as machine-wide rather than offering a project control that would do nothing. A key's effective value resolves **project → user → built-in default**, and each row shows which tier is currently in force plus what clearing an override would fall back to.
+Sixteen of the eighteen keys have a project tier: `terminal.backend`, `context.ceiling_tokens`, and every `pressure.*` and `models.*` key; the dialog marks the remaining `update.*` keys as machine-wide rather than offering a project control that would do nothing. A key's effective value resolves **project → user → built-in default**, and each row shows which tier is currently in force plus what clearing an override would fall back to.
 
-One caveat worth knowing before you rely on it: a project override replaces its whole `.loom/work/config.toml` section, not just the one key. Clearing the override removes the key and, if that empties the section, the section too — but if a sibling key is still in there (as with `[context]`, since `loom init` writes `ceiling_tokens` alongside `subagent_ceiling_tokens`), the section still wins as a whole and the value resolves to the built-in default rather than falling through to your user setting. The dialog reports that state accurately (still project-sourced); it just may not be the fallback you expected.
+The fallback is not uniform across sections. For `[pressure]` and `[models]`, the project tier resolves **per key** — a project section that sets only one key still lets every other key in that section fall through to your user config. For `[terminal]` and `[context]`, a project override still replaces the whole `.loom/work/config.toml` section, not just one key: clearing the override removes the key and, if that empties the section, the section too — but if a sibling key is still in there (as with `[context]`, since `loom init` writes `ceiling_tokens` alongside `subagent_ceiling_tokens`), the section still wins as a whole and the value resolves to the built-in default rather than falling through to your user setting. The dialog reports each case accurately; for `[terminal]`/`[context]` that section-level fallback just may not be what you expected.
 
 The dashboard stays a `127.0.0.1`-only, unauthenticated tool for the person running it — the settings endpoint adds no login. Writes are gated by the same `Host` check as the rest of the dashboard, plus a strict `Origin` check (must be present and loopback) and a per-process CSRF token issued on load.
 
@@ -406,37 +415,37 @@ into `.work/config.toml`'s `[context]` section at `loom init`.
 
 | Field                     | Required | Notes                                                                                      |
 | ------------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| `context_ceiling_tokens`  | No       | Default ceiling for a stage's main agent session (default 150000)                           |
-| `subagent_ceiling_tokens` | No       | Ceiling for subagents spawned by a stage session (default 120000); never read from a stage  |
+| `context_ceiling_tokens`  | No       | Default ceiling for a stage's main agent session (default 150000)                          |
+| `subagent_ceiling_tokens` | No       | Ceiling for subagents spawned by a stage session (default 120000); never read from a stage |
 
 ### Stage Fields
 
-| Field                              | Required               | Notes                                                                                                                                      |
-| ---------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                               | Yes                    | Stage identifier                                                                                                                           |
-| `name`                             | Yes                    | Human-readable title                                                                                                                       |
-| `working_dir`                      | Yes                    | Relative execution directory (`.` allowed)                                                                                                 |
-| `description`                      | No                     | Optional summary                                                                                                                           |
-| `dependencies`                     | No                     | Upstream stage IDs                                                                                                                         |
-| `acceptance`                       | Conditionally required | Shell criteria (strings or extended objects with stdout_contains etc.)                                                                     |
-| `setup`                            | No                     | Setup commands                                                                                                                             |
-| `files`                            | No                     | File glob scope                                                                                                                            |
-| `stage_type`                       | No                     | `standard` (default), `knowledge`, `integration-verify`, `knowledge-distill`                                                               |
-| `artifacts` / `wiring`             | Conditionally required | Required for `standard` and `integration-verify` (acceptance OR goal-backward)                                                             |
-| `wiring_tests` / `dead_code_check` | No                     | Extended verification                                                                                                                      |
-| `before_stage`                     | No                     | Pre-spawn checks (TruthCheck list); stage → Blocked if any fail                                                                            |
-| `after_stage`                      | No                     | Post-acceptance checks (TruthCheck list); completion fails if any fail                                                                     |
-| `code_review`                      | No                     | `integration-verify` only: `dimensions` (string list) and `require_all` (bool); rendered as checklist in agent signal                      |
-| `model`                            | No                     | Model for this stage's main agent (default `opus` for every stage type)                                                                    |
-| `reasoning_effort`                 | No                     | `low`, `medium`, `high`, `xhigh`, `max` (default `high` for every stage type and model)                                                    |
-| `implementers`                     | No                     | Licensed agent lanes as a list, first = preferred for routine work: `["codex", "claude"]`. Default `["claude"]`. Listing a lane makes it available, not mandatory — a stage mixes lanes per subagent |
-| `ultracode`                        | No                     | License this stage for large multi-agent fan-out; per-stage opt-in (default `false`)                                                       |
-| `subagent_timeout_secs`            | No                     | Seconds of tool silence before the monitor warns `appears hung` (default 300); the advisory idle budget death is judged against — never the `--timeout` passed to `loom subagents watch` (that stays long, 3600) |
+| Field                              | Required               | Notes                                                                                                                                                                                                                                |
+| ---------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                               | Yes                    | Stage identifier                                                                                                                                                                                                                     |
+| `name`                             | Yes                    | Human-readable title                                                                                                                                                                                                                 |
+| `working_dir`                      | Yes                    | Relative execution directory (`.` allowed)                                                                                                                                                                                           |
+| `description`                      | No                     | Optional summary                                                                                                                                                                                                                     |
+| `dependencies`                     | No                     | Upstream stage IDs                                                                                                                                                                                                                   |
+| `acceptance`                       | Conditionally required | Shell criteria (strings or extended objects with stdout_contains etc.)                                                                                                                                                               |
+| `setup`                            | No                     | Setup commands                                                                                                                                                                                                                       |
+| `files`                            | No                     | File glob scope                                                                                                                                                                                                                      |
+| `stage_type`                       | No                     | `standard` (default), `knowledge`, `integration-verify`, `knowledge-distill`                                                                                                                                                         |
+| `artifacts` / `wiring`             | Conditionally required | Required for `standard` and `integration-verify` (acceptance OR goal-backward)                                                                                                                                                       |
+| `wiring_tests` / `dead_code_check` | No                     | Extended verification                                                                                                                                                                                                                |
+| `before_stage`                     | No                     | Pre-spawn checks (TruthCheck list); stage → Blocked if any fail                                                                                                                                                                      |
+| `after_stage`                      | No                     | Post-acceptance checks (TruthCheck list); completion fails if any fail                                                                                                                                                               |
+| `code_review`                      | No                     | `integration-verify` only: `dimensions` (string list) and `require_all` (bool); rendered as checklist in agent signal                                                                                                                |
+| `model`                            | No                     | Model for this stage's main agent; omit to use the stage type's configured default ([Model Allocation](#model-allocation)), overridable via `[models]` in either config file, or set here as a deliberate per-stage override         |
+| `reasoning_effort`                 | No                     | `low`, `medium`, `high`, `xhigh`, `max`; omit to use the stage type's configured default ([Model Allocation](#model-allocation)), overridable the same way                                                                           |
+| `implementers`                     | No                     | Licensed agent lanes as a list, first = preferred for routine work: `["codex", "claude"]`. Default `["claude"]`. Listing a lane makes it available, not mandatory — a stage mixes lanes per subagent                                 |
+| `ultracode`                        | No                     | License this stage for large multi-agent fan-out; per-stage opt-in (default `false`)                                                                                                                                                 |
+| `subagent_timeout_secs`            | No                     | Seconds of tool silence before the monitor warns `appears hung` (default 300); the advisory idle budget death is judged against — never the `--timeout` passed to `loom subagents watch` (that stays long, 3600)                     |
 | `context_ceiling_tokens`           | No                     | Absolute resident-token ceiling for this stage's session (minimum 60000). Resolved stage value → plan-level `context_ceiling_tokens` → 150000. The session hook warns at 80% and blocks at 100%; the daemon forces a handoff at 125% |
-| `plan_overview`                    | No                     | Set `false` to suppress the embedded plan overview in this stage's signal                                                                  |
-| `sandbox`                          | No                     | Per-stage sandbox override                                                                                                                 |
-| `sandbox.permission_mode`          | No                     | `auto` (default), `accept-edits`, `plan`, `default` — resolves stage > plan > stage-type default; `bypass-permissions` is rejected at init |
-| `execution_mode`                   | No                     | `single` (default) or `team` hint                                                                                                          |
+| `plan_overview`                    | No                     | Set `false` to suppress the embedded plan overview in this stage's signal                                                                                                                                                            |
+| `sandbox`                          | No                     | Per-stage sandbox override                                                                                                                                                                                                           |
+| `sandbox.permission_mode`          | No                     | `auto` (default), `accept-edits`, `plan`, `default` — resolves stage > plan > stage-type default; `bypass-permissions` is rejected at init                                                                                           |
+| `execution_mode`                   | No                     | `single` (default) or `team` hint                                                                                                                                                                                                    |
 
 ### Stage Type Behavior
 
@@ -565,32 +574,49 @@ Knowledge writes are protected by the sandbox defaults: agents update knowledge 
 
 ## Model Allocation
 
-Every stage's main agent is an **orchestrator**, and orchestration is never economized:
+Every stage's main agent is an **orchestrator**; the model and effort it runs come from its stage type's default, which the operator can override:
 
 | Stage type           | Default model | Default effort |
 | -------------------- | ------------- | -------------- |
-| `standard`           | `opus`        | `xhigh`        |
-| `knowledge`          | `opus`        | `xhigh`        |
+| `standard`           | `opus`        | `high`         |
+| `knowledge`          | `opus`        | `medium`       |
+| `knowledge-distill`  | `sonnet`      | `high`         |
 | `integration-verify` | `opus`        | `xhigh`        |
-| `knowledge-distill`  | `opus`        | `xhigh`        |
+
+Configure either default per stage type in the `[models]` section of `~/.loom/config.toml` (user tier) or `<repo>/.loom/work/config.toml` (project tier, resolved per key — a project section that sets only one of these eight keys still lets the rest fall through to the user config):
+
+```toml
+# ~/.loom/config.toml or .loom/work/config.toml
+[models]
+standard_model = "opus"
+standard_effort = "high"
+knowledge_model = "opus"
+knowledge_effort = "medium"
+knowledge_distill_model = "sonnet"
+knowledge_distill_effort = "high"
+integration_verify_model = "opus"
+integration_verify_effort = "xhigh"
+```
+
+A plan stage's `model` / `reasoning_effort` field overrides both config tiers for that one stage. Merge and base-conflict sessions stay pinned at opus/high and adjudication keeps its own `[adjudication] model`; neither is configurable through `[models]`.
 
 The orchestrator decomposes the work, hands each subagent full context, then verifies and commits. It does not implement. Implementation is delegated to as few subagents as the work allows, each spawned **by agent type** so the model choice is explicit:
 
-| Agent                            | Model                          | Use for                                                                                                                                |
-| -------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom-software-engineer`         | Sonnet                          | Common implementation and integration tests to detailed instructions                                                                   |
-| `loom-codex-forwarder`           | Codex GPT-5.6 Terra or Luna     | Codex lane, licensed only on stages listing codex in `implementers`: Terra for common implementation/integration tests, Luna for boilerplate, scaffolding, and simple unit tests |
-| `loom-senior-software-engineer`  | Opus                            | Mainstream architecture and algorithm implementation, complex debugging, security-sensitive or cross-cutting work                       |
-| `loom-code-reviewer`             | Opus                            | Read-only code, security, and architecture review                                                                                       |
-| `loom-advisor`                   | Fable                           | Diagnosis after a repeated failure — advice returned, nothing written                                                                   |
+| Agent                           | Model                       | Use for                                                                                                                                                                          |
+| ------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom-software-engineer`        | Sonnet                      | Common implementation and integration tests to detailed instructions                                                                                                             |
+| `loom-codex-forwarder`          | Codex GPT-5.6 Terra or Luna | Codex lane, licensed only on stages listing codex in `implementers`: Terra for common implementation/integration tests, Luna for boilerplate, scaffolding, and simple unit tests |
+| `loom-senior-software-engineer` | Opus                        | Mainstream architecture and algorithm implementation, complex debugging, security-sensitive or cross-cutting work                                                                |
+| `loom-code-reviewer`            | Opus                        | Read-only code, security, and architecture review                                                                                                                                |
+| `loom-advisor`                  | Fable                       | Diagnosis after a repeated failure — advice returned, nothing written                                                                                                            |
 
 Fable-tier implementation — major bugs, visual/UI design, extremely challenging algorithmic design — has no dedicated agent type; it is spawned with an explicit model override rather than relying on inheritance.
 
 The `loom-codex-forwarder` row additionally depends on the `codex` CLI and its plugin's companion runtime being installed. `loom run` checks this at startup and prints an advisory warning if either is missing — it never blocks the run — and terra-/luna-tier work falls back to Sonnet for the duration; the stage signal states the fallback explicitly and does not spawn `loom-codex-forwarder`.
 
-This is why savings come from delegation rather than downgrade: an untyped subagent silently inherits the stage's Opus model, making every worker expensive. Two failures on the same task should produce a `loom-advisor` diagnosis, not a blind retry at a larger model.
+This is why savings come from delegation rather than downgrade: an untyped subagent silently inherits the stage's own (usually Opus) model, making every worker expensive. Two failures on the same task should produce a `loom-advisor` diagnosis, not a blind retry at a larger model.
 
-Override per stage with `model` and `reasoning_effort` (`low`, `medium`, `high`, `xhigh`, `max`). `ultracode: true` licenses a stage for large multi-agent fan-out; it is per-stage opt-in so the cost decision stays explicit.
+A stage omits `model` and `reasoning_effort` by default, so the stage type's configured default applies. Set either field only as a deliberate per-stage override (`low`, `medium`, `high`, `xhigh`, `max` for effort). `ultracode: true` licenses a stage for large multi-agent fan-out; it is per-stage opt-in so the cost decision stays explicit.
 
 ## Sandbox Configuration
 
